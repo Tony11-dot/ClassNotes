@@ -11,3 +11,10 @@ build/
 TestArtifacts/
 # Local secrets — the real Groq/AI key lives here and is never committed.
 Config/Secrets.local.xcconfig
+# Fastlane — generated reports/artifacts and any signing material.
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/test_output/
+fastlane/certs/
+fastlane/profiles/
+*.p8

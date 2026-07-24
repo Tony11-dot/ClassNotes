@@ -1,0 +1,121 @@
+# ClassNotes — native iOS release automation.
+#
+# One command bumps the build number and ships to TestFlight:
+#   fastlane beta
+#
+# Unlike ClassMate (Flutter → `flutter build ipa`), this is a native Xcode
+# project, so we build with `gym` against the shared scheme. Signing is
+# automatic and headless (the ASC API key lets Xcode create/renew profiles).
+
+APP_PROJECT = "ClassMateNotes.xcodeproj"
+SCHEME      = "ClassMateNotes"
+TEAM_ID     = "NNFD7CKGLG"
+BUNDLE_ID   = "com.classmate.notes"
+IPA_DIR     = "build"
+IPA_NAME    = "ClassNotes"
+
+# ── Auth: App Store Connect API key ───────────────────────────────────────────
+# ClassNotes uses its OWN key (Z5KM7D8NG8), kept in the ClassMate docs folder.
+# We deliberately DON'T read ASC_KEY_ID/ASC_KEY_PATH from the shell here, because
+# ~/.zshrc exports ClassMate's key (28AUQ58BDS) globally and would stomp this.
+# The issuer UUID is account-wide, so we take it from the env (falling back to
+# the known value) — it's an identifier, not a secret.
+ASC_KEY_ID   = "Z5KM7D8NG8"
+ASC_KEY_PATH = File.expand_path("~/Documents/ClassMate docs/ClassNotes/AuthKey_Z5KM7D8NG8.p8")
+ASC_ISSUER   = (ENV["ASC_ISSUER_ID"] || "").strip.empty? ? \
+                 "51a27d98-8621-4258-a919-f335d14ba3f8" : ENV["ASC_ISSUER_ID"].strip
+
+def asc_api_key
+  unless File.exist?(ASC_KEY_PATH)
+    UI.user_error!("ASC key not found at #{ASC_KEY_PATH}. Put the .p8 there or " \
+                   "update ASC_KEY_PATH in fastlane/Fastfile.")
+  end
+  app_store_connect_api_key(
+    key_id:       ASC_KEY_ID,
+    issuer_id:    ASC_ISSUER,
+    key_filepath: ASC_KEY_PATH,
+    in_house:     false,
+  )
+end
+
+platform :ios do
+
+  desc "Headless signing repair: create+install an Apple Distribution cert + " \
+       "App Store provisioning profile via the ASC API key. Run this only if a " \
+       "build fails with \"No signing certificate ... found\"."
+  lane :fix_signing do
+    key = asc_api_key
+    cert(
+      api_key:     key,
+      development: false,
+      team_id:     TEAM_ID,
+      output_path: "fastlane/certs",
+    )
+    sigh(
+      api_key:            key,
+      app_identifier:     BUNDLE_ID,
+      development:        false,
+      force:              true,
+      provisioning_name:  "ClassNotes AppStore",
+      team_id:            TEAM_ID,
+      output_path:        "fastlane/profiles",
+    )
+    UI.success "✅ Distribution cert + App Store profile installed."
+  end
+
+  desc "Bump build number (from TestFlight), build, and upload to TestFlight."
+  lane :beta do |options|
+    key = asc_api_key
+
+    # Derive the next build number from what's already on TestFlight, so the
+    # ship is idempotent even if the local pbxproj number is stale or the bump
+    # wasn't committed. First run after build 1 → uploads build 2.
+    last = latest_testflight_build_number(
+      api_key:        key,
+      app_identifier: BUNDLE_ID,
+      initial_build_number: 0,
+    ) rescue 0
+    next_build = last + 1
+    increment_build_number(xcodeproj: APP_PROJECT, build_number: next_build)
+    UI.message "📦 Building #{IPA_NAME} #{get_version_number(xcodeproj: APP_PROJECT, target: SCHEME)} (#{next_build})…"
+
+    build_app(
+      project:        APP_PROJECT,
+      scheme:         SCHEME,
+      configuration:  "Release",
+      clean:          true,
+      output_directory: IPA_DIR,
+      output_name:    "#{IPA_NAME}.ipa",
+      export_method:  "app-store",
+      xcargs:         "-allowProvisioningUpdates",
+      export_options: {
+        signingStyle: "automatic",
+        teamID:       TEAM_ID,
+      },
+    )
+
+    changelog = (options[:notes] && !options[:notes].strip.empty?) ? options[:notes] \
+                : "ClassNotes beta #{next_build} — #{Time.now.strftime('%Y-%m-%d')}"
+    upload_to_testflight(
+      api_key:                           key,
+      app_identifier:                    BUNDLE_ID,
+      ipa:                               "#{IPA_DIR}/#{IPA_NAME}.ipa",
+      skip_waiting_for_build_processing: true,
+      changelog:                         changelog,
+    )
+    UI.success "✅ Uploaded ClassNotes (#{next_build}) to TestFlight!"
+  end
+
+  desc "Re-upload the last-built IPA to TestFlight (skip build)."
+  lane :upload do
+    upload_to_testflight(
+      api_key:                           asc_api_key,
+      app_identifier:                    BUNDLE_ID,
+      ipa:                               "#{IPA_DIR}/#{IPA_NAME}.ipa",
+      skip_waiting_for_build_processing: true,
+      changelog:                         "ClassNotes beta — #{Time.now.strftime('%Y-%m-%d')}",
+    )
+    UI.success "✅ Uploaded to TestFlight!"
+  end
+
+end
