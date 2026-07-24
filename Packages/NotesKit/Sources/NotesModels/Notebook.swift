@@ -10,6 +10,8 @@ public final class Notebook {
     /// Cover color as a hex string from the theme's cover palette.
     public var coverColorHex: String
     public var defaultTemplateRaw: String
+    /// Optional shelf/bag this notebook belongs to (`nil` = unfiled).
+    public var shelfID: UUID?
     public var createdAt: Date
     public var updatedAt: Date
 
@@ -18,12 +20,14 @@ public final class Notebook {
         title: String,
         coverColorHex: String,
         defaultTemplate: PageTemplate = .ruled,
+        shelfID: UUID? = nil,
         createdAt: Date = .now
     ) {
         self.id = id
         self.title = title
         self.coverColorHex = coverColorHex
         self.defaultTemplateRaw = defaultTemplate.rawValue
+        self.shelfID = shelfID
         self.createdAt = createdAt
         self.updatedAt = createdAt
     }

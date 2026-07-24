@@ -11,8 +11,21 @@ import SwiftUI
 @Observable
 public final class ActiveCanvasTracker {
     public weak var activeCanvas: PKCanvasView?
+    /// Live canvases by page, so tools (OCR, circle-to-explain) can read a
+    /// page's current ink without waiting for the debounced save.
+    private var canvases: [UUID: Weak] = [:]
 
     public init() {}
+
+    struct Weak { weak var view: PKCanvasView? }
+
+    func register(_ canvas: PKCanvasView, for pageID: UUID) {
+        canvases[pageID] = Weak(view: canvas)
+    }
+
+    public func drawing(for pageID: UUID) -> PKDrawing? {
+        canvases[pageID]?.view?.drawing
+    }
 }
 
 /// `PKCanvasView` pinned to the fixed logical page space (768×1024): ink
@@ -42,6 +55,7 @@ struct CanvasPageView: UIViewRepresentable {
     let page: PageRecord
     let toolState: ToolState
     let tracker: ActiveCanvasTracker
+    var onFocus: (UUID) -> Void = { _ in }
 
     @Environment(AppServices.self) private var services
     @Environment(\.theme) private var theme
@@ -62,6 +76,7 @@ struct CanvasPageView: UIViewRepresentable {
         canvas.addInteraction(pencilInteraction)
 
         context.coordinator.canvas = canvas
+        tracker.register(canvas, for: page.id)
         context.coordinator.loadDrawing()
         return canvas
     }
@@ -82,7 +97,8 @@ struct CanvasPageView: UIViewRepresentable {
             pageID: page.id,
             store: services.documentStore,
             toolState: toolState,
-            tracker: tracker
+            tracker: tracker,
+            onFocus: onFocus
         )
     }
 
@@ -95,6 +111,7 @@ struct CanvasPageView: UIViewRepresentable {
         private let pageID: UUID
         private let store: DocumentStore
         private let tracker: ActiveCanvasTracker
+        private let onFocus: (UUID) -> Void
         private var saveTask: Task<Void, Never>?
         private var loaded = false
 
@@ -103,13 +120,15 @@ struct CanvasPageView: UIViewRepresentable {
             pageID: UUID,
             store: DocumentStore,
             toolState: ToolState,
-            tracker: ActiveCanvasTracker
+            tracker: ActiveCanvasTracker,
+            onFocus: @escaping (UUID) -> Void
         ) {
             self.notebookID = notebookID
             self.pageID = pageID
             self.store = store
             self.toolState = toolState
             self.tracker = tracker
+            self.onFocus = onFocus
         }
 
         func loadDrawing() {
@@ -127,6 +146,7 @@ struct CanvasPageView: UIViewRepresentable {
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
             guard loaded else { return }
             tracker.activeCanvas = canvasView
+            onFocus(pageID)
             scheduleSave(canvasView.drawing)
         }
 

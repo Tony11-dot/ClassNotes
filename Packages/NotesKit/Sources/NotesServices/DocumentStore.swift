@@ -44,7 +44,7 @@ public actor DocumentStore {
 
     // MARK: - URLs
 
-    public func documentURL(for id: UUID) -> URL {
+    public nonisolated func documentURL(for id: UUID) -> URL {
         rootURL.appendingPathComponent("\(id.uuidString).\(Self.fileExtension)", isDirectory: true)
     }
 
@@ -58,6 +58,15 @@ public actor DocumentStore {
 
     private func pageURL(notebook: UUID, page: UUID) -> URL {
         pagesDirectory(for: notebook).appendingPathComponent("\(page.uuidString).drawing")
+    }
+
+    /// Where image / file / audio payloads for page elements live.
+    public nonisolated func mediaDirectory(for id: UUID) -> URL {
+        documentURL(for: id).appendingPathComponent("media", isDirectory: true)
+    }
+
+    public nonisolated func mediaURL(notebook: UUID, filename: String) -> URL {
+        mediaDirectory(for: notebook).appendingPathComponent(filename)
     }
 
     // MARK: - Lifecycle
@@ -164,5 +173,34 @@ public actor DocumentStore {
             withIntermediateDirectories: true
         )
         try data.write(to: pageURL(notebook: notebook, page: page), options: .atomic)
+    }
+
+    // MARK: - Media payloads + page elements
+
+    /// Stores an image/file/audio payload and returns the filename to reference
+    /// it by from a `PageElement`.
+    @discardableResult
+    public func saveMedia(_ data: Data, notebook: UUID, fileExtension: String) throws -> String {
+        try FileManager.default.createDirectory(
+            at: mediaDirectory(for: notebook),
+            withIntermediateDirectories: true
+        )
+        let filename = "\(UUID().uuidString).\(fileExtension)"
+        try data.write(to: mediaURL(notebook: notebook, filename: filename), options: .atomic)
+        return filename
+    }
+
+    public func mediaData(notebook: UUID, filename: String) -> Data? {
+        try? Data(contentsOf: mediaURL(notebook: notebook, filename: filename))
+    }
+
+    /// Replaces the element list for one page (atomic manifest rewrite).
+    @discardableResult
+    public func setElements(_ elements: [PageElement], notebook: UUID, page: UUID) throws -> NotebookManifest {
+        var current = try manifest(for: notebook)
+        guard let index = current.pages.firstIndex(where: { $0.id == page }) else { return current }
+        current.pages[index].elements = elements
+        try writeManifest(current, for: notebook)
+        return current
     }
 }

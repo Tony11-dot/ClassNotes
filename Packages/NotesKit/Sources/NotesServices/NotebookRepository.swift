@@ -58,4 +58,36 @@ public final class NotebookRepository {
         notebook.updatedAt = .now
         try? context.save()
     }
+
+    // MARK: - Shelves (bags / collections)
+
+    @discardableResult
+    public func createShelf(name: String, colorHex: String, symbolName: String) throws -> Shelf {
+        let count = (try? context.fetchCount(FetchDescriptor<Shelf>())) ?? 0
+        let shelf = Shelf(
+            name: name.isEmpty ? "Shelf" : name,
+            colorHex: colorHex,
+            symbolName: symbolName,
+            sortIndex: count
+        )
+        context.insert(shelf)
+        try context.save()
+        return shelf
+    }
+
+    public func deleteShelf(_ shelf: Shelf) throws {
+        let shelfID = shelf.id
+        // Fetch-all-then-filter (predicate machinery is overkill for a tiny set
+        // and traps on hostless test runners).
+        let all = (try? context.fetch(FetchDescriptor<Notebook>())) ?? []
+        for notebook in all where notebook.shelfID == shelfID { notebook.shelfID = nil }
+        context.delete(shelf)
+        try context.save()
+    }
+
+    public func assign(_ notebook: Notebook, toShelf shelfID: UUID?) {
+        notebook.shelfID = shelfID
+        notebook.updatedAt = .now
+        try? context.save()
+    }
 }

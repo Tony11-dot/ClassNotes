@@ -1,3 +1,4 @@
+import NotesDesignSystem
 import NotesModels
 import NotesServices
 import SwiftData
@@ -9,6 +10,7 @@ struct ClassMateNotesApp: App {
     @State private var services: AppServices
 
     init() {
+        CMFonts.registerIfNeeded()
         let container = ModelContainerFactory.make()
         self.container = container
         let services = AppServices(modelContainer: container)

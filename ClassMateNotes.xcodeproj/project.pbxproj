@@ -218,6 +218,8 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Record voice notes on your pages.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Add photos to your notebook pages.";
 				INFOPLIST_KEY_CFBundleDisplayName = "ClassMate Notes";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -245,6 +247,8 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Record voice notes on your pages.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Add photos to your notebook pages.";
 				INFOPLIST_KEY_CFBundleDisplayName = "ClassMate Notes";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;

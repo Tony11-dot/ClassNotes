@@ -20,7 +20,7 @@ line_length:
 
 identifier_name:
   min_length: 2
-  excluded: [x, y, r, g, b, a, id]
+  excluded: [x, y, r, g, b, a, c, t, z, q, v, id, dx, dy]
 
 custom_rules:
   no_editor_import_outside_routing:

@@ -23,11 +23,14 @@ public struct SettingsScreen: View {
     public var body: some View {
         NavigationStack {
             List {
+                AccountSettingsSection()
+                NovaSettingsSection()
                 presetSection(title: "Light themes", presets: ThemePreset.lightFamily, includeSystem: true)
                 presetSection(title: "Dark themes", presets: ThemePreset.darkFamily, includeSystem: false)
                 customThemesSection
                 paperSection
                 premiumSection
+                AboutSettingsSection()
                 #if DEBUG
                 debugSection
                 #endif

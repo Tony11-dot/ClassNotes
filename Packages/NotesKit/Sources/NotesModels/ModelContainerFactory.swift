@@ -3,7 +3,7 @@ import SwiftData
 
 public enum ModelContainerFactory {
     public static var schema: Schema {
-        Schema([Notebook.self, CustomThemeRecord.self, AppPreferences.self])
+        Schema([Notebook.self, Shelf.self, CustomThemeRecord.self, AppPreferences.self])
     }
 
     /// Persistent container, falling back to in-memory rather than crashing at

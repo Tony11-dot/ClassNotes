@@ -14,6 +14,7 @@ public struct LibraryGridScreen<Destination: View>: View {
     @Environment(AppServices.self) private var services
     @Environment(\.theme) private var theme
     @Query(sort: \Notebook.updatedAt, order: .reverse) private var notebooks: [Notebook]
+    @Query(sort: \Shelf.sortIndex) private var shelves: [Shelf]
 
     private let destination: (Notebook) -> Destination
 
@@ -24,18 +25,30 @@ public struct LibraryGridScreen<Destination: View>: View {
     @State private var renameTarget: Notebook?
     @State private var renameText = ""
     @State private var deleteTarget: Notebook?
+    @State private var selectedShelf: UUID?
+    @State private var showNewShelf = false
 
     public init(@ViewBuilder destination: @escaping (Notebook) -> Destination) {
         self.destination = destination
     }
 
+    private var visibleNotebooks: [Notebook] {
+        guard let selectedShelf else { return notebooks }
+        return notebooks.filter { $0.shelfID == selectedShelf }
+    }
+
     public var body: some View {
         NavigationStack {
-            Group {
-                if notebooks.isEmpty {
-                    emptyState
-                } else {
-                    grid
+            VStack(spacing: 0) {
+                if !shelves.isEmpty {
+                    shelfBar
+                }
+                Group {
+                    if visibleNotebooks.isEmpty {
+                        emptyState
+                    } else {
+                        grid
+                    }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -48,6 +61,7 @@ public struct LibraryGridScreen<Destination: View>: View {
         }
         .sheet(isPresented: $showCreate) { CreateNotebookSheet() }
         .sheet(isPresented: $showSettings) { SettingsScreen() }
+        .sheet(isPresented: $showNewShelf) { NewShelfSheet() }
         .sheet(isPresented: $showLimitPaywall) {
             PaywallView(highlighting: .unlimitedNotebooks)
         }
@@ -82,7 +96,7 @@ public struct LibraryGridScreen<Destination: View>: View {
                 columns: [GridItem(.adaptive(minimum: 170, maximum: 230), spacing: 28)],
                 spacing: 28
             ) {
-                ForEach(notebooks) { notebook in
+                ForEach(visibleNotebooks) { notebook in
                     coverCell(notebook)
                 }
             }
@@ -90,6 +104,57 @@ public struct LibraryGridScreen<Destination: View>: View {
             .padding(.top, 12)
             .padding(.bottom, 120)
         }
+    }
+
+    private var shelfBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                shelfChip(title: "All", symbol: "square.grid.2x2", color: theme.accent, isSelected: selectedShelf == nil) {
+                    selectedShelf = nil
+                }
+                ForEach(shelves) { shelf in
+                    shelfChip(
+                        title: shelf.name,
+                        symbol: shelf.symbolName,
+                        color: ThemeColor(hex: shelf.colorHex) ?? theme.accent,
+                        isSelected: selectedShelf == shelf.id
+                    ) {
+                        selectedShelf = shelf.id
+                    }
+                    .contextMenu {
+                        Button(role: .destructive) {
+                            if selectedShelf == shelf.id { selectedShelf = nil }
+                            try? services.repository.deleteShelf(shelf)
+                        } label: {
+                            Label("Delete shelf", systemImage: "trash")
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 28)
+            .padding(.vertical, 10)
+        }
+    }
+
+    private func shelfChip(
+        title: String,
+        symbol: String,
+        color: ThemeColor,
+        isSelected: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: symbol)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(isSelected ? theme.contrastingInk(on: color).color : theme.ink.color)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(
+                    isSelected ? color.color : theme.surfaceRaised.color,
+                    in: Capsule()
+                )
+        }
+        .buttonStyle(.plain)
     }
 
     private func coverCell(_ notebook: Notebook) -> some View {
@@ -116,6 +181,14 @@ public struct LibraryGridScreen<Destination: View>: View {
             } label: {
                 Label("Rename", systemImage: "pencil")
             }
+            Menu {
+                Button("None") { services.repository.assign(notebook, toShelf: nil) }
+                ForEach(shelves) { shelf in
+                    Button(shelf.name) { services.repository.assign(notebook, toShelf: shelf.id) }
+                }
+            } label: {
+                Label("Move to shelf", systemImage: "tray.full")
+            }
             Button(role: .destructive) {
                 deleteTarget = notebook
             } label: {
@@ -141,6 +214,9 @@ public struct LibraryGridScreen<Destination: View>: View {
                     } else {
                         showLimitPaywall = true
                     }
+                }
+                DSGlassIconButton("New shelf", systemImage: "tray.and.arrow.down") {
+                    showNewShelf = true
                 }
                 DSGlassIconButton("Settings", systemImage: "gearshape") {
                     showSettings = true

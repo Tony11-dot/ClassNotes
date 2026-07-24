@@ -9,6 +9,7 @@ let package = Package(
         .library(name: "NotesServices", targets: ["NotesServices"]),
         .library(name: "NotesDesignSystem", targets: ["NotesDesignSystem"]),
         .library(name: "NotesPaywall", targets: ["NotesPaywall"]),
+        .library(name: "NotesAI", targets: ["NotesAI"]),
         .library(name: "NotesLibrary", targets: ["NotesLibrary"]),
         .library(name: "NotesEditor", targets: ["NotesEditor"])
     ],
@@ -26,30 +27,36 @@ let package = Package(
         ),
         .target(
             name: "NotesDesignSystem",
-            dependencies: ["ClassMateTheme", "NotesModels"]
+            dependencies: ["ClassMateTheme", "NotesModels", "NotesServices"],
+            resources: [.process("Resources")]
         ),
         .target(
             name: "NotesPaywall",
             dependencies: ["NotesServices", "NotesDesignSystem", "ClassMateTheme"]
         ),
         .target(
+            name: "NotesAI",
+            dependencies: ["NotesServices", "NotesDesignSystem", "NotesModels", "ClassMateTheme"]
+        ),
+        .target(
             name: "NotesLibrary",
             dependencies: [
                 "NotesModels", "NotesServices", "NotesDesignSystem",
-                "NotesPaywall", "ClassMateTheme"
+                "NotesPaywall", "NotesAI", "ClassMateTheme"
             ]
         ),
         .target(
             name: "NotesEditor",
             dependencies: [
-                "NotesModels", "NotesServices", "NotesDesignSystem", "ClassMateTheme"
+                "NotesModels", "NotesServices", "NotesDesignSystem",
+                "NotesAI", "ClassMateTheme"
             ]
         ),
         .testTarget(
             name: "NotesKitTests",
             dependencies: [
                 "NotesModels", "NotesServices", "NotesDesignSystem",
-                "NotesPaywall", "NotesLibrary", "NotesEditor", "ClassMateTheme"
+                "NotesPaywall", "NotesAI", "NotesLibrary", "NotesEditor", "ClassMateTheme"
             ]
         )
     ]
