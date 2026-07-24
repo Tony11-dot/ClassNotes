@@ -10,5 +10,10 @@
 	<string>$(SUPPORT_AI_API_KEY)</string>
 	<key>SUPPORT_AI_MODEL</key>
 	<string>$(SUPPORT_AI_MODEL)</string>
+	<!-- App uses only standard HTTPS/TLS + Keychain (exempt encryption), so it
+	     is exempt from export compliance. Declaring it here skips the App Store
+	     Connect prompt on every upload. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 </dict>
 </plist>
