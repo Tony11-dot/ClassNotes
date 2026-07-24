@@ -18,6 +18,7 @@
 
 /* Begin PBXFileReference section */
 		AA0000000000000000000006 /* ClassMateNotes.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ClassMateNotes.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA0000000000000000000040 /* Secrets.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Secrets.xcconfig; path = Config/Secrets.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -46,6 +47,7 @@
 			isa = PBXGroup;
 			children = (
 				AA0000000000000000000003 /* App */,
+				AA0000000000000000000040 /* Secrets.xcconfig */,
 				AA0000000000000000000004 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -213,11 +215,13 @@
 		};
 		AA000000000000000000000E /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = AA0000000000000000000040 /* Secrets.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Config/Info.plist;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Record voice notes on your pages.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Add photos to your notebook pages.";
 				INFOPLIST_KEY_CFBundleDisplayName = "ClassMate Notes";
@@ -242,11 +246,13 @@
 		};
 		AA000000000000000000000F /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = AA0000000000000000000040 /* Secrets.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Config/Info.plist;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Record voice notes on your pages.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Add photos to your notebook pages.";
 				INFOPLIST_KEY_CFBundleDisplayName = "ClassMate Notes";

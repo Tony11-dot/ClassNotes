@@ -35,9 +35,26 @@ struct AIServiceTests {
     func configuration() {
         let secrets = InMemorySecretStore()
         let provider = GroqProvider(keychain: secrets)
-        #expect(!provider.isConfigured)
+        // Assumes no GROQ_API_KEY in the environment of the test runner.
+        if AIConfig.apiKey(secrets: InMemorySecretStore()).isEmpty {
+            #expect(!provider.isConfigured)
+        }
         secrets.set("gsk_x", for: .groqAPIKey)
         #expect(provider.isConfigured)
+    }
+
+    @Test("AIConfig mirrors ClassMate's Groq defaults and key fallback")
+    func configDefaults() {
+        #expect(AIConfig.defaultBaseURL == "https://api.groq.com/openai/v1")
+        #expect(AIConfig.defaultModel == "llama-3.3-70b-versatile")
+        #expect(AIConfig.chatCompletionsURL.absoluteString
+            == "https://api.groq.com/openai/v1/chat/completions")
+        // Keychain key is the fallback when no env/plist key is set.
+        let secrets = InMemorySecretStore()
+        secrets.set("gsk_kc", for: .groqAPIKey)
+        if AIConfig.apiKey(secrets: InMemorySecretStore()).isEmpty {
+            #expect(AIConfig.apiKey(secrets: secrets) == "gsk_kc")
+        }
     }
 }
 

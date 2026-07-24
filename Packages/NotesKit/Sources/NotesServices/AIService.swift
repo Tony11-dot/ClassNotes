@@ -29,33 +29,35 @@ public protocol AIProvider: Sendable {
     func streamReply(to messages: [AIMessage]) -> AsyncThrowingStream<String, Error>
 }
 
-/// Groq (free, OpenAI-compatible). The API key lives in the Keychain and is
-/// entered by the user in Settings — it is never embedded in source.
+/// Groq (free, OpenAI-compatible), configured exactly like ClassMate — see
+/// `AIConfig` for the env-var names and resolution order. The key comes from
+/// env / build-injected Info.plist / the user's Keychain, never from source.
 public struct GroqProvider: AIProvider {
-    public static let endpoint = URL(string: "https://api.groq.com/openai/v1/chat/completions")!
-    /// A strong free model on Groq. Kept in one place so it's easy to change.
-    public static let defaultModel = "llama-3.3-70b-versatile"
+    /// A strong free model on Groq — same default as ClassMate.
+    public static let defaultModel = AIConfig.defaultModel
 
     private let keychain: any SecretStore
     private let session: URLSession
-    private let model: String
+    private let modelOverride: String?
 
     public init(
         keychain: any SecretStore = KeychainStore(),
         session: URLSession = .shared,
-        model: String = GroqProvider.defaultModel
+        model: String? = nil
     ) {
         self.keychain = keychain
         self.session = session
-        self.model = model
+        self.modelOverride = model
     }
 
+    private var model: String { modelOverride ?? AIConfig.model() }
+
     public var isConfigured: Bool {
-        !(keychain.get(.groqAPIKey) ?? "").isEmpty
+        !AIConfig.apiKey(secrets: keychain).isEmpty || AIConfig.isKeylessLocal()
     }
 
     public func makeRequest(messages: [AIMessage], key: String) throws -> URLRequest {
-        var request = URLRequest(url: Self.endpoint)
+        var request = URLRequest(url: AIConfig.chatCompletionsURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
@@ -89,7 +91,8 @@ public struct GroqProvider: AIProvider {
     public func streamReply(to messages: [AIMessage]) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
-                guard let key = keychain.get(.groqAPIKey), !key.isEmpty else {
+                let key = AIConfig.apiKey(secrets: keychain)
+                guard !key.isEmpty else {
                     continuation.finish(throwing: AIError.missingKey)
                     return
                 }

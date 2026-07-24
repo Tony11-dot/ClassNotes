@@ -76,8 +76,9 @@ struct NovaSettingsSection: View {
             Text("NOVA (AI)")
         } footer: {
             Text("""
-                 NOVA uses Groq's free API. Your key is stored only in this \
-                 device's Keychain and never leaves it except to call Groq.
+                 NOVA uses Groq's free API (same setup as ClassMate). A key \
+                 built into the app is used first; otherwise this key is stored \
+                 only in the Keychain and never leaves the device except to call Groq.
                  """)
         }
         .listRowBackground(theme.surfaceRaised.color)
