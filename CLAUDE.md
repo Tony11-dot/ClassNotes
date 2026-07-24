@@ -46,10 +46,37 @@ Universal app, Swift 6 (strict concurrency), SwiftUI-first, Liquid Glass design 
   (`PageGeometry`); `PageCanvasView` pins the PKCanvasView zoom so drawings are
   device-independent. Don't size canvases in raw view points.
 
+## Architecture invariants (added features)
+
+- Sign-in reuses ClassMate's REAL backend accounts. `ClassMateAPIClient` +
+  `AuthService` hit `POST /auth/login` (`{identifier,password}`→`{token}`),
+  `GET /auth/me`, base URL `pacific-enchantment-production-7a80.up.railway.app`
+  (override via `CM_API_BASE_URL` env or `CMApiBaseURL` Info.plist key). The app
+  gates the library behind `AuthService.state == .authenticated`.
+- Secrets go through `SecretStore` — `KeychainStore` in the app, `InMemorySecretStore`
+  in tests (SPM test hosts can't use the Keychain). The two secrets are the
+  ClassMate session token and the user's Groq API key. Never embed keys in source.
+- AI is `AIProvider` (Groq streaming today) behind `NovaConversation`; the Groq
+  key is user-entered in Settings → Keychain. Circle-to-explain OCRs the focused
+  page and seeds NOVA. Keep AI provider-swappable for a future backend proxy.
+- `NotesAI` is the only module that owns NOVA UI; `NotesEditor` and `NotesLibrary`
+  depend on it. Editor-only code still lives behind the `App/Routing` import rule.
+- Brand parity: reuse ClassMate's single blue CM mark + wordmark as TEMPLATE
+  images tinted to the theme accent (BrandMark/BrandWordmark), and bundle Cabinet
+  Grotesk in NotesDesignSystem (registered at launch via `CMFonts`). Do not add a
+  Lottie dependency — the launch animation is native (`LaunchView`).
+- Page content beyond ink is `PageElement` (image/file/audio/text) stored in the
+  manifest (v2; v1 loads loss-free) with payloads under the package's `media/`.
+
 ## Milestones
 
-Milestone 1 (current): library, multi-page PencilKit canvas, floating tool
-palette, page templates, persistence, Pencil double-tap/squeeze, Settings with
-themes + paper tone + custom theme editor; iPhone read-only viewer; paywall
-scaffold with debug entitlement toggle. Do not build ahead of the milestone.
-Handwriting-to-font is Milestone 3 — entitlement stub only.
+Milestone 1 shipped (library, canvas, palette, templates, persistence, Pencil
+double-tap/squeeze, Settings/themes, iPhone viewer, paywall scaffold).
+
+Milestone 2 (current, in progress): ClassMate identity + real auth, profile,
+About/Support, privacy link, logout; NOVA AI (Groq) with circle-to-explain;
+creative tools — two-finger ruler, media/file drop, voice-note bubbles,
+handwriting→text (Vision OCR re-typeset in a chosen font); shelves/collections.
+
+Later: iCloud sync; generating a PERSONAL font from handwriting samples (the hard
+ML feature — distinct from the shipped handwriting→text) stays a premium stub.
