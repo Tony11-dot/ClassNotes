@@ -42,7 +42,39 @@ public struct BrandWordmark: View {
             .scaledToFit()
             .foregroundStyle(tint ?? theme.accent.color)
             .frame(height: height)
-            .accessibilityLabel("ClassMate Notes")
+            .accessibilityLabel("ClassNotes")
+    }
+}
+
+/// The app's name. Kept in one place so a rename is a one-liner.
+public enum BrandName {
+    public static let display = "ClassNotes"
+}
+
+/// CN mark + "ClassNotes" wordmark, laid out as a lockup and tinted to the
+/// theme accent. Used on the launch screen and login so we only need the single
+/// mark asset (the wordmark is live text in Cabinet Grotesk).
+public struct BrandLockup: View {
+    @Environment(\.theme) private var theme
+    let markSize: CGFloat
+    let fontSize: CGFloat
+    var tint: Color?
+
+    public init(markSize: CGFloat = 72, fontSize: CGFloat = 34, tint: Color? = nil) {
+        self.markSize = markSize
+        self.fontSize = fontSize
+        self.tint = tint
+    }
+
+    public var body: some View {
+        HStack(spacing: markSize * 0.16) {
+            BrandMark(size: markSize, tint: tint)
+            Text(BrandName.display)
+                .font(CMFonts.font(size: fontSize, weight: .bold))
+                .foregroundStyle(tint ?? theme.accent.color)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(BrandName.display)
     }
 }
 

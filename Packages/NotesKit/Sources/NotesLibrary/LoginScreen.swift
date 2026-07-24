@@ -12,7 +12,7 @@ public struct LoginScreen: View {
     @State private var identifier = ""
     @State private var password = ""
     @State private var busy = false
-    @State private var showRegister = false
+    @State private var showForgot = false
     @FocusState private var focus: Field?
 
     private enum Field { case identifier, password }
@@ -29,12 +29,12 @@ public struct LoginScreen: View {
                     .frame(maxWidth: .infinity)
             }
         }
-        .sheet(isPresented: $showRegister) { RegisterSheet() }
+        .sheet(isPresented: $showForgot) { ForgotPasswordSheet(prefill: identifier) }
     }
 
     private var card: some View {
         VStack(spacing: 18) {
-            BrandWordmark(height: 50)
+            BrandLockup(markSize: 60, fontSize: 30)
                 .padding(.bottom, 4)
             VStack(spacing: 4) {
                 Text("Welcome back")
@@ -67,6 +67,13 @@ public struct LoginScreen: View {
             .submitLabel(.go)
             .onSubmit(signIn)
 
+            HStack {
+                Spacer()
+                Button("Forgot password?") { showForgot = true }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(theme.accent.color)
+            }
+
             if let error = services.auth.lastError {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
                     .font(.footnote)
@@ -86,10 +93,6 @@ public struct LoginScreen: View {
             }
             .buttonStyle(.glassProminent)
             .disabled(busy)
-
-            Button("Create an account") { showRegister = true }
-                .font(.subheadline)
-                .foregroundStyle(theme.accent.color)
         }
         .padding(28)
         .background(
@@ -150,51 +153,90 @@ public struct LoginScreen: View {
     }
 }
 
-/// Minimal registration against `POST /auth/register`.
-struct RegisterSheet: View {
+/// "Forgot password?" — sends a reset link through ClassMate's backend
+/// (`POST /auth/forgot-password`), same as the ClassMate app.
+struct ForgotPasswordSheet: View {
     @Environment(AppServices.self) private var services
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
 
-    @State private var name = ""
-    @State private var email = ""
-    @State private var password = ""
+    let prefill: String
+    @State private var identifier: String
     @State private var busy = false
+    @State private var sent = false
+
+    init(prefill: String) {
+        self.prefill = prefill
+        self._identifier = State(initialValue: prefill)
+    }
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section {
-                    TextField("Full name", text: $name)
-                    TextField("Email", text: $email)
-                        .textInputAutocapitalization(.never)
-                        .keyboardType(.emailAddress)
-                        .autocorrectionDisabled()
-                    SecureField("Password", text: $password)
+            ZStack {
+                AmbientBackground(seed: 9, opacity: 0.6)
+                VStack(spacing: 18) {
+                    if sent {
+                        VStack(spacing: 10) {
+                            Image(systemName: "envelope.badge")
+                                .font(.system(size: 40))
+                                .foregroundStyle(theme.accent.color)
+                            Text("Check your email")
+                                .font(.title3.weight(.bold))
+                                .foregroundStyle(theme.ink.color)
+                            Text("If an account matches, we've sent a reset link. The link expires soon for your security.")
+                                .font(.subheadline)
+                                .foregroundStyle(theme.inkSecondary.color)
+                                .multilineTextAlignment(.center)
+                        }
+                        .padding(.top, 24)
+                    } else {
+                        VStack(spacing: 6) {
+                            Text("Reset your password")
+                                .font(.title3.weight(.bold))
+                                .foregroundStyle(theme.ink.color)
+                            Text("Enter your email or username and we'll send a reset link.")
+                                .font(.subheadline)
+                                .foregroundStyle(theme.inkSecondary.color)
+                                .multilineTextAlignment(.center)
+                        }
+                        .padding(.top, 12)
+
+                        TextField("Email or username", text: $identifier)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .keyboardType(.emailAddress)
+                            .padding(.horizontal, 14).padding(.vertical, 13)
+                            .background(
+                                theme.surfaceRaised.color,
+                                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            )
+
+                        Button {
+                            busy = true
+                            Task {
+                                _ = await services.auth.requestPasswordReset(identifier: identifier)
+                                busy = false
+                                sent = true
+                            }
+                        } label: {
+                            Group {
+                                if busy { ProgressView() } else { Text("Email me a reset link").font(.headline) }
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 48)
+                        }
+                        .buttonStyle(.glassProminent)
+                        .disabled(busy || identifier.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                    Spacer()
                 }
-                if let error = services.auth.lastError {
-                    Text(error).foregroundStyle(.red).font(.footnote)
-                }
+                .padding(24)
             }
-            .navigationTitle("Create account")
+            .navigationTitle("Forgot password")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Create") {
-                        busy = true
-                        Task {
-                            defer { busy = false }
-                            if await services.auth.register(email: email, name: name, password: password) {
-                                dismiss()
-                            }
-                        }
-                    }
-                    .disabled(busy || name.isEmpty || email.isEmpty || password.count < 3)
-                }
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }
         }
+        .presentationDetents([.medium])
     }
 }

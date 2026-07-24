@@ -100,9 +100,9 @@ public struct AboutScreen: View {
                 VStack(alignment: .leading, spacing: 22) {
                     HStack { Spacer(); BrandMark(size: 72); Spacer() }
                         .padding(.top, 8)
-                    block("What is ClassMate Notes?",
+                    block("What is ClassNotes?",
                           """
-                          ClassMate Notes is a native note-taking studio for \
+                          ClassNotes is a native note-taking studio for \
                           students — handwriting, drawing, voice, media and AI \
                           in one place, themed to match ClassMate.
                           """)
@@ -116,7 +116,7 @@ public struct AboutScreen: View {
                           "Built by the ClassMate team.\nQuestions: \(ClassMateLinks.supportEmail)")
                     Link("Privacy Policy", destination: ClassMateLinks.privacy)
                         .foregroundStyle(theme.accent.color)
-                    Text("ClassMate Notes · v\(ClassMateLinks.appVersion)")
+                    Text("ClassNotes · v\(ClassMateLinks.appVersion)")
                         .font(.caption)
                         .foregroundStyle(theme.inkSecondary.color)
                 }

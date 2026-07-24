@@ -43,7 +43,11 @@ struct RootView: View {
     private var content: some View {
         switch services.auth.state {
         case .loading:
-            Color.clear
+            ZStack {
+                services.themeService.spec(prefersDark: systemScheme == .dark).surface.color
+                    .ignoresSafeArea()
+                BrandLoader(size: 64)
+            }
         case .signedOut:
             LoginScreen()
         case .authenticated:

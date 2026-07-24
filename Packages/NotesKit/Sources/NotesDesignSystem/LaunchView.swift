@@ -3,7 +3,7 @@ import SwiftUI
 
 /// The launch animation, rebuilt natively to match ClassMate's `CmSplashScreen`:
 /// white/paper background, the CM mark fades + scales in (easeOutBack), then the
-/// "ClassMate Notes" wordmark reveals with a blinking cursor, then it hands off.
+/// "ClassNotes" wordmark reveals with a blinking cursor, then it hands off.
 public struct LaunchView: View {
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -15,7 +15,7 @@ public struct LaunchView: View {
     @State private var showCursor = true
     @State private var faded = false
 
-    private let fullText = "ClassMate Notes"
+    private let fullText = BrandName.display
 
     public init(onFinished: @escaping () -> Void) {
         self.onFinished = onFinished
@@ -28,18 +28,18 @@ public struct LaunchView: View {
     public var body: some View {
         ZStack {
             theme.paper.color.ignoresSafeArea()
-            HStack(spacing: 12) {
-                BrandMark(size: 76)
+            HStack(spacing: 16) {
+                BrandMark(size: 104)
                     .scaleEffect(markIn ? 1 : 0.85)
                     .opacity(markIn ? 1 : 0)
-                HStack(spacing: 1) {
+                HStack(spacing: 2) {
                     Text(revealed)
-                        .font(CMFonts.font(size: 30, weight: .bold))
+                        .font(CMFonts.font(size: 40, weight: .bold))
                         .foregroundStyle(theme.accent.color)
                     if textProgress < fullText.count || showCursor {
                         Rectangle()
                             .fill(theme.accent.color)
-                            .frame(width: 3, height: 30)
+                            .frame(width: 4, height: 40)
                             .opacity(showCursor ? 1 : 0)
                     }
                 }

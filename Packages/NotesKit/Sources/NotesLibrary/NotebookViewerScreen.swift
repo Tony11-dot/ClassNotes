@@ -35,7 +35,7 @@ public struct NotebookViewerScreen: View {
                     .padding(.horizontal, 12)
                 }
             } else {
-                ProgressView()
+                BrandLoader(size: 52)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }

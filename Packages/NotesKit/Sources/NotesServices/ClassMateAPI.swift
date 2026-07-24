@@ -135,6 +135,16 @@ public struct ClassMateAPIClient: Sendable {
         return try token(from: data)
     }
 
+    /// `POST /auth/forgot-password` body `{identifier, channel}` → `{sent}`.
+    public func forgotPassword(identifier: String, channel: String = "email") async throws -> Bool {
+        let body = ["identifier": identifier, "channel": channel]
+        let (data, status) = try await post(path: "/auth/forgot-password", body: body, token: nil)
+        guard (200..<300).contains(status) else { throw APIError.badResponse(status: status) }
+        struct SentResponse: Decodable { let sent: Bool? }
+        let decoded = try? JSONDecoder().decode(SentResponse.self, from: data)
+        return decoded?.sent ?? true
+    }
+
     /// `GET /auth/me` (Bearer) → profile.
     public func me(token: String) async throws -> ClassMateUser {
         let (data, status) = try await get(path: "/auth/me", token: token)

@@ -48,6 +48,9 @@ public struct EditorScreen: View {
         ZStack {
             theme.surface.color.ignoresSafeArea()
             pageScroll
+            if model.manifest == nil {
+                BrandLoader(size: 56)
+            }
             if rulerVisible {
                 RulerOverlay(isVisible: $rulerVisible).ignoresSafeArea()
             }

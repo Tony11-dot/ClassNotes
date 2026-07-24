@@ -55,7 +55,7 @@ public struct PaywallView: View {
             Image(systemName: "sparkles")
                 .font(.system(size: 36, weight: .light))
                 .foregroundStyle(theme.accent.color)
-            Text("ClassMate Notes Premium")
+            Text("ClassNotes Premium")
                 .font(.title2.weight(.bold))
                 .foregroundStyle(theme.ink.color)
             Text("Everything in the free app stays free. Premium adds the studio.")

@@ -107,6 +107,13 @@ public final class AuthService {
         }
     }
 
+    /// Sends a password-reset link via ClassMate's backend (email channel).
+    public func requestPasswordReset(identifier: String) async -> Bool {
+        let id = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !id.isEmpty else { return false }
+        return (try? await client.forgotPassword(identifier: id)) ?? false
+    }
+
     public func signOut() {
         signOutLocally()
     }

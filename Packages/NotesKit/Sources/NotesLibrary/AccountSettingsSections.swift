@@ -106,7 +106,7 @@ struct AboutSettingsSection: View {
         } header: {
             Text("Help")
         } footer: {
-            Text("ClassMate Notes · v\(ClassMateLinks.appVersion)")
+            Text("ClassNotes · v\(ClassMateLinks.appVersion)")
         }
         .tint(theme.accent.color)
         .listRowBackground(theme.surfaceRaised.color)
