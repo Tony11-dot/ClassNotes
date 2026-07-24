@@ -1,0 +1,11 @@
+.DS_Store
+xcuserdata/
+*.xcuserstate
+DerivedData/
+.build/
+.swiftpm/
+build/
+*.ipa
+*.dSYM.zip
+*.dSYM
+TestArtifacts/

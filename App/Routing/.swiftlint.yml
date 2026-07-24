@@ -1,0 +1,4 @@
+# App/Routing is the ONE place allowed to import NotesEditor (see root config).
+parent_config: ../../.swiftlint.yml
+disabled_rules:
+  - no_editor_import_outside_routing

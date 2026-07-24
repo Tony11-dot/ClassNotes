@@ -1,0 +1,91 @@
+{
+  "identifier" : "F3A1B2C4-0000-4000-8000-000000000001",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+    {
+      "displayPrice" : "9.99",
+      "familyShareable" : false,
+      "internalID" : "F3A1B2C4-0000-4000-8000-000000000002",
+      "localizations" : [
+        {
+          "description" : "All local premium features, forever.",
+          "displayName" : "Premium Lifetime",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "notes.classmate.premium.lifetime",
+      "referenceName" : "Premium Lifetime",
+      "type" : "NonConsumable"
+    }
+  ],
+  "settings" : {
+
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "F3A1B2C4-0000-4000-8000-000000000003",
+      "localizations" : [
+
+      ],
+      "name" : "Premium",
+      "subscriptions" : [
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "1.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "F3A1B2C4-0000-4000-8000-000000000004",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "Everything, including sync and AI features.",
+              "displayName" : "Premium Monthly",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "notes.classmate.premium.monthly",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "Premium Monthly",
+          "subscriptionGroupID" : "F3A1B2C4-0000-4000-8000-000000000003",
+          "type" : "RecurringSubscription"
+        },
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "14.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "F3A1B2C4-0000-4000-8000-000000000005",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "Everything, including sync and AI features. Two months free.",
+              "displayName" : "Premium Yearly",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "notes.classmate.premium.yearly",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "Premium Yearly",
+          "subscriptionGroupID" : "F3A1B2C4-0000-4000-8000-000000000003",
+          "type" : "RecurringSubscription"
+        }
+      ]
+    }
+  ],
+  "version" : {
+    "major" : 3,
+    "minor" : 0
+  }
+}

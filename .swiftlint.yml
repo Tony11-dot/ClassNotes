@@ -1,0 +1,36 @@
+included:
+  - App
+  - Packages/ClassMateTheme/Sources
+  - Packages/NotesKit/Sources
+excluded:
+  - "**/.build"
+  - "**/DerivedData"
+
+opt_in_rules:
+  - empty_count
+  - closure_spacing
+  - contains_over_first_not_nil
+  - fatal_error_message
+  - first_where
+  - sorted_imports
+
+line_length:
+  warning: 130
+  error: 170
+
+identifier_name:
+  min_length: 2
+  excluded: [x, y, r, g, b, a, id]
+
+custom_rules:
+  no_editor_import_outside_routing:
+    name: "NotesEditor import confined to App/Routing"
+    regex: "^import NotesEditor$"
+    match_kinds: [keyword, identifier]
+    message: "Only App/Routing may import NotesEditor. iPhone code paths must never reach editing code."
+    severity: error
+  no_raw_hex_literals:
+    name: "No raw hex color literals outside ClassMateTheme"
+    regex: "\"#[0-9A-Fa-f]{6,8}\""
+    message: "All styling goes through ClassMateTheme/NotesDesignSystem tokens."
+    severity: error

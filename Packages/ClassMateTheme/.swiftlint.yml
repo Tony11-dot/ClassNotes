@@ -1,0 +1,4 @@
+# ClassMateTheme IS the theme definition layer — the one place hex literals live.
+parent_config: ../../.swiftlint.yml
+disabled_rules:
+  - no_raw_hex_literals
