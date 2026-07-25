@@ -58,7 +58,15 @@ public struct GroqProvider: AIProvider {
     private var model: String { modelOverride ?? AIConfig.model() }
 
     public var isConfigured: Bool {
-        !AIConfig.apiKey(secrets: keychain).isEmpty || AIConfig.isKeylessLocal()
+        if AIConfig.isProxy { return !(keychain.get(.authToken) ?? "").isEmpty }
+        return !AIConfig.apiKey(secrets: keychain).isEmpty || AIConfig.isKeylessLocal()
+    }
+
+    /// The Authorization bearer: in proxy mode this is the user's ClassMate
+    /// session token (the proxy holds the Groq key server-side); otherwise it's
+    /// the Groq key itself (env / build-injected / user's Keychain).
+    private var bearer: String {
+        AIConfig.isProxy ? (keychain.get(.authToken) ?? "") : AIConfig.apiKey(secrets: keychain)
     }
 
     public func makeRequest(messages: [AIMessage], key: String) throws -> URLRequest {
@@ -113,7 +121,7 @@ public struct GroqProvider: AIProvider {
     public func streamReply(to messages: [AIMessage]) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
-                let key = AIConfig.apiKey(secrets: keychain)
+                let key = bearer
                 guard !key.isEmpty else {
                     continuation.finish(throwing: AIError.missingKey)
                     return

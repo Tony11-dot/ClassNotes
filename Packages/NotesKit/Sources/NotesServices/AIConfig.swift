@@ -47,6 +47,13 @@ public enum AIConfig {
         value("SUPPORT_AI_VISION_MODEL") ?? defaultVisionModel
     }
 
+    /// Proxy mode (`SUPPORT_AI_MODE = proxy`): the base URL points at our NOVA
+    /// proxy, which holds the Groq key server-side. In this mode the app sends
+    /// the user's ClassMate session token as the bearer — no key in the binary.
+    public static var isProxy: Bool {
+        (value("SUPPORT_AI_MODE") ?? "").lowercased() == "proxy"
+    }
+
     /// The API key: env / Info.plist (build-injected) first, then the user's
     /// Keychain key from Settings.
     public static func apiKey(secrets: any SecretStore) -> String {
