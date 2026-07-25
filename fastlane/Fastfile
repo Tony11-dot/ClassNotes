@@ -7,8 +7,8 @@
 # project, so we build with `gym` against the shared scheme. Signing is
 # automatic and headless (the ASC API key lets Xcode create/renew profiles).
 
-APP_PROJECT = "ClassMateNotes.xcodeproj"
-SCHEME      = "ClassMateNotes"
+APP_PROJECT = "ClassNotes.xcodeproj"
+SCHEME      = "ClassNotes"
 TEAM_ID     = "NNFD7CKGLG"
 BUNDLE_ID   = "com.classmate.notes"
 IPA_DIR     = "build"

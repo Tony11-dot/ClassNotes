@@ -31,9 +31,15 @@ public actor DocumentStore {
                 for: .applicationSupportDirectory,
                 in: .userDomainMask
             )[0]
-            self.rootURL = support
-                .appendingPathComponent("ClassMateNotes", isDirectory: true)
-                .appendingPathComponent("Notebooks", isDirectory: true)
+            // One-time migration from the old "ClassMateNotes" container to
+            // "ClassNotes" so testers on builds 1–4 keep their notebooks.
+            let fm = FileManager.default
+            let newContainer = support.appendingPathComponent("ClassNotes", isDirectory: true)
+            let oldContainer = support.appendingPathComponent("ClassMateNotes", isDirectory: true)
+            if !fm.fileExists(atPath: newContainer.path), fm.fileExists(atPath: oldContainer.path) {
+                try? fm.moveItem(at: oldContainer, to: newContainer)
+            }
+            self.rootURL = newContainer.appendingPathComponent("Notebooks", isDirectory: true)
         }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

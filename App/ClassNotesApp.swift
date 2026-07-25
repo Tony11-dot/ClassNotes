@@ -5,7 +5,7 @@ import SwiftData
 import SwiftUI
 
 @main
-struct ClassMateNotesApp: App {
+struct ClassNotesApp: App {
     private let container: ModelContainer
     @State private var services: AppServices
 

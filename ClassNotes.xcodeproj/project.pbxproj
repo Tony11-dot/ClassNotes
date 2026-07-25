@@ -17,7 +17,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		AA0000000000000000000006 /* ClassMateNotes.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ClassMateNotes.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA0000000000000000000006 /* ClassNotes.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ClassNotes.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA0000000000000000000040 /* Secrets.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Secrets.xcconfig; path = Config/Secrets.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -59,7 +59,7 @@
 		AA0000000000000000000004 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				AA0000000000000000000006 /* ClassMateNotes.app */,
+				AA0000000000000000000006 /* ClassNotes.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -67,9 +67,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		AA0000000000000000000005 /* ClassMateNotes */ = {
+		AA0000000000000000000005 /* ClassNotes */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = AA000000000000000000000B /* Build configuration list for PBXNativeTarget "ClassMateNotes" */;
+			buildConfigurationList = AA000000000000000000000B /* Build configuration list for PBXNativeTarget "ClassNotes" */;
 			buildPhases = (
 				AA0000000000000000000007 /* Sources */,
 				AA0000000000000000000008 /* Frameworks */,
@@ -82,7 +82,7 @@
 			fileSystemSynchronizedGroups = (
 				AA0000000000000000000003 /* App */,
 			);
-			name = ClassMateNotes;
+			name = ClassNotes;
 			packageProductDependencies = (
 				AA0000000000000000000020 /* ClassMateTheme */,
 				AA0000000000000000000021 /* NotesModels */,
@@ -92,8 +92,8 @@
 				AA0000000000000000000025 /* NotesLibrary */,
 				AA0000000000000000000026 /* NotesEditor */,
 			);
-			productName = ClassMateNotes;
-			productReference = AA0000000000000000000006 /* ClassMateNotes.app */;
+			productName = ClassNotes;
+			productReference = AA0000000000000000000006 /* ClassNotes.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -111,7 +111,7 @@
 					};
 				};
 			};
-			buildConfigurationList = AA000000000000000000000A /* Build configuration list for PBXProject "ClassMateNotes" */;
+			buildConfigurationList = AA000000000000000000000A /* Build configuration list for PBXProject "ClassNotes" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -129,7 +129,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				AA0000000000000000000005 /* ClassMateNotes */,
+				AA0000000000000000000005 /* ClassNotes */,
 			);
 		};
 /* End PBXProject section */
@@ -286,7 +286,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		AA000000000000000000000A /* Build configuration list for PBXProject "ClassMateNotes" */ = {
+		AA000000000000000000000A /* Build configuration list for PBXProject "ClassNotes" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				AA000000000000000000000C /* Debug */,
@@ -295,7 +295,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		AA000000000000000000000B /* Build configuration list for PBXNativeTarget "ClassMateNotes" */ = {
+		AA000000000000000000000B /* Build configuration list for PBXNativeTarget "ClassNotes" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				AA000000000000000000000E /* Debug */,

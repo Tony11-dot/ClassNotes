@@ -11,7 +11,7 @@ Universal app, Swift 6 (strict concurrency), SwiftUI-first, Liquid Glass design 
   compiles and tests pass:
   - Theme package: `cd Packages/ClassMateTheme && swift test`
   - NotesKit: `cd Packages/NotesKit && xcodebuild test -scheme NotesKit-Package -destination 'platform=iOS Simulator,name=iPad Pro 11-inch (M5)'`
-  - App: `xcodebuild build -project ClassMateNotes.xcodeproj -scheme ClassMateNotes -destination 'platform=iOS Simulator,name=iPad Pro 11-inch (M5)' CODE_SIGNING_ALLOWED=NO`
+  - App: `xcodebuild build -project ClassNotes.xcodeproj -scheme ClassNotes -destination 'platform=iOS Simulator,name=iPad Pro 11-inch (M5)' CODE_SIGNING_ALLOWED=NO`
 - No secrets in source. Keychain for anything sensitive.
 - Never trust client-only entitlement state as final — `EntitlementService` is
   architected so server-side receipt validation can be added behind it later.

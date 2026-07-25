@@ -10,7 +10,7 @@ hands off to the app. If none is present, it uses the native CN animation
    or `LaunchAnimation.mp4` / `.m4v`.
 2. Put it in this folder: `App/Resources/LaunchAnimation.mov`.
 3. In Xcode, drag the file into the project navigator and **tick the
-   `ClassMateNotes` target** under "Add to targets" (so it ships in the app
+   `ClassNotes` target** under "Add to targets" (so it ships in the app
    bundle). Or just tell me it's here and I'll wire the target reference.
 
 That's it — `LaunchView` auto-detects it (see `LaunchMedia.videoURL`) and plays

@@ -15,9 +15,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "AA0000000000000000000005"
-               BuildableName = "ClassMateNotes.app"
-               BlueprintName = "ClassMateNotes"
-               ReferencedContainer = "container:ClassMateNotes.xcodeproj">
+               BuildableName = "ClassNotes.app"
+               BlueprintName = "ClassNotes"
+               ReferencedContainer = "container:ClassNotes.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -44,9 +44,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "AA0000000000000000000005"
-            BuildableName = "ClassMateNotes.app"
-            BlueprintName = "ClassMateNotes"
-            ReferencedContainer = "container:ClassMateNotes.xcodeproj">
+            BuildableName = "ClassNotes.app"
+            BlueprintName = "ClassNotes"
+            ReferencedContainer = "container:ClassNotes.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
       <StoreKitConfigurationFileReference
@@ -64,9 +64,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "AA0000000000000000000005"
-            BuildableName = "ClassMateNotes.app"
-            BlueprintName = "ClassMateNotes"
-            ReferencedContainer = "container:ClassMateNotes.xcodeproj">
+            BuildableName = "ClassNotes.app"
+            BlueprintName = "ClassNotes"
+            ReferencedContainer = "container:ClassNotes.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

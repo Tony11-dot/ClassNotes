@@ -11,7 +11,7 @@ import SwiftUI
 /// Drop a file named `LaunchAnimation.mp4` (or `.mov`) into the app target so
 /// it ships in `Bundle.main`. Easiest path in Xcode:
 ///   1. Put the file at `App/Resources/LaunchAnimation.mp4`.
-///   2. Drag it into the Xcode project navigator, ticking the ClassMateNotes
+///   2. Drag it into the Xcode project navigator, ticking the ClassNotes
 ///      target under "Add to targets".
 /// That's it — `LaunchView` auto-detects and plays it. Transparent background
 /// looks best on `theme.paper`; a square or portrait clip is ideal.
