@@ -1,11 +1,13 @@
 import ClassMateTheme
 import SwiftUI
 
-/// The launch animation, rebuilt natively to match ClassMate's splash: the
-/// background and mark colours track the CURRENT theme (background = `surface`,
-/// mark/wordmark = `accent`, i.e. ClassMate's navy→primary recolour). The CN
-/// mark fades + scales in (easeOutBack), then the "ClassNotes" wordmark reveals
-/// with a blinking cursor, then it hands off.
+/// The launch animation, rebuilt natively to match ClassMate's splash and the
+/// provided Jitter reference (`Scene.json`): on the current theme's `surface`
+/// background, the CN mark pops in (scale 0→1 with a slight overshoot), then the
+/// "ClassNotes" wordmark slides up + fades in beside it, holds, and hands off
+/// (~2s total, mirroring the reference's 120f @ 60fps timeline). Everything is
+/// tinted to the theme `accent` — ClassMate's navy→primary recolour — so the
+/// whole animation, background included, tracks the current theme.
 public struct LaunchView: View {
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -13,18 +15,16 @@ public struct LaunchView: View {
     let onFinished: () -> Void
 
     @State private var markIn = false
-    @State private var textProgress = 0
-    @State private var showCursor = true
+    @State private var showWord = false
     @State private var faded = false
 
-    private let fullText = BrandName.display
+    // Matched to the launch preview: mark frame 104pt, wordmark cap-height 63pt,
+    // gap 20pt — the same proportions as the ClassNotes lockup artwork.
+    private let markSize: CGFloat = 104
+    private let wordHeight: CGFloat = 63
 
     public init(onFinished: @escaping () -> Void) {
         self.onFinished = onFinished
-    }
-
-    private var revealed: String {
-        String(fullText.prefix(textProgress))
     }
 
     public var body: some View {
@@ -47,20 +47,21 @@ public struct LaunchView: View {
             // Launch background tracks the current theme's `surface`, exactly
             // like ClassMate's splash (`Scaffold(backgroundColor: scheme.surface)`).
             theme.surface.color.ignoresSafeArea()
-            HStack(spacing: 16) {
-                BrandMark(size: 104)
-                    .scaleEffect(markIn ? 1 : 0.85)
+            HStack(spacing: 20) {
+                // The CN mark pops in (Scene ref: scale 0→100%, t12–t48).
+                BrandMark(size: markSize)
+                    .scaleEffect(markIn ? 1 : 0.35)
                     .opacity(markIn ? 1 : 0)
-                HStack(spacing: 2) {
-                    Text(revealed)
-                        .font(CMFonts.font(size: 40, weight: .bold))
-                        .foregroundStyle(theme.accent.color)
-                    if textProgress < fullText.count || showCursor {
-                        Rectangle()
-                            .fill(theme.accent.color)
-                            .frame(width: 4, height: 40)
-                            .opacity(showCursor ? 1 : 0)
-                    }
+                // The wordmark slides up + fades in beside it (Scene ref:
+                // wordmark group y 73.6→0 + opacity 0→100, t60–t78). Its
+                // insertion also grows the HStack, recentering the mark
+                // leftward — the reference's "mark settles left" motion.
+                if showWord {
+                    BrandWordmark(height: wordHeight)
+                        .transition(.asymmetric(
+                            insertion: .move(edge: .bottom).combined(with: .opacity),
+                            removal: .opacity
+                        ))
                 }
             }
             .opacity(faded ? 0 : 1)
@@ -72,22 +73,19 @@ public struct LaunchView: View {
         CMFonts.registerIfNeeded()
         if reduceMotion {
             markIn = true
-            textProgress = fullText.count
-            try? await Task.sleep(for: .milliseconds(500))
+            showWord = true
+            try? await Task.sleep(for: .milliseconds(700))
             onFinished()
             return
         }
-        withAnimation(.spring(response: 0.5, dampingFraction: 0.6)) { markIn = true }
-        try? await Task.sleep(for: .milliseconds(420))
-        for index in 0...fullText.count {
-            textProgress = index
-            try? await Task.sleep(for: .milliseconds(45))
-        }
-        // Cursor blink a couple of times.
-        for _ in 0..<3 {
-            try? await Task.sleep(for: .milliseconds(260))
-            withAnimation(.easeInOut(duration: 0.1)) { showCursor.toggle() }
-        }
+        // 1) Mark pops in.
+        try? await Task.sleep(for: .milliseconds(200))
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.62)) { markIn = true }
+        // 2) Wordmark reveals; HStack recenters.
+        try? await Task.sleep(for: .milliseconds(780))
+        withAnimation(.spring(response: 0.55, dampingFraction: 0.82)) { showWord = true }
+        // 3) Hold, then hand off (~2s total, matching the reference).
+        try? await Task.sleep(for: .milliseconds(760))
         withAnimation(.easeIn(duration: 0.35)) { faded = true }
         try? await Task.sleep(for: .milliseconds(360))
         onFinished()
