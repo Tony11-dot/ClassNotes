@@ -51,30 +51,30 @@ public enum BrandName {
     public static let display = "ClassNotes"
 }
 
-/// CN mark + "ClassNotes" wordmark, laid out as a lockup and tinted to the
-/// theme accent. Used on the launch screen and login so we only need the single
-/// mark asset (the wordmark is live text in Cabinet Grotesk).
+/// The real ClassNotes lockup — the CN mark + "ClassNotes" wordmark as a single
+/// asset — template-tinted to the theme accent, exactly like ClassMate's
+/// `ClassMateLogo` (one blue source recoloured `srcIn` → the theme primary).
+/// Sized by height; the width follows the artwork's aspect ratio. Used at the
+/// top of the login card, mirroring ClassMate's `ClassMateLogo(height: 54)`.
 public struct BrandLockup: View {
     @Environment(\.theme) private var theme
-    let markSize: CGFloat
-    let fontSize: CGFloat
+    let height: CGFloat
     var tint: Color?
 
-    public init(markSize: CGFloat = 72, fontSize: CGFloat = 34, tint: Color? = nil) {
-        self.markSize = markSize
-        self.fontSize = fontSize
+    public init(height: CGFloat = 54, tint: Color? = nil) {
+        self.height = height
         self.tint = tint
     }
 
     public var body: some View {
-        HStack(spacing: markSize * 0.16) {
-            BrandMark(size: markSize, tint: tint)
-            Text(BrandName.display)
-                .font(CMFonts.font(size: fontSize, weight: .bold))
-                .foregroundStyle(tint ?? theme.accent.color)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(BrandName.display)
+        Image("BrandLockup", bundle: .main)
+            .resizable()
+            .renderingMode(.template)
+            .scaledToFit()
+            .foregroundStyle(tint ?? theme.accent.color)
+            .frame(height: height)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(BrandName.display)
     }
 }
 

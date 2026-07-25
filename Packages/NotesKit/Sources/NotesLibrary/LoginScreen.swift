@@ -43,7 +43,7 @@ public struct LoginScreen: View {
 
     private var card: some View {
         VStack(spacing: 18) {
-            BrandLockup(markSize: 60, fontSize: 30)
+            BrandLockup(height: 54)
                 .padding(.bottom, 4)
             VStack(spacing: 4) {
                 Text("Welcome back")

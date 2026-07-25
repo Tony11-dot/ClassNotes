@@ -1,9 +1,11 @@
 import ClassMateTheme
 import SwiftUI
 
-/// The launch animation, rebuilt natively to match ClassMate's `CmSplashScreen`:
-/// white/paper background, the CM mark fades + scales in (easeOutBack), then the
-/// "ClassNotes" wordmark reveals with a blinking cursor, then it hands off.
+/// The launch animation, rebuilt natively to match ClassMate's splash: the
+/// background and mark colours track the CURRENT theme (background = `surface`,
+/// mark/wordmark = `accent`, i.e. ClassMate's navy→primary recolour). The CN
+/// mark fades + scales in (easeOutBack), then the "ClassNotes" wordmark reveals
+/// with a blinking cursor, then it hands off.
 public struct LaunchView: View {
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -30,7 +32,7 @@ public struct LaunchView: View {
             // Your bundled launch clip plays once, then hands off. Falls back to
             // the native animation below if no video has been added yet.
             ZStack {
-                theme.paper.color.ignoresSafeArea()
+                theme.surface.color.ignoresSafeArea()
                 LaunchVideoView(url: videoURL, onFinished: onFinished)
                     .ignoresSafeArea()
             }
@@ -42,7 +44,9 @@ public struct LaunchView: View {
 
     private var nativeBody: some View {
         ZStack {
-            theme.paper.color.ignoresSafeArea()
+            // Launch background tracks the current theme's `surface`, exactly
+            // like ClassMate's splash (`Scaffold(backgroundColor: scheme.surface)`).
+            theme.surface.color.ignoresSafeArea()
             HStack(spacing: 16) {
                 BrandMark(size: 104)
                     .scaleEffect(markIn ? 1 : 0.85)
