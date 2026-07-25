@@ -135,14 +135,23 @@ public struct ClassMateAPIClient: Sendable {
         return try token(from: data)
     }
 
-    /// `POST /auth/forgot-password` body `{identifier, channel}` → `{sent}`.
-    public func forgotPassword(identifier: String, channel: String = "email") async throws -> Bool {
+    /// The `/auth/forgot-password` result — mirrors ClassMate's
+    /// `{ ok, sent, message }`: `sent` drives success colouring, `message` is
+    /// rendered as-is (varies per outcome: no email on file, not verified, …).
+    public struct ResetResult: Sendable, Equatable {
+        public let sent: Bool
+        public let message: String?
+    }
+
+    /// `POST /auth/forgot-password` body `{identifier, channel}` where channel is
+    /// `"email"` or `"sms"` → `{ sent, message }`.
+    public func forgotPassword(identifier: String, channel: String = "email") async throws -> ResetResult {
         let body = ["identifier": identifier, "channel": channel]
         let (data, status) = try await post(path: "/auth/forgot-password", body: body, token: nil)
         guard (200..<300).contains(status) else { throw APIError.badResponse(status: status) }
-        struct SentResponse: Decodable { let sent: Bool? }
+        struct SentResponse: Decodable { let sent: Bool?; let message: String? }
         let decoded = try? JSONDecoder().decode(SentResponse.self, from: data)
-        return decoded?.sent ?? true
+        return ResetResult(sent: decoded?.sent ?? true, message: decoded?.message)
     }
 
     /// `GET /auth/me` (Bearer) → profile.

@@ -13,7 +13,6 @@ public struct SettingsScreen: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var editingTheme: ThemeSpec?
-    @State private var showPaywall = false
     @State private var importingJSON = false
     @State private var exportPayload: ThemeJSONFile?
     @State private var themeError: String?
@@ -29,7 +28,6 @@ public struct SettingsScreen: View {
                 presetSection(title: "Dark themes", presets: ThemePreset.darkFamily, includeSystem: false)
                 customThemesSection
                 paperSection
-                premiumSection
                 AboutSettingsSection()
                 #if DEBUG
                 debugSection
@@ -48,7 +46,6 @@ public struct SettingsScreen: View {
         .sheet(item: $editingTheme) { spec in
             ThemeEditorScreen(spec: spec)
         }
-        .sheet(isPresented: $showPaywall) { PaywallView() }
         .fileImporter(
             isPresented: $importingJSON,
             allowedContentTypes: [.json]
@@ -197,11 +194,6 @@ public struct SettingsScreen: View {
             .pickerStyle(.segmented)
         }
         .listRowBackground(theme.surfaceRaised.color)
-    }
-
-    private var premiumSection: some View {
-        PremiumSettingsSection(showPaywall: $showPaywall)
-            .listRowBackground(theme.surfaceRaised.color)
     }
 
     #if DEBUG

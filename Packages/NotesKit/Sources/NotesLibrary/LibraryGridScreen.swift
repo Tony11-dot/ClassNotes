@@ -1,7 +1,6 @@
 import ClassMateTheme
 import NotesDesignSystem
 import NotesModels
-import NotesPaywall
 import NotesServices
 import SwiftData
 import SwiftUI
@@ -21,7 +20,6 @@ public struct LibraryGridScreen<Destination: View>: View {
     @State private var opened: Notebook?
     @State private var showCreate = false
     @State private var showSettings = false
-    @State private var showLimitPaywall = false
     @State private var renameTarget: Notebook?
     @State private var renameText = ""
     @State private var deleteTarget: Notebook?
@@ -62,9 +60,6 @@ public struct LibraryGridScreen<Destination: View>: View {
         .sheet(isPresented: $showCreate) { CreateNotebookSheet() }
         .sheet(isPresented: $showSettings) { SettingsScreen() }
         .sheet(isPresented: $showNewShelf) { NewShelfSheet() }
-        .sheet(isPresented: $showLimitPaywall) {
-            PaywallView(highlighting: .unlimitedNotebooks)
-        }
         .alert("Rename notebook", isPresented: renameAlertBinding) {
             TextField("Title", text: $renameText)
             Button("Cancel", role: .cancel) { renameTarget = nil }
@@ -209,11 +204,7 @@ public struct LibraryGridScreen<Destination: View>: View {
         GlassEffectContainer {
             HStack(spacing: 4) {
                 DSGlassIconButton("New notebook", systemImage: "plus") {
-                    if services.repository.canCreateNotebook(currentCount: notebooks.count) {
-                        showCreate = true
-                    } else {
-                        showLimitPaywall = true
-                    }
+                    showCreate = true
                 }
                 DSGlassIconButton("New shelf", systemImage: "tray.and.arrow.down") {
                     showNewShelf = true

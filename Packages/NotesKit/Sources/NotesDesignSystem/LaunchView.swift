@@ -26,6 +26,21 @@ public struct LaunchView: View {
     }
 
     public var body: some View {
+        if let videoURL = LaunchMedia.videoURL {
+            // Your bundled launch clip plays once, then hands off. Falls back to
+            // the native animation below if no video has been added yet.
+            ZStack {
+                theme.paper.color.ignoresSafeArea()
+                LaunchVideoView(url: videoURL, onFinished: onFinished)
+                    .ignoresSafeArea()
+            }
+            .task { CMFonts.registerIfNeeded() }
+        } else {
+            nativeBody
+        }
+    }
+
+    private var nativeBody: some View {
         ZStack {
             theme.paper.color.ignoresSafeArea()
             HStack(spacing: 16) {

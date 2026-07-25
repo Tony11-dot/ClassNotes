@@ -65,6 +65,9 @@ public final class NovaConversation {
     }
 
     private func beginAssistantReply() {
+        // Cancel any in-flight stream so two replies can never interleave into
+        // the transcript (e.g. explain() seeded while a send() is still running).
+        streamTask?.cancel()
         streaming = true
         var assistant = AIMessage(role: .assistant, content: "")
         messages.append(assistant)

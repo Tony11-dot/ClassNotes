@@ -107,11 +107,18 @@ public final class AuthService {
         }
     }
 
-    /// Sends a password-reset link via ClassMate's backend (email channel).
-    public func requestPasswordReset(identifier: String) async -> Bool {
+    /// Sends a password-reset link via ClassMate's backend over the chosen
+    /// channel (`"email"` or `"sms"`). Returns the server's `{sent, message}`.
+    public func requestPasswordReset(
+        identifier: String,
+        channel: String = "email"
+    ) async -> ClassMateAPIClient.ResetResult {
         let id = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !id.isEmpty else { return false }
-        return (try? await client.forgotPassword(identifier: id)) ?? false
+        guard !id.isEmpty else {
+            return .init(sent: false, message: "Enter your email or username.")
+        }
+        return (try? await client.forgotPassword(identifier: id, channel: channel))
+            ?? .init(sent: false, message: "Something went wrong. Try again.")
     }
 
     public func signOut() {

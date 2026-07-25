@@ -73,21 +73,16 @@ struct ThemeServiceTests {
         #expect(harness.themes.selection == .system)
     }
 
-    @Test("Creating a custom theme without entitlement throws")
-    func lockedCreation() {
+    @Test("Custom themes are free — creation always succeeds")
+    func freeCreation() throws {
         let harness = makeServices()
-        harness.entitlements.debugForcePremium = false
-        defer { harness.entitlements.debugForcePremium = nil }
-
-        #expect(throws: EntitlementError.locked(.customThemes)) {
-            try harness.themes.createCustomTheme(from: .wine, named: "Nope")
-        }
+        let spec = try harness.themes.createCustomTheme(from: .wine, named: "Mine")
+        #expect(harness.themes.customThemes.contains { $0.id == spec.id })
     }
 
-    @Test("Losing premium degrades a selected custom theme to its nearest preset")
-    func gracefulDegradation() throws {
+    @Test("A selected custom theme stays applied — no premium-lapse degradation")
+    func customThemeStaysApplied() throws {
         let harness = makeServices()
-        harness.entitlements.debugForcePremium = true
 
         var spec = try harness.themes.createCustomTheme(from: .wine, named: "Cellar Door")
         spec.accent = ThemeColor(
@@ -98,13 +93,9 @@ struct ThemeServiceTests {
         try harness.themes.updateCustomTheme(spec)
         let uuid = try #require(ThemeService.uuid(fromSpecID: spec.id))
         harness.themes.selection = .custom(uuid)
-        #expect(harness.themes.spec(prefersDark: false).id == spec.id)
 
-        // Premium lapses: appearance falls back to the nearest preset (wine),
-        // the custom theme and the user's notebooks stay untouched.
-        harness.entitlements.debugForcePremium = false
-        defer { harness.entitlements.debugForcePremium = nil }
-        #expect(harness.themes.spec(prefersDark: false).id == "wine")
+        // Everything is free: the custom theme resolves and stays selected.
+        #expect(harness.themes.spec(prefersDark: false).id == spec.id)
         #expect(harness.themes.customThemes.count == 1)
     }
 

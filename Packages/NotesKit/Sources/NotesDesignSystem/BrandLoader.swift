@@ -39,18 +39,21 @@ public struct BrandLoader: View {
                         let strokeAlpha = 1 - clampProgress(phase, 0.66, 0.78)
 
                         context.opacity = strokeAlpha
+                        // Butt caps + miter joins — identical to ClassMate's
+                        // CmLoading (StrokeCap.butt / StrokeJoin.miter), so the
+                        // painted strokes sit flush under the real mark.
                         if let cPath = Self.cPath(progress: cProgress)?.applying(transform) {
                             context.stroke(
                                 cPath,
                                 with: .color(color),
-                                style: StrokeStyle(lineWidth: 44 * scale, lineCap: .round)
+                                style: StrokeStyle(lineWidth: 44 * scale, lineCap: .butt)
                             )
                         }
                         if let nPath = Self.nPath(progress: nProgress)?.applying(transform) {
                             context.stroke(
                                 nPath,
                                 with: .color(color),
-                                style: StrokeStyle(lineWidth: 42 * scale, lineCap: .round, lineJoin: .round)
+                                style: StrokeStyle(lineWidth: 42 * scale, lineCap: .butt, lineJoin: .miter, miterLimit: 8)
                             )
                         }
                     }
@@ -95,11 +98,14 @@ public struct BrandLoader: View {
     /// revealed segment-by-segment as `progress` grows.
     private static func nPath(progress: Double) -> Path? {
         guard progress > 0 else { return nil }
+        // Same footprint the ClassMate M occupies, traced as an N: up the left
+        // stem, diagonal down-right, up the right stem. Cross-fades to the real
+        // mark, so sub-pixel tracing error is invisible (as in CmLoading).
         let points = [
-            CGPoint(x: 210, y: 410),
-            CGPoint(x: 210, y: 200),
-            CGPoint(x: 400, y: 410),
-            CGPoint(x: 400, y: 200)
+            CGPoint(x: 203, y: 418),
+            CGPoint(x: 203, y: 188),
+            CGPoint(x: 400, y: 418),
+            CGPoint(x: 400, y: 188)
         ]
         return partialPolyline(points, progress: progress)
     }

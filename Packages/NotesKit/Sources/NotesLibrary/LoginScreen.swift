@@ -22,14 +22,23 @@ public struct LoginScreen: View {
     public var body: some View {
         ZStack {
             AmbientBackground(seed: 5)
-            ScrollView {
-                card
-                    .frame(maxWidth: 400)
-                    .padding(24)
-                    .frame(maxWidth: .infinity)
+            GeometryReader { geo in
+                ScrollView {
+                    // Card centered vertically: a min-height container equal to
+                    // the viewport keeps the card in the middle (like ClassMate's
+                    // Center + SingleChildScrollView), still scrollable when the
+                    // keyboard shrinks the space.
+                    card
+                        .frame(maxWidth: 400)
+                        .frame(maxWidth: .infinity, minHeight: geo.size.height)
+                        .padding(.horizontal, 24)
+                }
+                .scrollDismissesKeyboard(.interactively)
             }
         }
-        .sheet(isPresented: $showForgot) { ForgotPasswordSheet(prefill: identifier) }
+        .fullScreenCover(isPresented: $showForgot) {
+            ForgotPasswordScreen(prefill: identifier)
+        }
     }
 
     private var card: some View {
@@ -153,90 +162,139 @@ public struct LoginScreen: View {
     }
 }
 
-/// "Forgot password?" — sends a reset link through ClassMate's backend
-/// (`POST /auth/forgot-password`), same as the ClassMate app.
-struct ForgotPasswordSheet: View {
+/// "Forgot password?" — a full screen (NOT a bottom sheet), mirroring
+/// ClassMate's `ForgotPasswordScreen`: a top-aligned column with an Email/SMS
+/// channel picker, an identifier field, a send button, the server's message,
+/// and the "link expires in 1 hour" note. Sends through ClassMate's backend
+/// (`POST /auth/forgot-password`, channel email|sms), same accounts.
+struct ForgotPasswordScreen: View {
     @Environment(AppServices.self) private var services
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
 
+    enum ResetMode: String, CaseIterable { case email, sms }
+
     let prefill: String
     @State private var identifier: String
+    @State private var mode: ResetMode = .email
     @State private var busy = false
-    @State private var sent = false
+    @State private var message: String?
+    @State private var success = false
 
     init(prefill: String) {
         self.prefill = prefill
         self._identifier = State(initialValue: prefill)
     }
 
+    private var headerCopy: String {
+        mode == .email
+            ? "Enter your email or username and we'll email you a reset link."
+            : "Enter your email or username and we'll text a reset link to the phone on your account."
+    }
+
     var body: some View {
         NavigationStack {
-            ZStack {
-                AmbientBackground(seed: 9, opacity: 0.6)
-                VStack(spacing: 18) {
-                    if sent {
-                        VStack(spacing: 10) {
-                            Image(systemName: "envelope.badge")
-                                .font(.system(size: 40))
-                                .foregroundStyle(theme.accent.color)
-                            Text("Check your email")
-                                .font(.title3.weight(.bold))
-                                .foregroundStyle(theme.ink.color)
-                            Text("If an account matches, we've sent a reset link. The link expires soon for your security.")
-                                .font(.subheadline)
-                                .foregroundStyle(theme.inkSecondary.color)
-                                .multilineTextAlignment(.center)
-                        }
-                        .padding(.top, 24)
-                    } else {
-                        VStack(spacing: 6) {
-                            Text("Reset your password")
-                                .font(.title3.weight(.bold))
-                                .foregroundStyle(theme.ink.color)
-                            Text("Enter your email or username and we'll send a reset link.")
-                                .font(.subheadline)
-                                .foregroundStyle(theme.inkSecondary.color)
-                                .multilineTextAlignment(.center)
-                        }
-                        .padding(.top, 12)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Forgot password")
+                        .font(.title.weight(.heavy))
+                        .foregroundStyle(theme.ink.color)
+                    Text(headerCopy)
+                        .font(.body)
+                        .foregroundStyle(theme.inkSecondary.color)
+                        .lineSpacing(3)
+                        .padding(.top, 8)
 
+                    // Email / SMS channel picker.
+                    Picker("Channel", selection: $mode) {
+                        Label("Email", systemImage: "envelope").tag(ResetMode.email)
+                        Label("Text", systemImage: "message").tag(ResetMode.sms)
+                    }
+                    .pickerStyle(.segmented)
+                    .onChange(of: mode) { _, _ in message = nil }
+                    .padding(.top, 24)
+
+                    HStack(spacing: 10) {
+                        Image(systemName: "at").foregroundStyle(theme.inkSecondary.color).frame(width: 20)
                         TextField("Email or username", text: $identifier)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .keyboardType(.emailAddress)
-                            .padding(.horizontal, 14).padding(.vertical, 13)
-                            .background(
-                                theme.surfaceRaised.color,
-                                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            )
-
-                        Button {
-                            busy = true
-                            Task {
-                                _ = await services.auth.requestPasswordReset(identifier: identifier)
-                                busy = false
-                                sent = true
-                            }
-                        } label: {
-                            Group {
-                                if busy { ProgressView() } else { Text("Email me a reset link").font(.headline) }
-                            }
-                            .frame(maxWidth: .infinity, minHeight: 48)
-                        }
-                        .buttonStyle(.glassProminent)
-                        .disabled(busy || identifier.trimmingCharacters(in: .whitespaces).isEmpty)
+                            .foregroundStyle(theme.ink.color)
+                            .submitLabel(.send)
+                            .onSubmit(submit)
                     }
-                    Spacer()
+                    .padding(.horizontal, 14).padding(.vertical, 14)
+                    .background(theme.surfaceRaised.color.opacity(0.6),
+                                in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(theme.separator.color.opacity(0.6), lineWidth: 0.5))
+                    .padding(.top, 20)
+
+                    Button(action: submit) {
+                        HStack(spacing: 8) {
+                            if busy {
+                                BrandLoader(size: 18, tint: theme.contrastingInk(on: theme.accent).color)
+                            } else {
+                                Image(systemName: mode == .email ? "paperplane.fill" : "message.fill")
+                                Text(mode == .email ? "Email me a reset link" : "Text me a reset link")
+                                    .font(.headline)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 48)
+                    }
+                    .buttonStyle(.glassProminent)
+                    .disabled(busy || identifier.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .padding(.top, 20)
+
+                    if let message {
+                        Label {
+                            Text(message).foregroundStyle(theme.ink.color)
+                        } icon: {
+                            Image(systemName: success ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                                .foregroundStyle(success ? Color.green : Color.orange)
+                        }
+                        .font(.subheadline)
+                        .padding(14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background((success ? Color.green : Color.orange).opacity(0.12),
+                                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .padding(.top, 18)
+                    }
+
+                    Text("The link expires in 1 hour and can only be used once.")
+                        .font(.footnote)
+                        .foregroundStyle(theme.inkSecondary.color)
+                        .padding(.top, 24)
                 }
+                .frame(maxWidth: 560)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(24)
             }
-            .navigationTitle("Forgot password")
+            .scrollDismissesKeyboard(.interactively)
+            .background(theme.surface.color.ignoresSafeArea())
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { dismiss() } label: { Image(systemName: "chevron.left") }
+                        .accessibilityLabel("Back")
+                }
             }
         }
-        .presentationDetents([.medium])
+    }
+
+    private func submit() {
+        guard !busy else { return }
+        busy = true
+        Task {
+            let result = await services.auth.requestPasswordReset(
+                identifier: identifier, channel: mode.rawValue
+            )
+            busy = false
+            success = result.sent
+            message = result.message ?? (result.sent
+                ? "If an account matches, a reset link is on its way."
+                : "We couldn't send a reset link. Check the details and try again.")
+        }
     }
 }

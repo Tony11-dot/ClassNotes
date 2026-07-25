@@ -141,22 +141,12 @@ public final class EntitlementService {
 
     // MARK: - Queries
 
-    public func isUnlocked(_ feature: PremiumFeature) -> Bool {
-        #if DEBUG
-        if let forced = debugForcePremium { return forced }
-        #endif
-        switch feature.tier {
-        case .lifetime: return hasLifetime || hasSubscription
-        case .subscription: return hasSubscription
-        }
-    }
+    // ClassNotes is fully free — every feature is unlocked for everyone. The
+    // gate architecture is intentionally kept (so server-side entitlements
+    // could return later), but today it always reports unlocked.
+    public func isUnlocked(_ feature: PremiumFeature) -> Bool { true }
 
-    public var isPremium: Bool {
-        #if DEBUG
-        if let forced = debugForcePremium { return forced }
-        #endif
-        return hasLifetime || hasSubscription
-    }
+    public var isPremium: Bool { true }
 
     public func canCreateNotebook(currentCount: Int) -> Bool {
         if isUnlocked(.unlimitedNotebooks) { return true }

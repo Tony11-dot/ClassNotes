@@ -38,6 +38,14 @@ public final class NotebookEditorModel {
 
     private var targetPageID: UUID? { focusedPageID ?? manifest?.pages.first?.id }
 
+    /// A target page that actually exists in the current manifest. Used before
+    /// writing a media blob so a stale/missing target never leaves an orphaned
+    /// payload on disk with no element referencing it.
+    private var existingTargetPageID: UUID? {
+        guard let id = targetPageID, manifest?.pages.contains(where: { $0.id == id }) == true else { return nil }
+        return id
+    }
+
     // MARK: - Insertions
 
     private func center(width: Double, height: Double) -> (Double, Double) {
@@ -47,7 +55,7 @@ public final class NotebookEditorModel {
     }
 
     public func insertImage(_ data: Data, fileExtension: String) async {
-        guard let pageID = targetPageID,
+        guard let pageID = existingTargetPageID,
               let filename = try? await store.saveMedia(data, notebook: notebookID, fileExtension: fileExtension) else { return }
         let size = Self.fittedImageSize(data)
         let (x, y) = center(width: size.width, height: size.height)
@@ -58,7 +66,7 @@ public final class NotebookEditorModel {
     }
 
     public func insertFile(_ data: Data, displayName: String, fileExtension: String) async {
-        guard let pageID = targetPageID,
+        guard let pageID = existingTargetPageID,
               let filename = try? await store.saveMedia(data, notebook: notebookID, fileExtension: fileExtension) else { return }
         let (x, y) = center(width: 260, height: 68)
         await append(PageElement(
@@ -68,7 +76,7 @@ public final class NotebookEditorModel {
     }
 
     public func insertVoice(fileURL: URL, duration: TimeInterval) async {
-        guard let pageID = targetPageID,
+        guard let pageID = existingTargetPageID,
               let data = try? Data(contentsOf: fileURL),
               let filename = try? await store.saveMedia(data, notebook: notebookID, fileExtension: "m4a") else { return }
         let (x, y) = center(width: 240, height: 52)

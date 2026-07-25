@@ -1,0 +1,48 @@
+fastlane documentation
+----
+
+# Installation
+
+Make sure you have the latest version of the Xcode command line tools installed:
+
+```sh
+xcode-select --install
+```
+
+For _fastlane_ installation instructions, see [Installing _fastlane_](https://docs.fastlane.tools/#installing-fastlane)
+
+# Available Actions
+
+## iOS
+
+### ios fix_signing
+
+```sh
+[bundle exec] fastlane ios fix_signing
+```
+
+Headless signing repair: create+install an Apple Distribution cert + App Store provisioning profile via the ASC API key. Run this only if a build fails with "No signing certificate ... found".
+
+### ios beta
+
+```sh
+[bundle exec] fastlane ios beta
+```
+
+Bump build number (from TestFlight), build, and upload to TestFlight.
+
+### ios upload
+
+```sh
+[bundle exec] fastlane ios upload
+```
+
+Re-upload the last-built IPA to TestFlight (skip build).
+
+----
+
+This README.md is auto-generated and will be re-generated every time [_fastlane_](https://fastlane.tools) is run.
+
+More information about _fastlane_ can be found on [fastlane.tools](https://fastlane.tools).
+
+The documentation of _fastlane_ can be found on [docs.fastlane.tools](https://docs.fastlane.tools).

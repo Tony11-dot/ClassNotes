@@ -1,32 +1,6 @@
 import NotesServices
 import SwiftUI
 
-struct PremiumSettingsSection: View {
-    @Environment(AppServices.self) private var services
-    @Environment(\.theme) private var theme
-
-    @Binding var showPaywall: Bool
-
-    var body: some View {
-        Section("Premium") {
-            HStack {
-                Label(
-                    services.entitlements.isPremium ? "Premium active" : "Free plan",
-                    systemImage: services.entitlements.isPremium ? "checkmark.seal.fill" : "seal"
-                )
-                .foregroundStyle(theme.ink.color)
-                Spacer()
-            }
-            Button("View Premium") { showPaywall = true }
-                .foregroundStyle(theme.accent.color)
-            Button("Restore Purchases") {
-                Task { await services.entitlements.restorePurchases() }
-            }
-            .foregroundStyle(theme.accent.color)
-        }
-    }
-}
-
 #if DEBUG
 /// Development-only: flip entitlement state without buying anything.
 struct DebugSettingsSection: View {

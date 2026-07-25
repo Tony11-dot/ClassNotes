@@ -20,57 +20,23 @@ struct EntitlementTests {
         #expect(PremiumFeature.handwritingToFont.tier == .subscription)
     }
 
-    @Test("Everything is locked by default without purchases")
-    func lockedByDefault() {
+    @Test("ClassNotes is fully free — every feature is unlocked for everyone")
+    func everythingUnlocked() {
         let service = makeService()
-        defer { service.debugForcePremium = nil }
-        for feature in PremiumFeature.allCases {
-            #expect(!service.isUnlocked(feature))
-        }
-        #expect(!service.isPremium)
-    }
-
-    @Test("Debug override forces both states for device testing")
-    func debugOverride() {
-        let service = makeService()
-        defer { service.debugForcePremium = nil }
-
-        service.debugForcePremium = true
         for feature in PremiumFeature.allCases {
             #expect(service.isUnlocked(feature))
         }
-
-        service.debugForcePremium = false
-        for feature in PremiumFeature.allCases {
-            #expect(!service.isUnlocked(feature))
-        }
+        #expect(service.isPremium)
     }
 
-    @Test("Debug override persists like the real toggle will")
-    func debugOverridePersists() {
+    @Test("Notebook creation is always allowed — no cap on a free app")
+    func notebookCreationUncapped() {
         let service = makeService()
-        service.debugForcePremium = true
-        let second = EntitlementService(listenForUpdates: false)
-        #expect(second.debugForcePremium == true)
-        service.debugForcePremium = nil
-        #expect(EntitlementService(listenForUpdates: false).debugForcePremium == nil)
-    }
-
-    @Test("Notebook cap: uncapped until the free limit is chosen, then enforced")
-    func notebookCap() {
-        let service = makeService()
-        defer { service.debugForcePremium = nil }
-        service.debugForcePremium = false
-
-        // No cap picked yet — free tier is uncapped.
         #expect(service.canCreateNotebook(currentCount: 500))
 
+        // Even if a legacy free limit is set, unlocked entitlement wins.
         service.freeNotebookLimit = 3
-        #expect(service.canCreateNotebook(currentCount: 2))
-        #expect(!service.canCreateNotebook(currentCount: 3))
-
-        // Premium ignores the cap.
-        service.debugForcePremium = true
         #expect(service.canCreateNotebook(currentCount: 3))
+        #expect(service.canCreateNotebook(currentCount: 9_999))
     }
 }
