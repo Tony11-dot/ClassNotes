@@ -192,6 +192,11 @@ public final class NotebookEditorModel {
         return (try? await OCRService().recognizeText(in: image)) ?? ""
     }
 
+    /// OCR any image directly (e.g. the magic pen's cropped region).
+    public func ocr(image: UIImage) async -> String {
+        (try? await OCRService().recognizeText(in: image)) ?? ""
+    }
+
     public func mediaURL(filename: String) -> URL {
         store.mediaURL(notebook: notebookID, filename: filename)
     }

@@ -14,6 +14,9 @@ import Foundation
 public enum AIConfig {
     public static let defaultBaseURL = "https://api.groq.com/openai/v1"
     public static let defaultModel = "llama-3.3-70b-versatile"
+    /// A vision-capable Groq model for the magic pen (image prompts). Override
+    /// with `SUPPORT_AI_VISION_MODEL` if Groq's lineup changes.
+    public static let defaultVisionModel = "meta-llama/llama-4-scout-17b-16e-instruct"
 
     private static func value(_ name: String) -> String? {
         if let fromEnv = ProcessInfo.processInfo.environment[name] {
@@ -38,6 +41,10 @@ public enum AIConfig {
 
     public static func model() -> String {
         value("SUPPORT_AI_MODEL") ?? defaultModel
+    }
+
+    public static func visionModel() -> String {
+        value("SUPPORT_AI_VISION_MODEL") ?? defaultVisionModel
     }
 
     /// The API key: env / Info.plist (build-injected) first, then the user's

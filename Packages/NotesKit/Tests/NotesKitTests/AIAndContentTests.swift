@@ -31,6 +31,25 @@ struct AIServiceTests {
         #expect(messages.first?["content"] == "hello")
     }
 
+    @Test("Magic pen image routes to the vision model with image content")
+    func visionRequest() throws {
+        let provider = GroqProvider(keychain: InMemorySecretStore())
+        let request = try provider.makeRequest(
+            messages: [AIMessage(role: .user, content: "explain", imageData: Data([0xFF, 0xD8, 0xFF]))],
+            key: "gsk_test"
+        )
+        let body = try #require(request.httpBody)
+        let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+        #expect(json["model"] as? String == AIConfig.visionModel())
+        let messages = try #require(json["messages"] as? [[String: Any]])
+        let content = try #require(messages.first?["content"] as? [[String: Any]])
+        #expect(content.contains { ($0["type"] as? String) == "text" })
+        let imagePart = content.first { ($0["type"] as? String) == "image_url" }
+        #expect(imagePart != nil)
+        let url = ((imagePart?["image_url"] as? [String: Any])?["url"] as? String) ?? ""
+        #expect(url.hasPrefix("data:image/jpeg;base64,"))
+    }
+
     @Test("Provider reflects whether a key is stored")
     func configuration() {
         let secrets = InMemorySecretStore()

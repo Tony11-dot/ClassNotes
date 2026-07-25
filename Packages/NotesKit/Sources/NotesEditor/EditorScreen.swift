@@ -6,6 +6,7 @@ import NotesServices
 import PencilKit
 import PhotosUI
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 /// iPad notebook editor: scrolling multi-page PencilKit canvas + the draggable
@@ -17,6 +18,8 @@ public struct EditorScreen: View {
 
     private let notebook: Notebook
 
+    @Environment(\.paperTone) private var paperTone
+
     @State private var model: NotebookEditorModel
     @State private var toolState = ToolState()
     @State private var tracker = ActiveCanvasTracker()
@@ -26,6 +29,9 @@ public struct EditorScreen: View {
     @State private var showPages = false
     @State private var addingBottom = false
     @State private var addingTop = false
+    /// Each page's frame in the editor coordinate space, so the magic pen can
+    /// map a circled region back to page-logical coordinates for cropping.
+    @State private var pageFrames: [UUID: CGRect] = [:]
 
     // Insertion sheets/state
     @State private var photoItem: PhotosPickerItem?
@@ -60,8 +66,11 @@ public struct EditorScreen: View {
                 RulerOverlay(isVisible: $rulerVisible).ignoresSafeArea()
             }
             if explainMode {
-                CircleToExplainOverlay { rect in explainSelection(rect) }
-                    .ignoresSafeArea()
+                MagicPenOverlay(
+                    onComplete: { points in handleMagicPen(points) },
+                    onCancel: { explainMode = false }
+                )
+                .zIndex(4)
             }
 
             // Page manager slides in from the leading edge.
@@ -87,6 +96,7 @@ public struct EditorScreen: View {
             )
             .zIndex(3)
         }
+        .coordinateSpace(.named("editor"))
         .animation(.spring(duration: 0.3), value: showPages)
         .navigationTitle(notebook.title)
         .navigationBarTitleDisplayMode(.inline)
@@ -224,6 +234,11 @@ public struct EditorScreen: View {
         )
         .shadow(color: .black.opacity(0.16), radius: 16, y: 8)
         .padding(.horizontal, 40)
+        .onGeometryChange(for: CGRect.self) { proxy in
+            proxy.frame(in: .named("editor"))
+        } action: { frame in
+            pageFrames[page.id] = frame
+        }
     }
 
     // MARK: - Toolbar (NOVA + editable handwriting→text; drawing tools live in the rail)
@@ -287,28 +302,77 @@ extension EditorScreen {
         if !text.isEmpty { ocrText = OCRResult(text: text) }
     }
 
-    private func explainSelection(_ viewRect: CGRect) {
+    /// Magic pen finished: map the scribble to the page under it, crop that
+    /// region (text OR image), and hand it to NOVA.
+    private func handleMagicPen(_ points: [CGPoint]) {
         explainMode = false
-        guard let pageID = model.focusedPageID,
-              let drawing = tracker.drawing(for: pageID) else {
-            openNova(with: "")
-            return
-        }
-        Task {
-            // Approximate: OCR the whole page, then hand NOVA the text. The
-            // drawn box tells NOVA the user cares about this region.
-            let text = await model.recognizeText(pageID: pageID, drawing: drawing)
-            openNova(with: text)
-        }
+        guard points.count > 1 else { return }
+        let xs = points.map(\.x), ys = points.map(\.y)
+        guard let minX = xs.min(), let maxX = xs.max(),
+              let minY = ys.min(), let maxY = ys.max() else { return }
+        let region = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+        let center = CGPoint(x: region.midX, y: region.midY)
+
+        // The page under the scribble's center (fallback to the focused page).
+        let target = pageFrames.first(where: { $0.value.contains(center) })
+            ?? model.focusedPageID.flatMap { id in pageFrames[id].map { (id, $0) } }
+        guard let (pageID, frame) = target, frame.width > 1 else { return }
+
+        let scale = frame.width / PageGeometry.size.width
+        let onPage = region.intersection(frame)
+        guard onPage.width > 8, onPage.height > 8 else { return }
+        let logical = CGRect(
+            x: (onPage.minX - frame.minX) / scale,
+            y: (onPage.minY - frame.minY) / scale,
+            width: onPage.width / scale,
+            height: onPage.height / scale
+        )
+        model.focusedPageID = pageID
+        Task { await runMagicExplain(pageID: pageID, logicalRegion: logical) }
     }
 
-    private func openNova(with context: String) {
+    @MainActor
+    private func runMagicExplain(pageID: UUID, logicalRegion: CGRect) async {
+        guard let page = model.page(pageID) else { return }
+        let full = renderPageImage(page)
+        let cropped = crop(full, to: logicalRegion) ?? full
+        let ocr = await model.ocr(image: cropped)
+        let jpeg = cropped.jpegData(compressionQuality: 0.7) ?? Data()
+
         let conversation = services.makeNovaConversation()
-        if !context.isEmpty {
-            conversation.explain(context: context)
-        }
+        conversation.explainRegion(image: jpeg, ocrHint: ocr)
         novaConversation = conversation
         showNova = true
+    }
+
+    /// Renders one page (paper + margin + ink + elements) to an image in the
+    /// fixed logical page space, so the magic pen can crop a region from it.
+    @MainActor
+    private func renderPageImage(_ page: PageRecord) -> UIImage {
+        let pageRect = CGRect(origin: .zero, size: PageGeometry.size)
+        let ink = tracker.drawing(for: page.id)?.image(from: pageRect, scale: 2)
+        let content = ZStack {
+            PageTemplateView(template: page.template, margin: page.margin)
+            if let ink { Image(uiImage: ink).resizable().scaledToFit() }
+            PageElementsLayer(pageID: page.id, elements: page.elements, model: model, displaySize: PageGeometry.size)
+        }
+        .frame(width: PageGeometry.size.width, height: PageGeometry.size.height)
+        .environment(\.theme, theme)
+        .environment(\.paperTone, paperTone)
+        let renderer = ImageRenderer(content: content)
+        renderer.scale = 2
+        return renderer.uiImage ?? UIImage()
+    }
+
+    private func crop(_ image: UIImage, to logical: CGRect) -> UIImage? {
+        guard let cg = image.cgImage else { return nil }
+        let pixelsPerPoint = CGFloat(cg.width) / PageGeometry.size.width
+        let px = CGRect(
+            x: logical.minX * pixelsPerPoint, y: logical.minY * pixelsPerPoint,
+            width: logical.width * pixelsPerPoint, height: logical.height * pixelsPerPoint
+        )
+        guard px.width > 4, px.height > 4, let region = cg.cropping(to: px) else { return nil }
+        return UIImage(cgImage: region)
     }
 }
 

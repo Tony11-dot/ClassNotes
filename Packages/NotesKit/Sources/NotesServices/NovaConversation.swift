@@ -57,6 +57,18 @@ public final class NovaConversation {
         beginAssistantReply()
     }
 
+    /// Magic pen: seed NOVA with the circled region as an image (text OR
+    /// picture) plus any text detected in it, then ask for an explanation.
+    public func explainRegion(image: Data, ocrHint: String) {
+        errorText = nil
+        var prompt = "I circled this part of my notes. Explain what it shows or "
+            + "says, clearly and simply, then offer one follow-up I could ask."
+        let hint = ocrHint.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !hint.isEmpty { prompt += "\n\nText detected in it: \"\(hint)\"" }
+        messages.append(AIMessage(role: .user, content: prompt, imageData: image))
+        beginAssistantReply()
+    }
+
     public func reset() {
         streamTask?.cancel()
         streaming = false
