@@ -29,6 +29,7 @@ struct PageElementsLayer: View {
                         y: (element.y + element.height / 2) * scale
                     )
                     .gesture(dragGesture(for: element))
+                    .simultaneousGesture(resizeGesture(for: element))
                     .contextMenu {
                         Button(role: .destructive) {
                             Task { await model.deleteElement(element.id, on: pageID) }
@@ -118,6 +119,23 @@ struct PageElementsLayer: View {
                 var updated = element
                 updated.x = max(0, min(PageGeometry.size.width - element.width, element.x + value.translation.width / scale))
                 updated.y = max(0, min(PageGeometry.size.height - element.height, element.y + value.translation.height / scale))
+                Task { await model.updateElement(updated, on: pageID) }
+            }
+    }
+
+    /// Pinch to resize (keeps the top-left corner anchored). Best used in the
+    /// rail's Hand mode, where the pencil doesn't draw.
+    private func resizeGesture(for element: PageElement) -> some Gesture {
+        MagnifyGesture()
+            .onEnded { value in
+                let factor = max(0.3, min(3, value.magnification))
+                var updated = element
+                let newW = min(PageGeometry.size.width, max(40, element.width * factor))
+                let newH = min(PageGeometry.size.height, max(40, element.height * factor))
+                updated.width = newW
+                updated.height = newH
+                updated.x = min(updated.x, PageGeometry.size.width - newW)
+                updated.y = min(updated.y, PageGeometry.size.height - newH)
                 Task { await model.updateElement(updated, on: pageID) }
             }
     }

@@ -47,7 +47,7 @@ public struct NotebookViewerScreen: View {
 
     private func pageView(_ page: PageRecord, number: Int) -> some View {
         ZStack {
-            PageTemplateView(template: page.template)
+            PageTemplateView(template: page.template, margin: page.margin)
             if let image = inkImages[page.id] {
                 Image(uiImage: image)
                     .resizable()
@@ -97,7 +97,7 @@ public struct NotebookViewerScreen: View {
     /// Full composite (paper + template + ink) for sharing.
     private func exportImage(_ page: PageRecord, number: Int) -> Image {
         let composite = ZStack {
-            PageTemplateView(template: page.template)
+            PageTemplateView(template: page.template, margin: page.margin)
             if let image = inkImages[page.id] {
                 Image(uiImage: image).resizable().scaledToFit()
             }

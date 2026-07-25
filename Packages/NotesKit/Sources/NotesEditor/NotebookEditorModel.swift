@@ -36,6 +36,66 @@ public final class NotebookEditorModel {
         manifest = try? await store.addPage(to: notebookID, template: template)
     }
 
+    public func page(_ id: UUID?) -> PageRecord? {
+        guard let id else { return nil }
+        return manifest?.pages.first { $0.id == id }
+    }
+
+    // MARK: - Page settings & management
+
+    public func updatePageSettings(pageID: UUID, template: PageTemplate? = nil, margin: PageMargin? = nil) async {
+        manifest = try? await store.updatePage(notebook: notebookID, page: pageID, template: template, margin: margin)
+    }
+
+    public func deletePage(_ pageID: UUID) async {
+        manifest = try? await store.deletePage(notebook: notebookID, page: pageID)
+        if focusedPageID == pageID { focusedPageID = manifest?.pages.first?.id }
+    }
+
+    public func duplicatePage(_ pageID: UUID) async {
+        manifest = try? await store.duplicatePage(notebook: notebookID, page: pageID)
+    }
+
+    public func movePage(from: Int, to: Int) async {
+        manifest = try? await store.movePage(notebook: notebookID, from: from, to: to)
+    }
+
+    /// Inserts a page at `index`, inheriting `source`'s paper + margin (or the
+    /// notebook default). Used by the page manager and infinite scroll.
+    @discardableResult
+    public func insertPage(at index: Int, inheriting source: UUID?) async -> UUID? {
+        let template = page(source)?.template ?? manifest?.pages.first?.template ?? .blank
+        let margin = page(source)?.margin ?? .default
+        guard let result = try? await store.insertPage(
+            notebook: notebookID, at: index, template: template, margin: margin
+        ) else { return nil }
+        manifest = result.manifest
+        return result.page.id
+    }
+
+    /// Over-scroll past the last page → append a page inheriting the last one.
+    @discardableResult
+    public func appendInheritingLast() async -> UUID? {
+        let count = manifest?.pages.count ?? 0
+        return await insertPage(at: count, inheriting: manifest?.pages.last?.id)
+    }
+
+    /// Over-scroll above the first page → prepend a page inheriting the first.
+    @discardableResult
+    public func prependInheritingFirst() async -> UUID? {
+        return await insertPage(at: 0, inheriting: manifest?.pages.first?.id)
+    }
+
+    // MARK: - Handwriting beautification
+
+    /// OCRs the page's handwriting and drops it back as typeset text in the
+    /// chosen font — a real text element, not a textbox.
+    public func beautify(pageID: UUID, drawing: PKDrawing, font: HandwritingFont, colorHex: String) async {
+        let text = await recognizeText(pageID: pageID, drawing: drawing)
+        guard !text.isEmpty else { return }
+        await insertText(text, fontName: font.fontName, colorHex: colorHex)
+    }
+
     private var targetPageID: UUID? { focusedPageID ?? manifest?.pages.first?.id }
 
     /// A target page that actually exists in the current manifest. Used before

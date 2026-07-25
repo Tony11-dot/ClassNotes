@@ -9,9 +9,11 @@ public struct PageTemplateView: View {
     @Environment(\.paperTone) private var paperTone
 
     let template: PageTemplate
+    let margin: PageMargin?
 
-    public init(template: PageTemplate) {
+    public init(template: PageTemplate, margin: PageMargin? = nil) {
         self.template = template
+        self.margin = margin
     }
 
     private static let lineSpacing: CGFloat = 32
@@ -68,7 +70,27 @@ public struct PageTemplateView: View {
                     y += Self.dotSpacing
                 }
             }
+
+            // Margin line (classic notebook rule down one side).
+            if let margin, margin.position != .none {
+                let x = margin.position == .leading ? margin.offset : size.width - margin.offset
+                var line = Path()
+                line.move(to: CGPoint(x: x, y: 0))
+                line.addLine(to: CGPoint(x: x, y: size.height))
+                context.stroke(line, with: .color(marginColor(margin)), lineWidth: 1.5)
+            }
         }
         .background(theme.paperColor(tone: paperTone).color)
+    }
+
+    /// The margin color: the user's override, else a soft classic-notebook red
+    /// tuned to the paper's brightness so it reads without shouting.
+    private func marginColor(_ margin: PageMargin) -> Color {
+        if let hex = margin.colorHex, let color = ThemeColor(hex: hex) {
+            return color.color
+        }
+        return theme.isDark
+            ? Color(red: 0.86, green: 0.42, blue: 0.42).opacity(0.55)
+            : Color(red: 0.80, green: 0.28, blue: 0.28).opacity(0.55)
     }
 }

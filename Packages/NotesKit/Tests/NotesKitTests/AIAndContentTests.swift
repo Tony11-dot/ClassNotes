@@ -125,7 +125,7 @@ struct ContentModelTests {
         #expect(OCRService.assemble(lines) == "first\nsecond")
     }
 
-    @Test("Manifest v2 round-trips page elements")
+    @Test("Manifest round-trips page elements at the current version")
     func elementsRoundTrip() throws {
         let element = PageElement(
             kind: .text, x: 10, y: 20, width: 400, height: 120,
@@ -135,7 +135,7 @@ struct ContentModelTests {
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
         let decoded = try decoder.decode(NotebookManifest.self, from: encoder.encode(manifest))
-        #expect(decoded.version == 2)
+        #expect(decoded.version == NotebookManifest.currentVersion)
         #expect(decoded.pages.first?.elements.first?.text == "Newton's second law")
         #expect(decoded.pages.first?.elements.first?.kind == .text)
     }

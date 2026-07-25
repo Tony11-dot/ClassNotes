@@ -203,4 +203,78 @@ public actor DocumentStore {
         try writeManifest(current, for: notebook)
         return current
     }
+
+    // MARK: - Page management (template / margin / order)
+
+    /// Updates a page's paper template and/or margin.
+    @discardableResult
+    public func updatePage(
+        notebook: UUID, page: UUID, template: PageTemplate?, margin: PageMargin?
+    ) throws -> NotebookManifest {
+        var current = try manifest(for: notebook)
+        guard let index = current.pages.firstIndex(where: { $0.id == page }) else { return current }
+        if let template { current.pages[index].template = template }
+        if let margin { current.pages[index].margin = margin }
+        try writeManifest(current, for: notebook)
+        return current
+    }
+
+    /// Inserts a new blank page at `index` (clamped), inheriting the given
+    /// template + margin. Returns the manifest and the new page.
+    public func insertPage(
+        notebook: UUID, at index: Int, template: PageTemplate, margin: PageMargin
+    ) throws -> (manifest: NotebookManifest, page: PageRecord) {
+        var current = try manifest(for: notebook)
+        let page = PageRecord(template: template, margin: margin)
+        let clamped = max(0, min(index, current.pages.count))
+        current.pages.insert(page, at: clamped)
+        try writeManifest(current, for: notebook)
+        return (current, page)
+    }
+
+    /// Deletes a page (and its ink blob). A notebook always keeps ≥1 page —
+    /// deleting the last one leaves a fresh blank page.
+    @discardableResult
+    public func deletePage(notebook: UUID, page: UUID) throws -> NotebookManifest {
+        var current = try manifest(for: notebook)
+        current.pages.removeAll { $0.id == page }
+        if current.pages.isEmpty {
+            current.pages = [PageRecord(template: .blank)]
+        }
+        try? FileManager.default.removeItem(at: pageURL(notebook: notebook, page: page))
+        try writeManifest(current, for: notebook)
+        return current
+    }
+
+    /// Moves the page at `from` to `to` (array reorder).
+    @discardableResult
+    public func movePage(notebook: UUID, from: Int, to: Int) throws -> NotebookManifest {
+        var current = try manifest(for: notebook)
+        guard current.pages.indices.contains(from) else { return current }
+        let page = current.pages.remove(at: from)
+        let clamped = max(0, min(to, current.pages.count))
+        current.pages.insert(page, at: clamped)
+        try writeManifest(current, for: notebook)
+        return current
+    }
+
+    /// Duplicates a page — copies its settings and ink blob under a new id,
+    /// inserted right after the original.
+    @discardableResult
+    public func duplicatePage(notebook: UUID, page: UUID) throws -> NotebookManifest {
+        var current = try manifest(for: notebook)
+        guard let index = current.pages.firstIndex(where: { $0.id == page }) else { return current }
+        let source = current.pages[index]
+        let copy = PageRecord(template: source.template, elements: source.elements, margin: source.margin)
+        current.pages.insert(copy, at: index + 1)
+        // Copy the ink blob if the source has one.
+        if let data = try? Data(contentsOf: pageURL(notebook: notebook, page: page)) {
+            try? FileManager.default.createDirectory(
+                at: pagesDirectory(for: notebook), withIntermediateDirectories: true
+            )
+            try? data.write(to: pageURL(notebook: notebook, page: copy.id), options: .atomic)
+        }
+        try writeManifest(current, for: notebook)
+        return current
+    }
 }

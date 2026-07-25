@@ -8,9 +8,9 @@ import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// iPad notebook editor: scrolling multi-page PencilKit canvas + the media,
-/// voice, text, ruler and NOVA tools layered on top. Only `App/Routing` may
-/// import this module.
+/// iPad notebook editor: scrolling multi-page PencilKit canvas + the draggable
+/// tool rail, page manager, media/voice/text tools, ruler and NOVA layered on
+/// top. Only `App/Routing` may import this module.
 public struct EditorScreen: View {
     @Environment(AppServices.self) private var services
     @Environment(\.theme) private var theme
@@ -23,7 +23,9 @@ public struct EditorScreen: View {
 
     @State private var rulerVisible = false
     @State private var explainMode = false
-    @State private var addingPage = false
+    @State private var showPages = false
+    @State private var addingBottom = false
+    @State private var addingTop = false
 
     // Insertion sheets/state
     @State private var photoItem: PhotosPickerItem?
@@ -45,22 +47,47 @@ public struct EditorScreen: View {
     }
 
     public var body: some View {
-        ZStack {
+        ZStack(alignment: .leading) {
             theme.surface.color.ignoresSafeArea()
             pageScroll
+            edgeLoader(top: true).opacity(addingTop ? 1 : 0)
+            edgeLoader(top: false).opacity(addingBottom ? 1 : 0)
+
             if model.manifest == nil {
-                BrandLoader(size: 56)
+                BrandLoader(size: 56).frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             if rulerVisible {
                 RulerOverlay(isVisible: $rulerVisible).ignoresSafeArea()
             }
             if explainMode {
-                CircleToExplainOverlay { rect in
-                    explainSelection(rect)
-                }
-                .ignoresSafeArea()
+                CircleToExplainOverlay { rect in explainSelection(rect) }
+                    .ignoresSafeArea()
             }
+
+            // Page manager slides in from the leading edge.
+            if showPages {
+                PageManagerView(model: model, isVisible: $showPages) { id in
+                    model.focusedPageID = id
+                }
+                .transition(.move(edge: .leading))
+                .zIndex(2)
+            }
+
+            // The draggable tool rail sits above everything.
+            ToolRailView(
+                toolState: toolState,
+                model: model,
+                tracker: tracker,
+                rulerVisible: $rulerVisible,
+                showPages: $showPages,
+                onPhoto: { showPhotoPicker = true },
+                onFile: { showFileImporter = true },
+                onRecord: { showRecorder = true },
+                onBeautify: { Task { await beautifyFocusedPage() } }
+            )
+            .zIndex(3)
         }
+        .animation(.spring(duration: 0.3), value: showPages)
         .navigationTitle(notebook.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent }
@@ -96,21 +123,75 @@ public struct EditorScreen: View {
     // MARK: - Pages
 
     private var pageScroll: some View {
-        ScrollView {
-            LazyVStack(spacing: 32) {
-                ForEach(model.pages) { page in
-                    pageView(page)
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 32) {
+                    ForEach(model.pages) { page in
+                        pageView(page).id(page.id)
+                    }
                 }
-                addPageButton
+                .padding(.vertical, 28)
             }
-            .padding(.vertical, 28)
+            .onScrollGeometryChange(for: Overscroll.self) { geo in
+                let topRest = -geo.contentInsets.top
+                let bottomRest = geo.contentSize.height - geo.containerSize.height + geo.contentInsets.bottom
+                return Overscroll(
+                    top: topRest - geo.contentOffset.y,
+                    bottom: geo.contentOffset.y - bottomRest,
+                    scrollable: geo.contentSize.height > geo.containerSize.height
+                )
+            } action: { _, over in
+                handleOverscroll(over, proxy: proxy)
+            }
         }
+    }
+
+    /// Over-scroll past either end grows the notebook: keep dragging past the
+    /// last page (or above the first) and a new page — inheriting that page's
+    /// paper + margin — slides in.
+    private func handleOverscroll(_ over: Overscroll, proxy: ScrollViewProxy) {
+        guard over.scrollable else { return }
+        let threshold: CGFloat = 120
+        if over.bottom > threshold, !addingBottom {
+            addingBottom = true
+            Task {
+                _ = await model.appendInheritingLast()
+                addingBottom = false
+            }
+        }
+        if over.top > threshold, !addingTop {
+            addingTop = true
+            let anchor = model.pages.first?.id
+            Task {
+                _ = await model.prependInheritingFirst()
+                // Keep the viewport steady: the new page grew above, so pin the
+                // page that used to be first back to the top.
+                if let anchor { proxy.scrollTo(anchor, anchor: .top) }
+                addingTop = false
+            }
+        }
+    }
+
+    private func edgeLoader(top: Bool) -> some View {
+        VStack {
+            if !top { Spacer() }
+            ZStack {
+                Circle().stroke(theme.separator.color, lineWidth: 2).frame(width: 40, height: 40)
+                ProgressView().tint(theme.accent.color)
+                Image(systemName: "plus").font(.caption.weight(.bold)).foregroundStyle(theme.accent.color)
+                    .offset(y: 14)
+            }
+            .padding(16)
+            if top { Spacer() }
+        }
+        .frame(maxWidth: .infinity)
+        .allowsHitTesting(false)
     }
 
     private func pageView(_ page: PageRecord) -> some View {
         GeometryReader { geo in
             ZStack {
-                PageTemplateView(template: page.template)
+                PageTemplateView(template: page.template, margin: page.margin)
                 CanvasPageView(
                     notebookID: notebook.id,
                     page: page,
@@ -145,26 +226,7 @@ public struct EditorScreen: View {
         .padding(.horizontal, 40)
     }
 
-    private var addPageButton: some View {
-        Button {
-            guard !addingPage else { return }
-            addingPage = true
-            Task {
-                await model.addPage(template: notebook.defaultTemplate)
-                addingPage = false
-            }
-        } label: {
-            Label("Add page", systemImage: "plus")
-                .font(.body.weight(.medium))
-                .foregroundStyle(theme.accent.color)
-                .padding(.horizontal, 18).padding(.vertical, 10)
-        }
-        .buttonStyle(.glass)
-        .disabled(addingPage)
-        .padding(.bottom, 40)
-    }
-
-    // MARK: - Toolbar
+    // MARK: - Toolbar (NOVA + editable handwriting→text; drawing tools live in the rail)
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
@@ -177,29 +239,30 @@ public struct EditorScreen: View {
             .tint(explainMode ? theme.accent.color : theme.ink.color)
             .accessibilityLabel("Ask NOVA about a selection")
 
-            Button {
-                rulerVisible.toggle()
-            } label: {
-                Image(systemName: "ruler")
-            }
-            .tint(rulerVisible ? theme.accent.color : theme.ink.color)
-            .accessibilityLabel("Ruler")
-
             Menu {
-                Button { showPhotoPicker = true } label: { Label("Photo", systemImage: "photo") }
-                Button { showFileImporter = true } label: { Label("File", systemImage: "doc") }
-                Button { showRecorder = true } label: { Label("Voice note", systemImage: "mic") }
                 Button { Task { await recognizeHandwriting() } } label: {
                     Label("Handwriting → text", systemImage: "text.viewfinder")
                 }
             } label: {
-                Image(systemName: "plus.circle")
+                Image(systemName: "ellipsis.circle")
             }
-            .accessibilityLabel("Insert")
+            .accessibilityLabel("More")
         }
     }
 
-    // MARK: - Actions
+}
+
+// MARK: - Actions
+
+extension EditorScreen {
+    private func beautifyFocusedPage() async {
+        guard let pageID = model.focusedPageID ?? model.pages.first?.id,
+              let drawing = tracker.drawing(for: pageID) else { return }
+        await model.beautify(
+            pageID: pageID, drawing: drawing,
+            font: toolState.beautifyFont, colorHex: theme.ink.hexString
+        )
+    }
 
     private func handlePickedPhoto(_ item: PhotosPickerItem?) async {
         guard let item, let data = try? await item.loadTransferable(type: Data.self) else { return }
@@ -247,6 +310,14 @@ public struct EditorScreen: View {
         novaConversation = conversation
         showNova = true
     }
+}
+
+/// Over-scroll distances past the top/bottom of the page scroll, used to grow
+/// the notebook on demand.
+private struct Overscroll: Equatable {
+    var top: CGFloat
+    var bottom: CGFloat
+    var scrollable: Bool
 }
 
 /// Identifiable wrapper so recognized text can drive a `.sheet(item:)`.

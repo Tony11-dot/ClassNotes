@@ -16,15 +16,25 @@ struct ToolStateTests {
         #expect(pen.inkType == .pen)
         #expect(abs(pen.width - state.penWidth) < 0.001)
 
-        state.select(.highlighter)
+        state.select(.marker)
         let marker = try #require(state.pkTool(theme: theme) as? PKInkingTool)
         #expect(marker.inkType == .marker)
 
         state.select(.eraser)
         #expect(state.pkTool(theme: theme) is PKEraserTool)
 
-        state.select(.lasso)
-        #expect(state.pkTool(theme: theme) is PKLassoTool)
+        // Hand is an object-manipulation mode — the pencil doesn't draw.
+        state.select(.hand)
+        #expect(!state.isDrawingEnabled)
+    }
+
+    @Test("Pen ink type drives the PencilKit ink")
+    func penInk() throws {
+        let state = ToolState()
+        let theme = ThemePreset.nord.spec
+        state.penInk = .fountain
+        let ink = try #require(state.pkTool(theme: theme) as? PKInkingTool)
+        #expect(ink.inkType == .fountainPen)
     }
 
     @Test("Default ink colors follow the theme until overridden")
@@ -61,16 +71,16 @@ struct ToolStateTests {
         state.handlePencilTap(preferred: .switchEraser)
         #expect(state.tool == .pen)
 
-        state.select(.highlighter)
+        state.select(.marker)
         state.select(.pen)
         state.handlePencilTap(preferred: .switchPrevious)
-        #expect(state.tool == .highlighter)
+        #expect(state.tool == .marker)
     }
 
-    @Test("Pencil squeeze cycles pen → highlighter → eraser → lasso")
+    @Test("Pencil squeeze cycles pen → marker → eraser → hand")
     func squeeze() {
         let state = ToolState()
-        let expected: [ToolState.Tool] = [.highlighter, .eraser, .lasso, .pen]
+        let expected: [ToolState.Tool] = [.marker, .eraser, .hand, .pen]
         for tool in expected {
             state.handlePencilSqueeze()
             #expect(state.tool == tool)
@@ -83,9 +93,9 @@ struct ToolStateTests {
         state.currentWidth = 5
         #expect(state.penWidth == 5)
 
-        state.select(.highlighter)
+        state.select(.marker)
         state.currentWidth = 22
-        #expect(state.highlighterWidth == 22)
+        #expect(state.markerWidth == 22)
         #expect(state.penWidth == 5)
     }
 }

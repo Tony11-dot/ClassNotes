@@ -84,6 +84,9 @@ struct CanvasPageView: UIViewRepresentable {
     func updateUIView(_ canvas: PageCanvasView, context: Context) {
         context.coordinator.toolState = toolState
         canvas.tool = toolState.pkTool(theme: theme)
+        // Hand (object) mode: stop the canvas from capturing the pencil so the
+        // element layer's move/resize gestures win. Any other tool draws.
+        canvas.drawingGestureRecognizer.isEnabled = toolState.isDrawingEnabled
         canvas.overrideUserInterfaceStyle = theme.isDark ? .dark : .light
     }
 
