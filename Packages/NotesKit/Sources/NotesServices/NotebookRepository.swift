@@ -12,11 +12,44 @@ public final class NotebookRepository {
     private let context: ModelContext
     private let store: DocumentStore
     private let entitlements: EntitlementService
+    /// Optional so tests / previews can omit it; when present, every mutation
+    /// mirrors up to the ClassMate backend for the ClassNotes tab.
+    private let sync: SyncService?
 
-    public init(context: ModelContext, store: DocumentStore, entitlements: EntitlementService) {
+    public init(
+        context: ModelContext,
+        store: DocumentStore,
+        entitlements: EntitlementService,
+        sync: SyncService? = nil
+    ) {
         self.context = context
         self.store = store
         self.entitlements = entitlements
+        self.sync = sync
+    }
+
+    // MARK: - Sync snapshots (built on @MainActor from the SwiftData rows)
+
+    private func snapshot(_ n: Notebook) -> NotebookSnapshot {
+        NotebookSnapshot(
+            id: n.id, title: n.title, coverColorHex: n.coverColorHex,
+            template: n.defaultTemplateRaw, shelfID: n.shelfID,
+            createdAt: n.createdAt, updatedAt: n.updatedAt
+        )
+    }
+
+    private func snapshot(_ s: Shelf) -> ShelfSnapshot {
+        ShelfSnapshot(
+            id: s.id, name: s.name, colorHex: s.colorHex,
+            symbolName: s.symbolName, sortIndex: s.sortIndex, createdAt: s.createdAt
+        )
+    }
+
+    /// A snapshot of the ENTIRE local library, for the launch full-sync.
+    public func fullSnapshot() -> (notebooks: [NotebookSnapshot], shelves: [ShelfSnapshot]) {
+        let notebooks = (try? context.fetch(FetchDescriptor<Notebook>())) ?? []
+        let shelves = (try? context.fetch(FetchDescriptor<Shelf>())) ?? []
+        return (notebooks.map(snapshot), shelves.map(snapshot))
     }
 
     public func canCreateNotebook(currentCount: Int) -> Bool {
@@ -37,6 +70,7 @@ public final class NotebookRepository {
         try await store.createDocument(id: notebook.id, firstPageTemplate: template)
         context.insert(notebook)
         try context.save()
+        sync?.pushNotebook(snapshot(notebook))
         return notebook
     }
 
@@ -46,17 +80,21 @@ public final class NotebookRepository {
         notebook.title = trimmed
         notebook.updatedAt = .now
         try context.save()
+        sync?.pushNotebook(snapshot(notebook))
     }
 
     public func delete(_ notebook: Notebook) async throws {
+        let id = notebook.id // capture before the row is deleted
         try await store.deleteDocument(id: notebook.id)
         context.delete(notebook)
         try context.save()
+        sync?.deleteNotebook(id: id)
     }
 
     public func touch(_ notebook: Notebook) {
         notebook.updatedAt = .now
         try? context.save()
+        sync?.pushNotebook(snapshot(notebook))
     }
 
     // MARK: - Shelves (bags / collections)
@@ -72,6 +110,7 @@ public final class NotebookRepository {
         )
         context.insert(shelf)
         try context.save()
+        sync?.pushShelf(snapshot(shelf))
         return shelf
     }
 
@@ -80,14 +119,20 @@ public final class NotebookRepository {
         // Fetch-all-then-filter (predicate machinery is overkill for a tiny set
         // and traps on hostless test runners).
         let all = (try? context.fetch(FetchDescriptor<Notebook>())) ?? []
-        for notebook in all where notebook.shelfID == shelfID { notebook.shelfID = nil }
+        let unfiled = all.filter { $0.shelfID == shelfID }
+        for notebook in unfiled { notebook.shelfID = nil }
         context.delete(shelf)
         try context.save()
+        // Delete the shelf, then re-push the notebooks it un-filed so their
+        // `shelfId` clears on the backend too.
+        sync?.deleteShelf(id: shelfID)
+        for notebook in unfiled { sync?.pushNotebook(snapshot(notebook)) }
     }
 
     public func assign(_ notebook: Notebook, toShelf shelfID: UUID?) {
         notebook.shelfID = shelfID
         notebook.updatedAt = .now
         try? context.save()
+        sync?.pushNotebook(snapshot(notebook))
     }
 }

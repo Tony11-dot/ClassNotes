@@ -17,6 +17,9 @@ public final class AppServices {
     public let auth: AuthService
     public let keychain: any SecretStore
     public let aiProvider: GroqProvider
+    /// Mirrors the local library up to the ClassMate backend so the ClassMate
+    /// "ClassNotes" tab shows the user's real notebooks.
+    public let sync: SyncService
 
     public init(modelContainer: ModelContainer, documentsRootURL: URL? = nil) {
         self.modelContainer = modelContainer
@@ -24,12 +27,17 @@ public final class AppServices {
         let store = DocumentStore(rootURL: documentsRootURL)
         let entitlements = EntitlementService()
         let keychain: any SecretStore = KeychainStore()
+        let auth = AuthService(keychain: keychain)
+        let sync = SyncService(client: ClassMateAPIClient(), auth: auth, store: store)
         self.documentStore = store
         self.entitlements = entitlements
         self.keychain = keychain
+        self.auth = auth
+        self.sync = sync
         self.themeService = ThemeService(context: context, entitlements: entitlements)
-        self.repository = NotebookRepository(context: context, store: store, entitlements: entitlements)
-        self.auth = AuthService(keychain: keychain)
+        self.repository = NotebookRepository(
+            context: context, store: store, entitlements: entitlements, sync: sync
+        )
         self.aiProvider = GroqProvider(keychain: keychain)
     }
 
@@ -51,6 +59,11 @@ public final class AppServices {
             await auth.restore()
             await entitlements.refreshEntitlements()
             await entitlements.loadProducts()
+            // Once the ClassMate session is restored, reconcile the whole local
+            // library up to the backend (first run + any missed per-edit pushes).
+            // No-ops when signed out (SyncService checks the token).
+            let snapshot = repository.fullSnapshot()
+            sync.pushAll(notebooks: snapshot.notebooks, shelves: snapshot.shelves)
         }
     }
 }

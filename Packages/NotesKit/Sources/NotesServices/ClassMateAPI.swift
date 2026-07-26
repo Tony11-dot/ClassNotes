@@ -32,6 +32,49 @@ public enum APIError: Error, Equatable, Sendable {
     case notAuthenticated
 }
 
+/// Upload body for `PUT /classnotes/notebooks/:id` — the notebook metadata the
+/// ClassMate "ClassNotes" tab renders. The id travels in the URL, so it is NOT
+/// part of the body (the backend rejects unknown fields).
+public struct NotebookSyncBody: Encodable, Sendable {
+    public let title: String
+    public let coverColorHex: String
+    public let template: String      // PageTemplate.rawValue
+    public let shelfId: String?      // nil = unfiled
+    public let pageCount: Int
+    public let createdAt: Date
+    public let updatedAt: Date
+
+    public init(
+        title: String, coverColorHex: String, template: String,
+        shelfId: String?, pageCount: Int, createdAt: Date, updatedAt: Date
+    ) {
+        self.title = title
+        self.coverColorHex = coverColorHex
+        self.template = template
+        self.shelfId = shelfId
+        self.pageCount = pageCount
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+}
+
+/// Upload body for `PUT /classnotes/shelves/:id`.
+public struct ShelfSyncBody: Encodable, Sendable {
+    public let name: String
+    public let colorHex: String
+    public let symbolName: String
+    public let sortIndex: Int
+    public let createdAt: Date
+
+    public init(name: String, colorHex: String, symbolName: String, sortIndex: Int, createdAt: Date) {
+        self.name = name
+        self.colorHex = colorHex
+        self.symbolName = symbolName
+        self.sortIndex = sortIndex
+        self.createdAt = createdAt
+    }
+}
+
 /// The `/auth/me` shape from ClassMate, trimmed to the fields Notes shows.
 public struct ClassMateUser: Codable, Sendable, Equatable {
     public var id: String?
@@ -166,7 +209,45 @@ public struct ClassMateAPIClient: Sendable {
         }
     }
 
+    // MARK: - ClassNotes library sync (Bearer)
+
+    /// `PUT /classnotes/notebooks/:id` — upsert one notebook's metadata.
+    public func putNotebook(id: String, body: NotebookSyncBody, token: String) async throws {
+        try await putJSON(path: "/classnotes/notebooks/\(id)", body: body, token: token)
+    }
+
+    /// `DELETE /classnotes/notebooks/:id`.
+    public func deleteNotebook(id: String, token: String) async throws {
+        let (_, status) = try await send(request(path: "/classnotes/notebooks/\(id)", method: "DELETE", token: token))
+        try ensureSuccess(status)
+    }
+
+    /// `PUT /classnotes/shelves/:id` — upsert one shelf.
+    public func putShelf(id: String, body: ShelfSyncBody, token: String) async throws {
+        try await putJSON(path: "/classnotes/shelves/\(id)", body: body, token: token)
+    }
+
+    /// `DELETE /classnotes/shelves/:id`.
+    public func deleteShelf(id: String, token: String) async throws {
+        let (_, status) = try await send(request(path: "/classnotes/shelves/\(id)", method: "DELETE", token: token))
+        try ensureSuccess(status)
+    }
+
     // MARK: - Plumbing
+
+    private func putJSON<Body: Encodable>(path: String, body: Body, token: String) async throws {
+        var req = request(path: path, method: "PUT", token: token)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        req.httpBody = try encoder.encode(body)
+        let (_, status) = try await send(req)
+        try ensureSuccess(status)
+    }
+
+    private func ensureSuccess(_ status: Int) throws {
+        if status == 401 { throw APIError.notAuthenticated }
+        guard (200..<300).contains(status) else { throw APIError.badResponse(status: status) }
+    }
 
     private func token(from data: Data) throws -> String {
         struct TokenResponse: Decodable { let token: String }
