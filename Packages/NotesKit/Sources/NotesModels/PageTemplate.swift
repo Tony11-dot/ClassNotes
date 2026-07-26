@@ -6,6 +6,8 @@ import Foundation
 public enum PageTemplate: String, CaseIterable, Sendable, Codable, Identifiable {
     case blank
     case ruled
+    case dashed
+    case dotted
     case grid
     case dotGrid
 
@@ -15,6 +17,8 @@ public enum PageTemplate: String, CaseIterable, Sendable, Codable, Identifiable 
         switch self {
         case .blank: "Blank"
         case .ruled: "Ruled"
+        case .dashed: "Dashed"
+        case .dotted: "Dotted"
         case .grid: "Grid"
         case .dotGrid: "Dot grid"
         }
@@ -24,9 +28,17 @@ public enum PageTemplate: String, CaseIterable, Sendable, Codable, Identifiable 
         switch self {
         case .blank: "rectangle.portrait"
         case .ruled: "text.justify"
+        case .dashed: "line.3.horizontal.decrease"
+        case .dotted: "ellipsis"
         case .grid: "grid"
         case .dotGrid: "circle.grid.3x3"
         }
+    }
+
+    /// Templates that draw horizontal writing lines (ruled family) — used by the
+    /// renderer to pick a stroke dash style.
+    public var isRuledFamily: Bool {
+        self == .ruled || self == .dashed || self == .dotted
     }
 }
 

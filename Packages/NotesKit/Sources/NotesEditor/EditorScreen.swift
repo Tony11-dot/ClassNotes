@@ -41,6 +41,12 @@ public struct EditorScreen: View {
     @State private var ocrText: OCRResult?
     @State private var novaConversation: NovaConversation?
     @State private var showNova = false
+    @State private var beautifying = false
+    @State private var editorNotice: String?
+    @State private var pageSettings: PageRecord?
+    /// Decoded PDF/image page backgrounds, cached so SwiftUI re-renders don't
+    /// re-decode the PNG on every frame.
+    @State private var backgroundCache = PageImageCache()
 
     public init(notebook: Notebook) {
         self.notebook = notebook
@@ -97,7 +103,10 @@ public struct EditorScreen: View {
             .zIndex(3)
         }
         .coordinateSpace(.named("editor"))
+        .overlay(alignment: .top) { noticeBanner }
+        .overlay { beautifyingOverlay }
         .animation(.spring(duration: 0.3), value: showPages)
+        .animation(.spring(duration: 0.3), value: editorNotice)
         .navigationTitle(notebook.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent }
@@ -105,7 +114,10 @@ public struct EditorScreen: View {
             model = NotebookEditorModel(notebookID: notebook.id, store: services.documentStore)
             await model.load()
         }
-        .onDisappear { services.repository.touch(notebook) }
+        .onDisappear {
+            services.repository.touch(notebook)
+            syncPageImages()
+        }
         .photosPicker(isPresented: $showPhotoPicker, selection: $photoItem, matching: .images)
         .onChange(of: photoItem) { _, item in Task { await handlePickedPhoto(item) } }
         .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.item]) { result in
@@ -127,6 +139,55 @@ public struct EditorScreen: View {
             if let conversation = novaConversation {
                 NovaChatView(conversation: conversation)
             }
+        }
+        .sheet(item: $pageSettings) { page in
+            PageSettingsSheet(page: page) { template, margin, paperColorHex in
+                Task {
+                    await model.updatePageSettings(
+                        pageID: page.id, template: template, margin: margin,
+                        paperColorHex: paperColorHex, clearPaperColor: paperColorHex == nil
+                    )
+                }
+            }
+        }
+    }
+
+    // MARK: - Transient notices & progress
+
+    @ViewBuilder
+    private var noticeBanner: some View {
+        if let editorNotice {
+            Text(editorNotice)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(theme.contrastingInk(on: theme.accent).color)
+                .padding(.horizontal, 16).padding(.vertical, 10)
+                .background(theme.accent.color, in: Capsule())
+                .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
+                .padding(.top, 8)
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .task(id: editorNotice) {
+                    try? await Task.sleep(for: .seconds(2.6))
+                    self.editorNotice = nil
+                }
+        }
+    }
+
+    @ViewBuilder
+    private var beautifyingOverlay: some View {
+        if beautifying {
+            ZStack {
+                theme.ink.withAlpha(0.12).color.ignoresSafeArea()
+                VStack(spacing: 12) {
+                    BrandLoader(size: 44)
+                    Text("Beautifying…").font(.subheadline.weight(.semibold))
+                        .foregroundStyle(theme.ink.color)
+                }
+                .padding(24)
+                .background(theme.surface.color, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .shadow(color: .black.opacity(0.2), radius: 20, y: 8)
+            }
+            .transition(.opacity)
+            .zIndex(6)
         }
     }
 
@@ -202,6 +263,9 @@ public struct EditorScreen: View {
         GeometryReader { geo in
             ZStack {
                 PageTemplateView(template: page.template, margin: page.margin, paperColorHex: page.paperColorHex)
+                if let bg = backgroundImage(for: page) {
+                    Image(uiImage: bg).resizable().scaledToFit()
+                }
                 CanvasPageView(
                     notebookID: notebook.id,
                     page: page,
@@ -258,6 +322,14 @@ public struct EditorScreen: View {
                 Button { Task { await recognizeHandwriting() } } label: {
                     Label("Handwriting → text", systemImage: "text.viewfinder")
                 }
+                Button {
+                    pageSettings = model.page(model.focusedPageID) ?? model.pages.first
+                } label: {
+                    Label("Page settings", systemImage: "slider.horizontal.3")
+                }
+                Button { showFileImporter = true } label: {
+                    Label("Import PDF / file", systemImage: "doc.badge.plus")
+                }
             } label: {
                 Image(systemName: "ellipsis.circle")
             }
@@ -274,10 +346,20 @@ extension EditorScreen {
     /// NOVA tidy it into clean prose, drop it where the writing was, then wipe
     /// the ink. Falls back to the raw OCR text if NOVA is unreachable/offline.
     private func beautifyFocusedPage() async {
-        guard let pageID = model.focusedPageID ?? model.pages.first?.id,
-              let drawing = tracker.drawing(for: pageID) else { return }
+        // Grab the best live drawing — the focused page if it has ink, otherwise
+        // whatever canvas was last drawn on — so Beautify never silently no-ops
+        // because the target canvas scrolled offscreen.
+        guard let (pageID, drawing) = tracker.bestDrawing(preferring: model.focusedPageID) else {
+            editorNotice = "Write something with the pencil first, then tap Beautify."
+            return
+        }
+        beautifying = true
+        defer { beautifying = false }
         let raw = await model.recognizedHandwriting(pageID: pageID, drawing: drawing)
-        guard !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            editorNotice = "Couldn't read that handwriting. Try writing a little larger."
+            return
+        }
         let cleaned = await services.beautifyText(raw) ?? raw
         let origin = tracker.inkBounds(for: pageID)?.origin ?? .zero
         // Honor the selected font — including a user-uploaded OTF/TTF.
@@ -305,8 +387,20 @@ extension EditorScreen {
         let accessing = url.startAccessingSecurityScopedResource()
         defer { if accessing { url.stopAccessingSecurityScopedResource() } }
         guard let data = try? Data(contentsOf: url) else { return }
-        Task {
-            await model.insertFile(data, displayName: url.lastPathComponent, fileExtension: url.pathExtension)
+        // A PDF becomes annotatable page backgrounds (draw on it with every tool);
+        // anything else drops in as an openable file chip.
+        if url.pathExtension.lowercased() == "pdf" {
+            Task {
+                if await model.importPDF(data) != nil {
+                    editorNotice = "PDF imported — draw on it with any tool."
+                } else {
+                    editorNotice = "Couldn't read that PDF."
+                }
+            }
+        } else {
+            Task {
+                await model.insertFile(data, displayName: url.lastPathComponent, fileExtension: url.pathExtension)
+            }
         }
     }
 
@@ -363,11 +457,12 @@ extension EditorScreen {
     /// Renders one page (paper + margin + ink + elements) to an image in the
     /// fixed logical page space, so the magic pen can crop a region from it.
     @MainActor
-    private func renderPageImage(_ page: PageRecord) -> UIImage {
+    private func renderPageImage(_ page: PageRecord, scale: CGFloat = 2) -> UIImage {
         let pageRect = CGRect(origin: .zero, size: PageGeometry.size)
-        let ink = tracker.drawing(for: page.id)?.image(from: pageRect, scale: 2)
+        let ink = tracker.drawing(for: page.id)?.image(from: pageRect, scale: scale)
         let content = ZStack {
             PageTemplateView(template: page.template, margin: page.margin, paperColorHex: page.paperColorHex)
+            if let bg = backgroundImage(for: page) { Image(uiImage: bg).resizable().scaledToFit() }
             if let ink { Image(uiImage: ink).resizable().scaledToFit() }
             PageElementsLayer(pageID: page.id, elements: page.elements, model: model, displaySize: PageGeometry.size)
         }
@@ -375,8 +470,34 @@ extension EditorScreen {
         .environment(\.theme, theme)
         .environment(\.paperTone, paperTone)
         let renderer = ImageRenderer(content: content)
-        renderer.scale = 2
+        renderer.scale = scale
         return renderer.uiImage ?? UIImage()
+    }
+
+    /// Render every page to a PNG and push it up so the ClassMate ClassNotes tab
+    /// shows real content. Best-effort; SyncService no-ops when signed out.
+    @MainActor
+    private func syncPageImages() {
+        let pages = model.pages
+        guard !pages.isEmpty else { return }
+        let images: [NotebookPageImage] = pages.enumerated().compactMap { index, page in
+            guard let data = renderPageImage(page, scale: 1.5).pngData() else { return nil }
+            return NotebookPageImage(
+                pageIndex: index,
+                dataUrl: "data:image/png;base64,\(data.base64EncodedString())"
+            )
+        }
+        services.sync.pushPageImages(notebookID: notebook.id, images: images)
+    }
+
+    /// The decoded background image for a page (imported PDF/image), or nil.
+    private func backgroundImage(for page: PageRecord) -> UIImage? {
+        guard let filename = page.backgroundPayloadFilename else { return nil }
+        if let cached = backgroundCache.image(for: filename) { return cached }
+        guard let data = try? Data(contentsOf: model.mediaURL(filename: filename)),
+              let image = UIImage(data: data) else { return nil }
+        backgroundCache.set(image, for: filename)
+        return image
     }
 
     private func crop(_ image: UIImage, to logical: CGRect) -> UIImage? {
@@ -403,4 +524,12 @@ private struct Overscroll: Equatable {
 struct OCRResult: Identifiable {
     let id = UUID()
     let text: String
+}
+
+/// Tiny in-memory cache of decoded page-background images, keyed by media
+/// filename, so scrolling / re-render doesn't re-decode PDFs every frame.
+final class PageImageCache {
+    private let cache = NSCache<NSString, UIImage>()
+    func image(for filename: String) -> UIImage? { cache.object(forKey: filename as NSString) }
+    func set(_ image: UIImage, for filename: String) { cache.setObject(image, forKey: filename as NSString) }
 }

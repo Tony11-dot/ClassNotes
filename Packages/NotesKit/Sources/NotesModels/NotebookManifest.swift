@@ -6,9 +6,10 @@ import Foundation
 public struct NotebookManifest: Codable, Sendable, Equatable {
     /// v2 adds `PageRecord.elements` (images / voice notes / typeset text).
     /// v3 adds `PageRecord.margin`. v4 adds `PageRecord.paperColorHex` (a chosen
-    /// page color). Older manifests decode fine — `elements` defaults to empty,
-    /// `margin` to the default leading line, and `paperColorHex` to nil (auto).
-    public static let currentVersion = 4
+    /// page color). v5 adds `PageRecord.backgroundPayloadFilename` (an imported
+    /// PDF page rendered as the page background, drawn on with all tools). Older
+    /// manifests decode fine — every added field is optional / defaulted.
+    public static let currentVersion = 5
 
     public var version: Int
     public var pages: [PageRecord]
@@ -27,6 +28,9 @@ public struct PageRecord: Codable, Sendable, Equatable, Identifiable {
     public var margin: PageMargin
     /// Chosen page (paper) color. `nil` = auto — the theme's paper color.
     public var paperColorHex: String?
+    /// An imported PDF/image page rendered to a PNG in the package's `media/`
+    /// folder, shown as the page background beneath the ink. `nil` = normal paper.
+    public var backgroundPayloadFilename: String?
 
     public init(
         id: UUID = UUID(),
@@ -34,7 +38,8 @@ public struct PageRecord: Codable, Sendable, Equatable, Identifiable {
         createdAt: Date = .now,
         elements: [PageElement] = [],
         margin: PageMargin = .default,
-        paperColorHex: String? = nil
+        paperColorHex: String? = nil,
+        backgroundPayloadFilename: String? = nil
     ) {
         self.id = id
         self.template = template
@@ -42,15 +47,16 @@ public struct PageRecord: Codable, Sendable, Equatable, Identifiable {
         self.elements = elements
         self.margin = margin
         self.paperColorHex = paperColorHex
+        self.backgroundPayloadFilename = backgroundPayloadFilename
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, template, createdAt, elements, margin, paperColorHex
+        case id, template, createdAt, elements, margin, paperColorHex, backgroundPayloadFilename
     }
 
-    // Custom decode so v1/v2/v3 manifests (no `elements`/`margin`/`paperColorHex`
-    // keys) load without loss — missing elements default to empty, missing margin
-    // to the default leading line, and missing paper color to nil (auto).
+    // Custom decode so older manifests (missing later keys) load without loss —
+    // every added field defaults: elements empty, margin default, paper color and
+    // background nil.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
@@ -59,5 +65,6 @@ public struct PageRecord: Codable, Sendable, Equatable, Identifiable {
         elements = try container.decodeIfPresent([PageElement].self, forKey: .elements) ?? []
         margin = try container.decodeIfPresent(PageMargin.self, forKey: .margin) ?? .default
         paperColorHex = try container.decodeIfPresent(String.self, forKey: .paperColorHex)
+        backgroundPayloadFilename = try container.decodeIfPresent(String.self, forKey: .backgroundPayloadFilename)
     }
 }

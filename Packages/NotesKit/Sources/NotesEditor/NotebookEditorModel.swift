@@ -43,8 +43,14 @@ public final class NotebookEditorModel {
 
     // MARK: - Page settings & management
 
-    public func updatePageSettings(pageID: UUID, template: PageTemplate? = nil, margin: PageMargin? = nil) async {
-        manifest = try? await store.updatePage(notebook: notebookID, page: pageID, template: template, margin: margin)
+    public func updatePageSettings(
+        pageID: UUID, template: PageTemplate? = nil, margin: PageMargin? = nil,
+        paperColorHex: String? = nil, clearPaperColor: Bool = false
+    ) async {
+        manifest = try? await store.updatePage(
+            notebook: notebookID, page: pageID, template: template, margin: margin,
+            paperColorHex: paperColorHex, clearPaperColor: clearPaperColor
+        )
     }
 
     public func deletePage(_ pageID: UUID) async {
@@ -141,6 +147,21 @@ public final class NotebookEditorModel {
         ), to: pageID)
     }
 
+    /// Imports a PDF: appends one annotatable page per PDF page (each with the
+    /// rendered page as its background). Returns the first imported page id.
+    @discardableResult
+    public func importPDF(_ data: Data) async -> UUID? {
+        let insertAt = focusedPageID.flatMap { id in
+            manifest?.pages.firstIndex(where: { $0.id == id }).map { $0 + 1 }
+        }
+        guard let result = try? await store.importPDF(data: data, notebook: notebookID, at: insertAt) else {
+            return nil
+        }
+        manifest = result.manifest
+        if let id = result.firstPageID { focusedPageID = id }
+        return result.firstPageID
+    }
+
     public func insertFile(_ data: Data, displayName: String, fileExtension: String) async {
         guard let pageID = existingTargetPageID,
               let filename = try? await store.saveMedia(data, notebook: notebookID, fileExtension: fileExtension) else { return }
@@ -203,8 +224,18 @@ public final class NotebookEditorModel {
     /// Renders a page's ink to an image and recognizes the text — used by both
     /// "recognize handwriting" and circle-to-explain.
     public func recognizeText(pageID: UUID, drawing: PKDrawing) async -> String {
-        let bounds = CGRect(origin: .zero, size: PageGeometry.size)
-        let image = drawing.image(from: bounds, scale: 2)
+        // Render just the inked region (padded) at high scale — Vision recognizes
+        // handwriting far better from a tight, high-resolution crop than from a
+        // mostly-empty full page rendered at 2×.
+        let inkBounds = drawing.bounds
+        let region: CGRect
+        if !inkBounds.isNull, !inkBounds.isEmpty {
+            region = inkBounds.insetBy(dx: -24, dy: -24)
+                .intersection(CGRect(origin: .zero, size: PageGeometry.size))
+        } else {
+            region = CGRect(origin: .zero, size: PageGeometry.size)
+        }
+        let image = drawing.image(from: region, scale: 3)
         return (try? await OCRService().recognizeText(in: image)) ?? ""
     }
 

@@ -27,6 +27,32 @@ public final class ActiveCanvasTracker {
         canvases[pageID]?.view?.drawing
     }
 
+    /// Best-effort live drawing for beautify/OCR: the requested page if it has a
+    /// live canvas, otherwise the most-recently-active canvas — so tapping
+    /// Beautify works even when the target page's canvas is offscreen/deallocated
+    /// in the lazy page list.
+    public func bestDrawing(preferring pageID: UUID?) -> (pageID: UUID, drawing: PKDrawing)? {
+        if let pageID, let drawing = canvases[pageID]?.view?.drawing, !drawing.strokes.isEmpty {
+            return (pageID, drawing)
+        }
+        // Fall back to any registered canvas that actually has ink.
+        for (id, weak) in canvases {
+            if let drawing = weak.view?.drawing, !drawing.strokes.isEmpty {
+                return (id, drawing)
+            }
+        }
+        return nil
+    }
+
+    /// Replace a page's live drawing (used by shape-snapping and clear).
+    public func setDrawing(_ drawing: PKDrawing, for pageID: UUID) {
+        canvases[pageID]?.view?.drawing = drawing
+    }
+
+    public func canvas(for pageID: UUID) -> PKCanvasView? {
+        canvases[pageID]?.view
+    }
+
     /// The bounding box of a page's ink in logical page space, or nil if empty.
     /// Used by beautify to drop the typeset text where the handwriting was.
     public func inkBounds(for pageID: UUID) -> CGRect? {
@@ -131,6 +157,10 @@ struct CanvasPageView: UIViewRepresentable {
         private let onFocus: (UUID) -> Void
         private var saveTask: Task<Void, Never>?
         private var loaded = false
+        /// Stroke count after the last change, so we can tell an ADDED stroke
+        /// (candidate for shape-snapping) from an erase or a snap replacement.
+        private var lastStrokeCount = 0
+        private var isSnapping = false
 
         init(
             notebookID: UUID,
@@ -154,6 +184,7 @@ struct CanvasPageView: UIViewRepresentable {
                    let drawing = try? PKDrawing(data: data) {
                     canvas?.drawing = drawing
                 }
+                lastStrokeCount = canvas?.drawing.strokes.count ?? 0
                 loaded = true
             }
         }
@@ -161,10 +192,26 @@ struct CanvasPageView: UIViewRepresentable {
         // MARK: PKCanvasViewDelegate
 
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
-            guard loaded else { return }
+            guard loaded, !isSnapping else { return }
             tracker.activeCanvas = canvasView
             onFocus(pageID)
+            maybeSnapShape(on: canvasView)
+            lastStrokeCount = canvasView.drawing.strokes.count
             scheduleSave(canvasView.drawing)
+        }
+
+        /// If the user just completed a stroke and held at its end, replace it
+        /// with a clean geometric shape (line / ellipse / rectangle / triangle).
+        private func maybeSnapShape(on canvasView: PKCanvasView) {
+            let strokes = canvasView.drawing.strokes
+            guard strokes.count == lastStrokeCount + 1,
+                  let last = strokes.last,
+                  let snapped = ShapeSnapper.snapped(last) else { return }
+            isSnapping = true
+            var drawing = canvasView.drawing
+            drawing.strokes[drawing.strokes.count - 1] = snapped
+            canvasView.drawing = drawing
+            isSnapping = false
         }
 
         // MARK: Saving

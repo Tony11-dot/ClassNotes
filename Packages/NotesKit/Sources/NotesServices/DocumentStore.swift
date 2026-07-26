@@ -1,5 +1,11 @@
 import Foundation
 import NotesModels
+#if canImport(PDFKit)
+import PDFKit
+#endif
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// Owns every notebook document package on disk.
 ///
@@ -188,6 +194,70 @@ public actor DocumentStore {
         try data.write(to: pageURL(notebook: notebook, page: page), options: .atomic)
     }
 
+    // MARK: - PDF import (each page becomes an annotatable page background)
+
+    #if canImport(PDFKit) && canImport(UIKit)
+    public enum ImportError: Error, Sendable { case unreadablePDF }
+
+    /// Imports a PDF: every page is rendered to a PNG stored in `media/` and
+    /// appended as a page whose background is that image, so the student can draw
+    /// on it with the full tool set. Returns the updated manifest and the id of
+    /// the first imported page (to scroll to). Inserts at `index` (default: end).
+    @discardableResult
+    public func importPDF(
+        data: Data, notebook: UUID, at index: Int? = nil
+    ) throws -> (manifest: NotebookManifest, firstPageID: UUID?) {
+        guard let pdf = PDFDocument(data: data), pdf.pageCount > 0 else {
+            throw ImportError.unreadablePDF
+        }
+        var current = try manifest(for: notebook)
+        var newPages: [PageRecord] = []
+        for i in 0..<pdf.pageCount {
+            guard let page = pdf.page(at: i),
+                  let png = Self.renderPDFPage(page, fitting: PageGeometry.size) else { continue }
+            let filename = try saveMedia(png, notebook: notebook, fileExtension: "png")
+            newPages.append(PageRecord(
+                template: .blank,
+                margin: PageMargin(position: .none),
+                backgroundPayloadFilename: filename
+            ))
+        }
+        guard !newPages.isEmpty else { throw ImportError.unreadablePDF }
+        let insertAt = max(0, min(index ?? current.pages.count, current.pages.count))
+        current.pages.insert(contentsOf: newPages, at: insertAt)
+        try writeManifest(current, for: notebook)
+        return (current, newPages.first?.id)
+    }
+
+    /// Renders one PDF page into a `target`-sized PNG (white paper, aspect-fit,
+    /// centered) in the fixed logical page space.
+    private nonisolated static func renderPDFPage(_ page: PDFPage, fitting target: CGSize) -> Data? {
+        let pageRect = page.bounds(for: .mediaBox)
+        guard pageRect.width > 0, pageRect.height > 0 else { return nil }
+        let scale = min(target.width / pageRect.width, target.height / pageRect.height)
+        let drawn = CGSize(width: pageRect.width * scale, height: pageRect.height * scale)
+        let origin = CGPoint(x: (target.width - drawn.width) / 2, y: (target.height - drawn.height) / 2)
+
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 2
+        format.opaque = true
+        let renderer = UIGraphicsImageRenderer(size: target, format: format)
+        let image = renderer.image { ctx in
+            UIColor.white.setFill()
+            ctx.fill(CGRect(origin: .zero, size: target))
+            let cg = ctx.cgContext
+            cg.saveGState()
+            // Flip into PDF (bottom-left origin) space, then place + scale.
+            cg.translateBy(x: origin.x, y: origin.y + drawn.height)
+            cg.scaleBy(x: scale, y: -scale)
+            cg.translateBy(x: -pageRect.minX, y: -pageRect.minY)
+            page.draw(with: .mediaBox, to: cg)
+            cg.restoreGState()
+        }
+        return image.pngData()
+    }
+    #endif
+
     // MARK: - Media payloads + page elements
 
     /// Stores an image/file/audio payload and returns the filename to reference
@@ -219,15 +289,22 @@ public actor DocumentStore {
 
     // MARK: - Page management (template / margin / order)
 
-    /// Updates a page's paper template and/or margin.
+    /// Updates a page's paper template, margin, and/or page color. Passing
+    /// `clearPaperColor: true` resets the page color back to auto (theme paper).
     @discardableResult
     public func updatePage(
-        notebook: UUID, page: UUID, template: PageTemplate?, margin: PageMargin?
+        notebook: UUID, page: UUID, template: PageTemplate? = nil, margin: PageMargin? = nil,
+        paperColorHex: String? = nil, clearPaperColor: Bool = false
     ) throws -> NotebookManifest {
         var current = try manifest(for: notebook)
         guard let index = current.pages.firstIndex(where: { $0.id == page }) else { return current }
         if let template { current.pages[index].template = template }
         if let margin { current.pages[index].margin = margin }
+        if clearPaperColor {
+            current.pages[index].paperColorHex = nil
+        } else if let paperColorHex {
+            current.pages[index].paperColorHex = paperColorHex
+        }
         try writeManifest(current, for: notebook)
         return current
     }

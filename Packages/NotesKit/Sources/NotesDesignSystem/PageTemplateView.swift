@@ -26,64 +26,90 @@ public struct PageTemplateView: View {
 
     public var body: some View {
         Canvas { context, size in
-            let lineColor = theme.separator.color
+            // Scale the pattern to the rendered size so it always looks like a
+            // real page — a tiny preview shows the same line/dot density as the
+            // full editor page (`scale` == 1 at the true 768×1024 logical size).
+            let scale = size.height / PageGeometry.size.height
+            // On dark paper stocks the theme separator vanishes — use a soft
+            // light rule instead so lines/dots stay visible.
+            let lineColor: Color = PaperPalette.isDark(paperColorHex)
+                ? Color.white.opacity(0.16)
+                : theme.separator.color
+            let spacing = Self.lineSpacing * scale
+            let topInset = Self.ruledTopInset * scale
+
             switch template {
             case .blank:
                 break
-            case .ruled:
-                var y = Self.ruledTopInset
+            case .ruled, .dashed, .dotted:
+                let style = ruledStrokeStyle(scale: scale)
+                var y = topInset
                 while y < size.height {
                     var line = Path()
                     line.move(to: CGPoint(x: 0, y: y))
                     line.addLine(to: CGPoint(x: size.width, y: y))
-                    context.stroke(line, with: .color(lineColor), lineWidth: 1)
-                    y += Self.lineSpacing
+                    context.stroke(line, with: .color(lineColor), style: style)
+                    y += spacing
                 }
             case .grid:
-                var x: CGFloat = Self.lineSpacing
+                var x: CGFloat = spacing
                 while x < size.width {
                     var line = Path()
                     line.move(to: CGPoint(x: x, y: 0))
                     line.addLine(to: CGPoint(x: x, y: size.height))
-                    context.stroke(line, with: .color(lineColor), lineWidth: 0.75)
-                    x += Self.lineSpacing
+                    context.stroke(line, with: .color(lineColor), lineWidth: 0.75 * scale)
+                    x += spacing
                 }
-                var y: CGFloat = Self.lineSpacing
+                var y: CGFloat = spacing
                 while y < size.height {
                     var line = Path()
                     line.move(to: CGPoint(x: 0, y: y))
                     line.addLine(to: CGPoint(x: size.width, y: y))
-                    context.stroke(line, with: .color(lineColor), lineWidth: 0.75)
-                    y += Self.lineSpacing
+                    context.stroke(line, with: .color(lineColor), lineWidth: 0.75 * scale)
+                    y += spacing
                 }
             case .dotGrid:
-                var y: CGFloat = Self.dotSpacing
+                let dotSpacing = Self.dotSpacing * scale
+                let dotRadius = max(0.5, Self.dotRadius * scale)
+                var y: CGFloat = dotSpacing
                 while y < size.height {
-                    var x: CGFloat = Self.dotSpacing
+                    var x: CGFloat = dotSpacing
                     while x < size.width {
                         let dot = CGRect(
-                            x: x - Self.dotRadius,
-                            y: y - Self.dotRadius,
-                            width: Self.dotRadius * 2,
-                            height: Self.dotRadius * 2
+                            x: x - dotRadius, y: y - dotRadius,
+                            width: dotRadius * 2, height: dotRadius * 2
                         )
                         context.fill(Path(ellipseIn: dot), with: .color(lineColor))
-                        x += Self.dotSpacing
+                        x += dotSpacing
                     }
-                    y += Self.dotSpacing
+                    y += dotSpacing
                 }
             }
 
             // Margin line (classic notebook rule down one side).
             if let margin, margin.position != .none {
-                let x = margin.position == .leading ? margin.offset : size.width - margin.offset
+                let offset = margin.offset * scale
+                let x = margin.position == .leading ? offset : size.width - offset
                 var line = Path()
                 line.move(to: CGPoint(x: x, y: 0))
                 line.addLine(to: CGPoint(x: x, y: size.height))
-                context.stroke(line, with: .color(marginColor(margin)), lineWidth: 1.5)
+                context.stroke(line, with: .color(marginColor(margin)), lineWidth: 1.5 * scale)
             }
         }
         .background(paperColor)
+    }
+
+    /// Solid / dashed / dotted stroke for the ruled-line family.
+    private func ruledStrokeStyle(scale: CGFloat) -> StrokeStyle {
+        switch template {
+        case .dashed:
+            return StrokeStyle(lineWidth: 1 * scale, dash: [7 * scale, 5 * scale])
+        case .dotted:
+            // Round-capped zero-length dashes render as evenly spaced dots.
+            return StrokeStyle(lineWidth: 1.8 * scale, lineCap: .round, dash: [0.1, 7 * scale])
+        default:
+            return StrokeStyle(lineWidth: 1 * scale)
+        }
     }
 
     /// The chosen page color if set (and parseable), else the theme's paper.

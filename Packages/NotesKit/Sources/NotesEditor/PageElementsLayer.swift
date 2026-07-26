@@ -1,12 +1,14 @@
 import ClassMateTheme
 import NotesDesignSystem
 import NotesModels
+import QuickLook
 import SwiftUI
 import UIKit
 
 /// Renders and edits the media / voice / text elements layered over one page's
 /// ink. Elements are stored in logical page space and scaled to the displayed
-/// page size. Drag to move; long-press for delete.
+/// page size. Drag to move (live, 1:1); long-press for a small action menu;
+/// tap a file to open it.
 struct PageElementsLayer: View {
     @Environment(\.theme) private var theme
 
@@ -16,30 +18,94 @@ struct PageElementsLayer: View {
     /// Displayed page size in view points (from the parent GeometryReader).
     let displaySize: CGSize
 
+    /// Live drag translation for the element currently under the finger, so the
+    /// bubble tracks the finger instead of jumping on release.
+    @State private var dragOffset: CGSize = .zero
+    @State private var draggingID: UUID?
+    @State private var menuElementID: UUID?
+    @State private var previewURL: URL?
+
     private var scale: CGFloat { displaySize.width / PageGeometry.size.width }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             ForEach(elements) { element in
+                let live = draggingID == element.id ? dragOffset : .zero
                 elementView(element)
                     .frame(width: element.width * scale, height: element.height * scale)
                     .rotationEffect(.degrees(element.rotation))
                     .position(
-                        x: (element.x + element.width / 2) * scale,
-                        y: (element.y + element.height / 2) * scale
+                        x: (element.x + element.width / 2) * scale + live.width,
+                        y: (element.y + element.height / 2) * scale + live.height
                     )
                     .gesture(dragGesture(for: element))
                     .simultaneousGesture(resizeGesture(for: element))
-                    .contextMenu {
-                        Button(role: .destructive) {
-                            Task { await model.deleteElement(element.id, on: pageID) }
-                        } label: {
-                            Label("Delete", systemImage: "trash")
-                        }
+                    .simultaneousGesture(longPressGesture(for: element))
+                    .onTapGesture { handleTap(element) }
+                    .popover(isPresented: menuBinding(for: element)) {
+                        actionMenu(for: element)
                     }
             }
         }
         .frame(width: displaySize.width, height: displaySize.height)
+        .quickLookPreview($previewURL)
+    }
+
+    private func menuBinding(for element: PageElement) -> Binding<Bool> {
+        Binding(
+            get: { menuElementID == element.id },
+            set: { if !$0 { menuElementID = nil } }
+        )
+    }
+
+    // MARK: - Interactions
+
+    private func handleTap(_ element: PageElement) {
+        // Tapping a file opens it in QuickLook (renders PDFs, docs, etc.).
+        guard element.kind == .file, let filename = element.payloadFilename else { return }
+        previewURL = model.mediaURL(filename: filename)
+    }
+
+    private func longPressGesture(for element: PageElement) -> some Gesture {
+        LongPressGesture(minimumDuration: 0.35)
+            .onEnded { _ in
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                menuElementID = element.id
+            }
+    }
+
+    @ViewBuilder
+    private func actionMenu(for element: PageElement) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if element.kind == .file, element.payloadFilename != nil {
+                menuButton("Open", systemImage: "arrow.up.forward.app") {
+                    if let filename = element.payloadFilename {
+                        previewURL = model.mediaURL(filename: filename)
+                    }
+                    menuElementID = nil
+                }
+                Divider()
+            }
+            menuButton("Delete", systemImage: "trash", role: .destructive) {
+                Task { await model.deleteElement(element.id, on: pageID) }
+                menuElementID = nil
+            }
+        }
+        .padding(.vertical, 4)
+        .frame(minWidth: 180)
+        .presentationCompactAdaptation(.popover)
+    }
+
+    private func menuButton(
+        _ title: String, systemImage: String, role: ButtonRole? = nil, action: @escaping () -> Void
+    ) -> some View {
+        Button(role: role, action: action) {
+            Label(title, systemImage: systemImage)
+                .font(.body)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16).padding(.vertical, 11)
+        }
+        .tint(role == .destructive ? .red : theme.ink.color)
     }
 
     @ViewBuilder
@@ -114,11 +180,17 @@ struct PageElementsLayer: View {
     }
 
     private func dragGesture(for element: PageElement) -> some Gesture {
-        DragGesture()
+        DragGesture(minimumDistance: 2)
+            .onChanged { value in
+                draggingID = element.id
+                dragOffset = value.translation
+            }
             .onEnded { value in
                 var updated = element
                 updated.x = max(0, min(PageGeometry.size.width - element.width, element.x + value.translation.width / scale))
                 updated.y = max(0, min(PageGeometry.size.height - element.height, element.y + value.translation.height / scale))
+                draggingID = nil
+                dragOffset = .zero
                 Task { await model.updateElement(updated, on: pageID) }
             }
     }

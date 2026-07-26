@@ -62,13 +62,16 @@ public final class NotebookRepository {
         coverColor: ThemeColor,
         template: PageTemplate,
         margin: PageMargin = .default,
-        paperColorHex: String? = nil
+        paperColorHex: String? = nil,
+        shelfID: UUID? = nil
     ) async throws -> Notebook {
         let notebook = Notebook(
             title: title.isEmpty ? "Untitled" : title,
             coverColorHex: coverColor.hexString,
             defaultTemplate: template
         )
+        // File it straight into the active shelf, if any.
+        notebook.shelfID = shelfID
         try await store.createDocument(
             id: notebook.id, firstPageTemplate: template,
             margin: margin, paperColorHex: paperColorHex

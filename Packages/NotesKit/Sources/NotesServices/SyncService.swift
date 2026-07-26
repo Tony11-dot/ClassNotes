@@ -116,6 +116,18 @@ public final class SyncService {
         Task { try? await client.deleteShelf(id: id.uuidString, token: token) }
     }
 
+    /// Upload rendered page images (PNG data URLs) so the ClassMate ClassNotes
+    /// tab shows real content. The editor renders these on the main actor and
+    /// hands them here; best-effort, fire-and-forget.
+    public func pushPageImages(notebookID: UUID, images: [NotebookPageImage]) {
+        guard let token = auth.token, !images.isEmpty else { return }
+        let client = client
+        Task {
+            let body = NotebookPagesBody(pages: images, pageCount: images.count)
+            try? await client.putNotebookPages(id: notebookID.uuidString, body: body, token: token)
+        }
+    }
+
     // MARK: - Full sync (launch)
 
     /// Push every local record so the backend catches up on first run and after

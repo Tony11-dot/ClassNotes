@@ -9,6 +9,9 @@ struct CreateNotebookSheet: View {
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
 
+    /// When created from inside a shelf, the new notebook is filed there.
+    let shelfID: UUID?
+
     @State private var title = ""
     @State private var coverHex = ""
     @State private var template: PageTemplate = .ruled
@@ -16,6 +19,10 @@ struct CreateNotebookSheet: View {
     /// nil = auto (the theme's paper color).
     @State private var pageColorHex: String?
     @State private var creating = false
+
+    init(shelfID: UUID? = nil) {
+        self.shelfID = shelfID
+    }
 
     private var coverColor: ThemeColor {
         ThemeColor(hex: coverHex) ?? theme.coverPalette.first ?? theme.accent
@@ -59,7 +66,7 @@ struct CreateNotebookSheet: View {
                     .pickerStyle(.segmented)
                 }
                 Section("Page color") {
-                    pageColorRow
+                    PaperSwatchRow(selection: $pageColorHex)
                 }
                 Section("Preview") {
                     PageTemplateView(
@@ -68,7 +75,7 @@ struct CreateNotebookSheet: View {
                     .aspectRatio(
                         PageGeometry.size.width / PageGeometry.size.height, contentMode: .fit
                     )
-                    .frame(maxHeight: 200)
+                    .frame(maxHeight: 260)
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -99,48 +106,6 @@ struct CreateNotebookSheet: View {
         }
     }
 
-    /// "Default" (theme paper) + the theme's palette as page-color choices.
-    private var pageColorRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                pageSwatch(hex: nil, label: "Default") {
-                    ZStack {
-                        Circle().fill(theme.paperColor(tone: .neutral).color)
-                        Image(systemName: "a.square")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(theme.inkSecondary.color)
-                    }
-                }
-                ForEach(theme.coverPalette.map(\.hexString), id: \.self) { hex in
-                    pageSwatch(hex: hex, label: hex) {
-                        Circle().fill(ThemeColor(hex: hex)?.color ?? theme.paperColor(tone: .neutral).color)
-                    }
-                }
-            }
-            .padding(.vertical, 4)
-        }
-    }
-
-    private func pageSwatch(
-        hex: String?, label: String, @ViewBuilder fill: () -> some View
-    ) -> some View {
-        let isSelected = pageColorHex == hex
-        return Button {
-            pageColorHex = hex
-        } label: {
-            fill()
-                .frame(width: 34, height: 34)
-                .overlay {
-                    Circle().strokeBorder(theme.separator.color, lineWidth: 0.5)
-                    if isSelected {
-                        Circle().strokeBorder(theme.accent.color, lineWidth: 2.5)
-                    }
-                }
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Page color \(label)")
-    }
-
     private func create() {
         creating = true
         Task {
@@ -150,7 +115,8 @@ struct CreateNotebookSheet: View {
                 coverColor: coverColor,
                 template: template,
                 margin: margin,
-                paperColorHex: pageColorHex
+                paperColorHex: pageColorHex,
+                shelfID: shelfID
             )
             dismiss()
         }

@@ -16,6 +16,7 @@ public struct SettingsScreen: View {
     @State private var importingJSON = false
     @State private var exportPayload: ThemeJSONFile?
     @State private var themeError: String?
+    @State private var helpSheet: HelpSheet?
 
     public init() {}
 
@@ -23,12 +24,11 @@ public struct SettingsScreen: View {
         NavigationStack {
             List {
                 AccountSettingsSection()
-                NovaSettingsSection()
                 presetSection(title: "Light themes", presets: ThemePreset.lightFamily, includeSystem: true)
                 presetSection(title: "Dark themes", presets: ThemePreset.darkFamily, includeSystem: false)
                 customThemesSection
                 paperSection
-                AboutSettingsSection()
+                AboutSettingsSection { helpSheet = $0 }
                 #if DEBUG
                 debugSection
                 #endif
@@ -45,6 +45,12 @@ public struct SettingsScreen: View {
         }
         .sheet(item: $editingTheme) { spec in
             ThemeEditorScreen(spec: spec)
+        }
+        .sheet(item: $helpSheet) { which in
+            switch which {
+            case .support: SupportScreen()
+            case .about: AboutScreen()
+            }
         }
         .fileImporter(
             isPresented: $importingJSON,

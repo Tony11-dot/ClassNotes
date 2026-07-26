@@ -43,55 +43,27 @@ struct AccountSettingsSection: View {
     }
 }
 
-/// NOVA / AI — built in, no setup. NOVA runs through ClassMate's servers using
-/// your signed-in account, so there's nothing to configure (no API key).
-struct NovaSettingsSection: View {
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        Section {
-            HStack(spacing: 12) {
-                NovaAvatar(size: 30)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("NOVA is ready")
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(theme.ink.color)
-                    Text("Your AI study buddy — built in, nothing to set up.")
-                        .font(.caption)
-                        .foregroundStyle(theme.inkSecondary.color)
-                }
-                Spacer()
-                Image(systemName: "checkmark.seal.fill")
-                    .foregroundStyle(theme.accent.color)
-            }
-        } header: {
-            Text("NOVA (AI)")
-        } footer: {
-            Text("NOVA works automatically while you're signed in — highlight anything on a page and ask her to explain or tidy it up.")
-        }
-        .listRowBackground(theme.surfaceRaised.color)
-    }
+/// Which help sheet is open. Presented from `SettingsScreen` (a stable
+/// NavigationStack ancestor) — NOT from the Section itself. Attaching a `.sheet`
+/// to List-row/Section content tears its transient `@State` down as the List
+/// re-evaluates, which is why About/Support opened then vanished immediately.
+enum HelpSheet: String, Identifiable {
+    case support, about
+    var id: String { rawValue }
 }
 
-/// About / Support / Privacy links at the bottom of Settings.
+/// About / Support / Privacy links at the bottom of Settings. The parent owns
+/// the sheet presentation; this section just reports which link was tapped.
 struct AboutSettingsSection: View {
     @Environment(\.theme) private var theme
-
-    /// Which help sheet is open. A SINGLE `.sheet(item:)` — two adjacent
-    /// `.sheet(isPresented:)` modifiers on one view is a known SwiftUI pitfall
-    /// where only one registers, which is why About/Support wouldn't open.
-    private enum HelpSheet: String, Identifiable {
-        case support, about
-        var id: String { rawValue }
-    }
-    @State private var sheet: HelpSheet?
+    let onSelect: (HelpSheet) -> Void
 
     var body: some View {
         Section {
-            Button { sheet = .support } label: {
+            Button { onSelect(.support) } label: {
                 Label("Support", systemImage: "questionmark.circle")
             }
-            Button { sheet = .about } label: {
+            Button { onSelect(.about) } label: {
                 Label("About", systemImage: "info.circle")
             }
             Link(destination: ClassMateLinks.privacy) {
@@ -104,11 +76,5 @@ struct AboutSettingsSection: View {
         }
         .tint(theme.accent.color)
         .listRowBackground(theme.surfaceRaised.color)
-        .sheet(item: $sheet) { which in
-            switch which {
-            case .support: SupportScreen()
-            case .about: AboutScreen()
-            }
-        }
     }
 }

@@ -58,6 +58,28 @@ public struct NotebookSyncBody: Encodable, Sendable {
     }
 }
 
+/// One rendered page image for content sync. `dataUrl` is a
+/// `data:image/png;base64,…` string.
+public struct NotebookPageImage: Encodable, Sendable {
+    public let pageIndex: Int
+    public let dataUrl: String
+    public init(pageIndex: Int, dataUrl: String) {
+        self.pageIndex = pageIndex
+        self.dataUrl = dataUrl
+    }
+}
+
+/// Upload body for `PUT /classnotes/notebooks/:id/pages` — the rendered page
+/// images the ClassMate ClassNotes tab shows as real content.
+public struct NotebookPagesBody: Encodable, Sendable {
+    public let pages: [NotebookPageImage]
+    public let pageCount: Int
+    public init(pages: [NotebookPageImage], pageCount: Int) {
+        self.pages = pages
+        self.pageCount = pageCount
+    }
+}
+
 /// Upload body for `PUT /classnotes/shelves/:id`.
 public struct ShelfSyncBody: Encodable, Sendable {
     public let name: String
@@ -214,6 +236,12 @@ public struct ClassMateAPIClient: Sendable {
     /// `PUT /classnotes/notebooks/:id` — upsert one notebook's metadata.
     public func putNotebook(id: String, body: NotebookSyncBody, token: String) async throws {
         try await putJSON(path: "/classnotes/notebooks/\(id)", body: body, token: token)
+    }
+
+    /// `PUT /classnotes/notebooks/:id/pages` — upload rendered page images so
+    /// the ClassMate ClassNotes tab shows real content, not blank paper.
+    public func putNotebookPages(id: String, body: NotebookPagesBody, token: String) async throws {
+        try await putJSON(path: "/classnotes/notebooks/\(id)/pages", body: body, token: token)
     }
 
     /// `DELETE /classnotes/notebooks/:id`.

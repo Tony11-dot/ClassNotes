@@ -25,6 +25,7 @@ public struct LibraryGridScreen<Destination: View>: View {
     @State private var deleteTarget: Notebook?
     @State private var selectedShelf: UUID?
     @State private var showNewShelf = false
+    @State private var showAddBooks = false
 
     public init(@ViewBuilder destination: @escaping (Notebook) -> Destination) {
         self.destination = destination
@@ -57,9 +58,12 @@ public struct LibraryGridScreen<Destination: View>: View {
             }
             .overlay(alignment: .bottom) { floatingToolbar }
         }
-        .sheet(isPresented: $showCreate) { CreateNotebookSheet() }
+        .sheet(isPresented: $showCreate) { CreateNotebookSheet(shelfID: selectedShelf) }
         .sheet(isPresented: $showSettings) { SettingsScreen() }
         .sheet(isPresented: $showNewShelf) { NewShelfSheet() }
+        .sheet(isPresented: $showAddBooks) {
+            if let selectedShelf { AddBooksToShelfSheet(shelfID: selectedShelf) }
+        }
         .alert("Rename notebook", isPresented: renameAlertBinding) {
             TextField("Title", text: $renameText)
             Button("Cancel", role: .cancel) { renameTarget = nil }
@@ -192,12 +196,44 @@ public struct LibraryGridScreen<Destination: View>: View {
         }
     }
 
+    @ViewBuilder
     private var emptyState: some View {
-        EmptyStateView(
-            systemImage: "book.closed",
-            title: "No notebooks yet",
-            message: "Tap + to create your first notebook. Covers, paper and ink all follow your theme."
-        )
+        if selectedShelf != nil {
+            VStack(spacing: 20) {
+                EmptyStateView(
+                    systemImage: "tray",
+                    title: "This shelf is empty",
+                    message: "Add notebooks you already have, or create a new one right here."
+                )
+                HStack(spacing: 12) {
+                    Button {
+                        showAddBooks = true
+                    } label: {
+                        Label("Add books", systemImage: "plus.rectangle.on.folder")
+                            .font(.subheadline.weight(.semibold))
+                            .padding(.horizontal, 16).padding(.vertical, 10)
+                            .background(theme.accent.color, in: Capsule())
+                            .foregroundStyle(theme.contrastingInk(on: theme.accent).color)
+                    }
+                    Button {
+                        showCreate = true
+                    } label: {
+                        Label("New notebook", systemImage: "plus")
+                            .font(.subheadline.weight(.semibold))
+                            .padding(.horizontal, 16).padding(.vertical, 10)
+                            .background(theme.surfaceRaised.color, in: Capsule())
+                            .foregroundStyle(theme.ink.color)
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+        } else {
+            EmptyStateView(
+                systemImage: "book.closed",
+                title: "No notebooks yet",
+                message: "Tap + to create your first notebook. Covers, paper and ink all follow your theme."
+            )
+        }
     }
 
     private var floatingToolbar: some View {
@@ -208,6 +244,11 @@ public struct LibraryGridScreen<Destination: View>: View {
                 }
                 DSGlassIconButton("New shelf", systemImage: "tray.and.arrow.down") {
                     showNewShelf = true
+                }
+                if selectedShelf != nil {
+                    DSGlassIconButton("Add books to shelf", systemImage: "plus.rectangle.on.folder") {
+                        showAddBooks = true
+                    }
                 }
                 DSGlassIconButton("Settings", systemImage: "gearshape") {
                     showSettings = true
