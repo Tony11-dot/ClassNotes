@@ -60,14 +60,19 @@ public final class NotebookRepository {
     public func createNotebook(
         title: String,
         coverColor: ThemeColor,
-        template: PageTemplate
+        template: PageTemplate,
+        margin: PageMargin = .default,
+        paperColorHex: String? = nil
     ) async throws -> Notebook {
         let notebook = Notebook(
             title: title.isEmpty ? "Untitled" : title,
             coverColorHex: coverColor.hexString,
             defaultTemplate: template
         )
-        try await store.createDocument(id: notebook.id, firstPageTemplate: template)
+        try await store.createDocument(
+            id: notebook.id, firstPageTemplate: template,
+            margin: margin, paperColorHex: paperColorHex
+        )
         context.insert(notebook)
         try context.save()
         sync?.pushNotebook(snapshot(notebook))

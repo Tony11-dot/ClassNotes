@@ -10,10 +10,13 @@ public struct PageTemplateView: View {
 
     let template: PageTemplate
     let margin: PageMargin?
+    /// A chosen page color (hex). `nil` = the theme's paper color.
+    let paperColorHex: String?
 
-    public init(template: PageTemplate, margin: PageMargin? = nil) {
+    public init(template: PageTemplate, margin: PageMargin? = nil, paperColorHex: String? = nil) {
         self.template = template
         self.margin = margin
+        self.paperColorHex = paperColorHex
     }
 
     private static let lineSpacing: CGFloat = 32
@@ -80,7 +83,15 @@ public struct PageTemplateView: View {
                 context.stroke(line, with: .color(marginColor(margin)), lineWidth: 1.5)
             }
         }
-        .background(theme.paperColor(tone: paperTone).color)
+        .background(paperColor)
+    }
+
+    /// The chosen page color if set (and parseable), else the theme's paper.
+    private var paperColor: Color {
+        if let hex = paperColorHex, let color = ThemeColor(hex: hex) {
+            return color.color
+        }
+        return theme.paperColor(tone: paperTone).color
     }
 
     /// The margin color: the user's override, else a soft classic-notebook red

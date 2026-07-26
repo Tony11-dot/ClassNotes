@@ -61,7 +61,7 @@ public struct SupportScreen: View {
                     faq("Can I edit on iPhone?",
                         "iPhone is a read-only viewer — browse, read and share. Create and edit on iPad.")
                     faq("How does NOVA work?",
-                        "Circle anything on a page and NOVA explains it. Add a free Groq API key in Settings to turn it on.")
+                        "Circle or highlight anything on a page and NOVA explains it — or ask her to tidy up your handwriting. She's built in and works while you're signed in; nothing to set up.")
                     faq("Where are my notes stored?",
                         "On your device, as self-contained notebook files. iCloud sync is coming.")
                 }
@@ -109,8 +109,8 @@ public struct AboutScreen: View {
                     block("Privacy first",
                           """
                           Your notebooks stay on your device. No third-party \
-                          trackers, no ad networks. AI requests use a key you \
-                          provide and control.
+                          trackers, no ad networks. NOVA's AI runs through \
+                          ClassMate's secure servers using your signed-in account.
                           """)
                     block("Contact",
                           "Built by the ClassMate team.\nQuestions: \(ClassMateLinks.supportEmail)")

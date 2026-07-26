@@ -40,6 +40,23 @@ public enum ShelfSymbol: String, CaseIterable, Sendable {
     case pencilAndRuler = "pencil.and.ruler"
     case flask = "flask"
     case paintpalette
+    // More choices so shelves can match any subject or mood.
+    case star
+    case heart
+    case bookmark
+    case tray = "tray.full"
+    case calendar
+    case function
+    case atom
+    case globe
+    case leaf
+    case musicNote = "music.note"
+    case sparkles
+    case lightbulb
+    case briefcase
+    case cameraShutter = "camera"
+    case gameController = "gamecontroller"
+    case sportscourt
 
     public var systemName: String { rawValue }
 }

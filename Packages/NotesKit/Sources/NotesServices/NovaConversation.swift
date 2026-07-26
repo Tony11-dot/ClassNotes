@@ -95,7 +95,7 @@ public final class NovaConversation {
                     }
                 }
             } catch AIError.missingKey {
-                errorText = "Add a free Groq API key in Settings to use NOVA."
+                errorText = "Sign in to use NOVA."
                 removeEmptyAssistant(at: index)
             } catch {
                 errorText = "NOVA couldn't respond. Try again."

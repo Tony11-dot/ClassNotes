@@ -26,6 +26,20 @@ public final class ActiveCanvasTracker {
     public func drawing(for pageID: UUID) -> PKDrawing? {
         canvases[pageID]?.view?.drawing
     }
+
+    /// The bounding box of a page's ink in logical page space, or nil if empty.
+    /// Used by beautify to drop the typeset text where the handwriting was.
+    public func inkBounds(for pageID: UUID) -> CGRect? {
+        guard let bounds = canvases[pageID]?.view?.drawing.bounds,
+              !bounds.isNull, !bounds.isEmpty else { return nil }
+        return bounds
+    }
+
+    /// Wipe a page's ink (beautify replaces handwriting with typeset text in
+    /// place). Setting `.drawing` fires the canvas delegate, which persists it.
+    public func clearDrawing(for pageID: UUID) {
+        canvases[pageID]?.view?.drawing = PKDrawing()
+    }
 }
 
 /// `PKCanvasView` pinned to the fixed logical page space (768×1024): ink

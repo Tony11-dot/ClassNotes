@@ -78,12 +78,19 @@ public actor DocumentStore {
     // MARK: - Lifecycle
 
     @discardableResult
-    public func createDocument(id: UUID, firstPageTemplate: PageTemplate) throws -> NotebookManifest {
+    public func createDocument(
+        id: UUID,
+        firstPageTemplate: PageTemplate,
+        margin: PageMargin = .default,
+        paperColorHex: String? = nil
+    ) throws -> NotebookManifest {
         try FileManager.default.createDirectory(
             at: pagesDirectory(for: id),
             withIntermediateDirectories: true
         )
-        let manifest = NotebookManifest(pages: [PageRecord(template: firstPageTemplate)])
+        let manifest = NotebookManifest(pages: [
+            PageRecord(template: firstPageTemplate, margin: margin, paperColorHex: paperColorHex)
+        ])
         try writeManifest(manifest, for: id)
         return manifest
     }

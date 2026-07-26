@@ -201,7 +201,7 @@ public struct EditorScreen: View {
     private func pageView(_ page: PageRecord) -> some View {
         GeometryReader { geo in
             ZStack {
-                PageTemplateView(template: page.template, margin: page.margin)
+                PageTemplateView(template: page.template, margin: page.margin, paperColorHex: page.paperColorHex)
                 CanvasPageView(
                     notebookID: notebook.id,
                     page: page,
@@ -270,13 +270,28 @@ public struct EditorScreen: View {
 // MARK: - Actions
 
 extension EditorScreen {
+    /// Beautify = transform the handwriting IN PLACE: OCR the page's ink, let
+    /// NOVA tidy it into clean prose, drop it where the writing was, then wipe
+    /// the ink. Falls back to the raw OCR text if NOVA is unreachable/offline.
     private func beautifyFocusedPage() async {
         guard let pageID = model.focusedPageID ?? model.pages.first?.id,
               let drawing = tracker.drawing(for: pageID) else { return }
-        await model.beautify(
-            pageID: pageID, drawing: drawing,
-            font: toolState.beautifyFont, colorHex: theme.ink.hexString
+        let raw = await model.recognizedHandwriting(pageID: pageID, drawing: drawing)
+        guard !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let cleaned = await services.beautifyText(raw) ?? raw
+        let origin = tracker.inkBounds(for: pageID)?.origin ?? .zero
+        // Honor the selected font — including a user-uploaded OTF/TTF.
+        let font = services.fontStore.resolve(id: toolState.beautifyFontID)
+            ?? FontLibrary.font(id: toolState.beautifyFontID)
+        await model.placeBeautifiedText(
+            cleaned, at: origin,
+            fontName: font.fontName,
+            colorHex: theme.ink.hexString,
+            pageID: pageID
         )
+        // Replace, don't stack: remove the original handwriting now that its
+        // typeset version sits in the same spot.
+        tracker.clearDrawing(for: pageID)
     }
 
     private func handlePickedPhoto(_ item: PhotosPickerItem?) async {
@@ -352,7 +367,7 @@ extension EditorScreen {
         let pageRect = CGRect(origin: .zero, size: PageGeometry.size)
         let ink = tracker.drawing(for: page.id)?.image(from: pageRect, scale: 2)
         let content = ZStack {
-            PageTemplateView(template: page.template, margin: page.margin)
+            PageTemplateView(template: page.template, margin: page.margin, paperColorHex: page.paperColorHex)
             if let ink { Image(uiImage: ink).resizable().scaledToFit() }
             PageElementsLayer(pageID: page.id, elements: page.elements, model: model, displaySize: PageGeometry.size)
         }

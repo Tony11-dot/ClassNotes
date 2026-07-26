@@ -9,6 +9,8 @@ public struct HandwritingFont: Identifiable, Sendable, Equatable, Codable {
         case handwriting
         case typeset
         case brand
+        /// A user-uploaded OTF/TTF, registered at runtime (see `CustomFontStore`).
+        case custom
     }
 
     public let id: String          // stable id (also the persisted value)

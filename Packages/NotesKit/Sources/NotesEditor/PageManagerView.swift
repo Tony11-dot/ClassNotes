@@ -56,7 +56,7 @@ struct PageManagerView: View {
     private func thumbnail(_ page: PageRecord, number: Int, index: Int) -> some View {
         let isCurrent = model.focusedPageID == page.id
         return VStack(spacing: 6) {
-            PageTemplateView(template: page.template, margin: page.margin)
+            PageTemplateView(template: page.template, margin: page.margin, paperColorHex: page.paperColorHex)
                 .aspectRatio(PageGeometry.size.width / PageGeometry.size.height, contentMode: .fit)
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .overlay(
@@ -83,7 +83,7 @@ struct PageManagerView: View {
         }
         .draggable(page.id.uuidString) {
             // Drag preview.
-            PageTemplateView(template: page.template, margin: page.margin)
+            PageTemplateView(template: page.template, margin: page.margin, paperColorHex: page.paperColorHex)
                 .aspectRatio(PageGeometry.size.width / PageGeometry.size.height, contentMode: .fit)
                 .frame(width: 90)
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))

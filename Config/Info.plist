@@ -6,7 +6,7 @@
 	     NO key is embedded in the app; in proxy mode the app authenticates with
 	     the user's ClassMate session token. -->
 	<key>SUPPORT_AI_BASE_URL</key>
-	<string>https://classnotes-nova-proxy-production.up.railway.app/openai/v1</string>
+	<string>https://pacific-enchantment-production-7a80.up.railway.app/ai</string>
 	<key>SUPPORT_AI_MODE</key>
 	<string>proxy</string>
 	<key>SUPPORT_AI_MODEL</key>

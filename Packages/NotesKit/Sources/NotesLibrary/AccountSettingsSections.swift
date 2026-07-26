@@ -43,61 +43,55 @@ struct AccountSettingsSection: View {
     }
 }
 
-/// NOVA / AI settings — the Groq key entry (stored in Keychain).
+/// NOVA / AI — built in, no setup. NOVA runs through ClassMate's servers using
+/// your signed-in account, so there's nothing to configure (no API key).
 struct NovaSettingsSection: View {
-    @Environment(AppServices.self) private var services
     @Environment(\.theme) private var theme
-    @State private var key = ""
-    @State private var saved = false
 
     var body: some View {
         Section {
-            HStack(spacing: 10) {
-                NovaAvatar(size: 26)
-                SecureField("Groq API key", text: $key)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .foregroundStyle(theme.ink.color)
-                if saved {
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(theme.accent.color)
+            HStack(spacing: 12) {
+                NovaAvatar(size: 30)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("NOVA is ready")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(theme.ink.color)
+                    Text("Your AI study buddy — built in, nothing to set up.")
+                        .font(.caption)
+                        .foregroundStyle(theme.inkSecondary.color)
                 }
+                Spacer()
+                Image(systemName: "checkmark.seal.fill")
+                    .foregroundStyle(theme.accent.color)
             }
-            Button("Save key") {
-                services.groqAPIKey = key
-                saved = true
-            }
-            .foregroundStyle(theme.accent.color)
-            .disabled(key.trimmingCharacters(in: .whitespaces).isEmpty)
-            Link("Get a free key at console.groq.com",
-                 destination: URL(string: "https://console.groq.com/keys")!)
-                .font(.caption)
-                .foregroundStyle(theme.inkSecondary.color)
         } header: {
             Text("NOVA (AI)")
         } footer: {
-            Text("""
-                 NOVA uses Groq's free API (same setup as ClassMate). A key \
-                 built into the app is used first; otherwise this key is stored \
-                 only in the Keychain and never leaves the device except to call Groq.
-                 """)
+            Text("NOVA works automatically while you're signed in — highlight anything on a page and ask her to explain or tidy it up.")
         }
         .listRowBackground(theme.surfaceRaised.color)
-        .onAppear { key = services.groqAPIKey }
     }
 }
 
 /// About / Support / Privacy links at the bottom of Settings.
 struct AboutSettingsSection: View {
     @Environment(\.theme) private var theme
-    @State private var showAbout = false
-    @State private var showSupport = false
+
+    /// Which help sheet is open. A SINGLE `.sheet(item:)` — two adjacent
+    /// `.sheet(isPresented:)` modifiers on one view is a known SwiftUI pitfall
+    /// where only one registers, which is why About/Support wouldn't open.
+    private enum HelpSheet: String, Identifiable {
+        case support, about
+        var id: String { rawValue }
+    }
+    @State private var sheet: HelpSheet?
 
     var body: some View {
         Section {
-            Button { showSupport = true } label: {
+            Button { sheet = .support } label: {
                 Label("Support", systemImage: "questionmark.circle")
             }
-            Button { showAbout = true } label: {
+            Button { sheet = .about } label: {
                 Label("About", systemImage: "info.circle")
             }
             Link(destination: ClassMateLinks.privacy) {
@@ -110,7 +104,11 @@ struct AboutSettingsSection: View {
         }
         .tint(theme.accent.color)
         .listRowBackground(theme.surfaceRaised.color)
-        .sheet(isPresented: $showAbout) { AboutScreen() }
-        .sheet(isPresented: $showSupport) { SupportScreen() }
+        .sheet(item: $sheet) { which in
+            switch which {
+            case .support: SupportScreen()
+            case .about: AboutScreen()
+            }
+        }
     }
 }

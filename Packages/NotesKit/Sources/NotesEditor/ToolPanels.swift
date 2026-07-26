@@ -1,7 +1,9 @@
 import ClassMateTheme
 import NotesDesignSystem
 import NotesModels
+import NotesServices
 import SwiftUI
+import UniformTypeIdentifiers
 
 // The settings panels that pop out of the tool rail: pen, marker, eraser, and
 // page settings. Split out of ToolRailView to keep each file focused.
@@ -43,8 +45,10 @@ struct SwatchGrid: View {
 
 struct PenPanel: View {
     @Environment(\.theme) private var theme
+    @Environment(AppServices.self) private var services
     @Bindable var toolState: ToolState
     let onBeautify: () -> Void
+    @State private var showFontImporter = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -73,7 +77,15 @@ struct PenPanel: View {
                     .font(.subheadline).foregroundStyle(theme.ink.color)
             }
             if toolState.beautifyEnabled {
-                FontRow(selected: $toolState.beautifyFontID)
+                FontRow(selected: $toolState.beautifyFontID, custom: services.fontStore.fonts)
+                Button {
+                    showFontImporter = true
+                } label: {
+                    Label("Add font (OTF / TTF)", systemImage: "plus")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(theme.accent.color)
+                }
+                .buttonStyle(.plain)
                 Button {
                     onBeautify()
                 } label: {
@@ -82,24 +94,41 @@ struct PenPanel: View {
                         .frame(maxWidth: .infinity, minHeight: 38)
                 }
                 .buttonStyle(.glassProminent)
-                Text("Re-typesets your handwriting into the chosen font as editable text.")
+                Text("Cleans up your handwriting with NOVA and re-typesets it in the chosen font, right where you wrote it.")
                     .font(.caption).foregroundStyle(theme.inkSecondary.color)
             }
         }
         .padding(18)
         .frame(width: 260)
         .background(theme.surfaceRaised.color)
+        .fileImporter(
+            isPresented: $showFontImporter,
+            allowedContentTypes: [UTType(filenameExtension: "otf") ?? .font, .font],
+            allowsMultipleSelection: true
+        ) { result in
+            guard case .success(let urls) = result else { return }
+            var last: String?
+            for url in urls {
+                if let font = services.fontStore.importFont(from: url) { last = font.id }
+            }
+            // Auto-select the freshly imported face so it's ready to use.
+            if let last { toolState.beautifyFontID = last }
+        }
     }
 }
 
 struct FontRow: View {
     @Environment(\.theme) private var theme
     @Binding var selected: String
+    /// User-uploaded faces, shown after the curated pack.
+    var custom: [HandwritingFont] = []
+
+    private var allFonts: [HandwritingFont] { FontLibrary.all + custom }
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                ForEach(FontLibrary.all) { font in
+                ForEach(allFonts) { font in
                     Button {
                         selected = font.id
                     } label: {

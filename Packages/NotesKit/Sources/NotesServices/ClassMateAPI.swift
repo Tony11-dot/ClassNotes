@@ -233,6 +233,32 @@ public struct ClassMateAPIClient: Sendable {
         try ensureSuccess(status)
     }
 
+    // MARK: - NOVA note assistant (Bearer)
+
+    /// `POST /classnotes/ai` `{task:"beautify", text}` → `{answer}`. Returns the
+    /// tidied-up version of the student's own note text. The model key lives
+    /// server-side; the app authenticates with the session token.
+    public func beautify(text: String, token: String) async throws -> String {
+        try await notesAI(task: "beautify", text: text, token: token)
+    }
+
+    /// `POST /classnotes/ai` `{task:"explain", text}` → `{answer}`.
+    public func explainNote(text: String, token: String) async throws -> String {
+        try await notesAI(task: "explain", text: text, token: token)
+    }
+
+    private func notesAI(task: String, text: String, token: String) async throws -> String {
+        var req = request(path: "/classnotes/ai", method: "POST", token: token)
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["task": task, "text": text])
+        let (data, status) = try await send(req)
+        try ensureSuccess(status)
+        struct AnswerResponse: Decodable { let answer: String }
+        guard let decoded = try? JSONDecoder().decode(AnswerResponse.self, from: data) else {
+            throw APIError.decoding
+        }
+        return decoded.answer
+    }
+
     // MARK: - Plumbing
 
     private func putJSON<Body: Encodable>(path: String, body: Body, token: String) async throws {

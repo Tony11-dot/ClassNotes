@@ -17,6 +17,8 @@ public final class AppServices {
     public let auth: AuthService
     public let keychain: any SecretStore
     public let aiProvider: GroqProvider
+    /// User-uploaded fonts (OTF/TTF) for beautify + text, registered at launch.
+    public let fontStore: CustomFontStore
     /// Mirrors the local library up to the ClassMate backend so the ClassMate
     /// "ClassNotes" tab shows the user's real notebooks.
     public let sync: SyncService
@@ -39,6 +41,7 @@ public final class AppServices {
             context: context, store: store, entitlements: entitlements, sync: sync
         )
         self.aiProvider = GroqProvider(keychain: keychain)
+        self.fontStore = CustomFontStore()
     }
 
     // MARK: - Groq key (entered in Settings, stored in Keychain)
@@ -50,6 +53,16 @@ public final class AppServices {
 
     public func makeNovaConversation() -> NovaConversation {
         NovaConversation(provider: aiProvider)
+    }
+
+    /// Ask NOVA (server-side, keyless) to tidy up the student's own note text.
+    /// Returns the cleaned text, or nil if signed out / the request fails — the
+    /// caller falls back to the raw OCR text so beautify still works offline.
+    public func beautifyText(_ text: String) async -> String? {
+        guard let token = auth.token, !token.isEmpty else { return nil }
+        let cleaned = try? await ClassMateAPIClient().beautify(text: text, token: token)
+        let trimmed = cleaned?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (trimmed?.isEmpty == false) ? trimmed : nil
     }
 
     /// Kick off async work after launch: entitlements, products, and restoring

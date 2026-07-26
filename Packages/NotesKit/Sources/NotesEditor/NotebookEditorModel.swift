@@ -88,12 +88,28 @@ public final class NotebookEditorModel {
 
     // MARK: - Handwriting beautification
 
-    /// OCRs the page's handwriting and drops it back as typeset text in the
-    /// chosen font — a real text element, not a textbox.
-    public func beautify(pageID: UUID, drawing: PKDrawing, font: HandwritingFont, colorHex: String) async {
-        let text = await recognizeText(pageID: pageID, drawing: drawing)
+    /// OCRs the page's handwriting → returns the recognized text. The editor
+    /// then cleans it with NOVA and calls `placeBeautifiedText` so the typeset
+    /// text lands where the ink was and the ink is wiped — a true transform, not
+    /// a floating textbox.
+    public func recognizedHandwriting(pageID: UUID, drawing: PKDrawing) async -> String {
+        await recognizeText(pageID: pageID, drawing: drawing)
+    }
+
+    /// Drops beautified text onto the page at `origin` (the ink's top-left), so
+    /// it replaces the handwriting rather than appearing as a centered box.
+    public func placeBeautifiedText(
+        _ text: String, at origin: CGPoint, fontName: String, colorHex: String, pageID: UUID
+    ) async {
         guard !text.isEmpty else { return }
-        await insertText(text, fontName: font.fontName, colorHex: colorHex)
+        let width = min(PageGeometry.size.width - origin.x - 32, 560)
+        let height = min(720, max(60, Double(text.count) / 42 * 26 + 44))
+        let x = max(24, min(origin.x, PageGeometry.size.width - width - 24))
+        let y = max(24, min(origin.y, PageGeometry.size.height - 60))
+        await append(PageElement(
+            kind: .text, x: x, y: y, width: width, height: height,
+            text: text, fontName: fontName, textColorHex: colorHex
+        ), to: pageID)
     }
 
     private var targetPageID: UUID? { focusedPageID ?? manifest?.pages.first?.id }

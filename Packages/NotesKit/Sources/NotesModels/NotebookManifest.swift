@@ -5,9 +5,10 @@ import Foundation
 /// `media/` payloads referenced by page elements. SwiftData never sees ink.
 public struct NotebookManifest: Codable, Sendable, Equatable {
     /// v2 adds `PageRecord.elements` (images / voice notes / typeset text).
-    /// v3 adds `PageRecord.margin`. Older manifests decode fine — `elements`
-    /// defaults to empty and `margin` to the default leading line.
-    public static let currentVersion = 3
+    /// v3 adds `PageRecord.margin`. v4 adds `PageRecord.paperColorHex` (a chosen
+    /// page color). Older manifests decode fine — `elements` defaults to empty,
+    /// `margin` to the default leading line, and `paperColorHex` to nil (auto).
+    public static let currentVersion = 4
 
     public var version: Int
     public var pages: [PageRecord]
@@ -24,28 +25,32 @@ public struct PageRecord: Codable, Sendable, Equatable, Identifiable {
     public var createdAt: Date
     public var elements: [PageElement]
     public var margin: PageMargin
+    /// Chosen page (paper) color. `nil` = auto — the theme's paper color.
+    public var paperColorHex: String?
 
     public init(
         id: UUID = UUID(),
         template: PageTemplate,
         createdAt: Date = .now,
         elements: [PageElement] = [],
-        margin: PageMargin = .default
+        margin: PageMargin = .default,
+        paperColorHex: String? = nil
     ) {
         self.id = id
         self.template = template
         self.createdAt = createdAt
         self.elements = elements
         self.margin = margin
+        self.paperColorHex = paperColorHex
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, template, createdAt, elements, margin
+        case id, template, createdAt, elements, margin, paperColorHex
     }
 
-    // Custom decode so v1/v2 manifests (no `elements`/`margin` keys) load
-    // without loss — missing elements default to empty, missing margin to the
-    // default leading line.
+    // Custom decode so v1/v2/v3 manifests (no `elements`/`margin`/`paperColorHex`
+    // keys) load without loss — missing elements default to empty, missing margin
+    // to the default leading line, and missing paper color to nil (auto).
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
@@ -53,5 +58,6 @@ public struct PageRecord: Codable, Sendable, Equatable, Identifiable {
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         elements = try container.decodeIfPresent([PageElement].self, forKey: .elements) ?? []
         margin = try container.decodeIfPresent(PageMargin.self, forKey: .margin) ?? .default
+        paperColorHex = try container.decodeIfPresent(String.self, forKey: .paperColorHex)
     }
 }
