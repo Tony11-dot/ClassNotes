@@ -80,19 +80,23 @@ public struct BrandLockup: View {
 
 /// Registers the bundled Cabinet Grotesk faces (ClassMate's default type) so
 /// the app can render its wordmark/UI in the same family. Call once at launch.
-@MainActor
 public enum CMFonts {
     public static let family = "Cabinet Grotesk"
-    private static var registered = false
 
-    public static func registerIfNeeded() {
-        guard !registered else { return }
-        registered = true
+    /// Registration runs exactly once, on whichever thread asks first: a `static
+    /// let` is lazily initialized under the runtime's own lock. It has to be
+    /// callable off the main actor because the type scale (`Font.dsBody` and
+    /// friends) is resolved wherever a font is asked for, not just in a view body.
+    private static let registration: Void = {
         let faces = ["CabinetGrotesk-Regular", "CabinetGrotesk-Medium", "CabinetGrotesk-Bold"]
         for face in faces {
             guard let url = Bundle.module.url(forResource: face, withExtension: "ttf") else { continue }
             CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
         }
+    }()
+
+    public static func registerIfNeeded() {
+        _ = registration
     }
 
     /// Cabinet Grotesk at a given size/weight, falling back to the system font

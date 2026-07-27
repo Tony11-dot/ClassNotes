@@ -55,7 +55,7 @@ public struct NotebookCoverView: View {
         if design.hasTitlePlate {
             // Classic stationery: the title sits on a printed label.
             Text(title)
-                .font(.headline)
+                .font(.dsHeadline)
                 .foregroundStyle(theme.ink.color)
                 .lineLimit(2)
                 .multilineTextAlignment(.center)
@@ -68,7 +68,7 @@ public struct NotebookCoverView: View {
                 .shadow(color: .black.opacity(0.12), radius: 4, y: 2)
         } else {
             Text(title)
-                .font(.headline)
+                .font(.dsHeadline)
                 .foregroundStyle(ink.color)
                 .lineLimit(2)
                 .multilineTextAlignment(.leading)

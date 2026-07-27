@@ -95,11 +95,11 @@ public struct ColorWheelPicker: View {
                     .frame(width: 34, height: 34)
                     .overlay(Circle().strokeBorder(theme.separator.color, lineWidth: 0.5))
                 Text(current.hexString)
-                    .font(.footnote.monospaced())
+                    .font(.dsFootnote.monospaced())
                     .foregroundStyle(theme.inkSecondary.color)
                 Spacer()
                 Button("Use") { onCommit(current) }
-                    .font(.subheadline.weight(.semibold))
+                    .font(.dsSubheadline.weight(.semibold))
                     .buttonStyle(.glassProminent)
             }
         }
@@ -196,7 +196,7 @@ public struct ColorWheelPicker: View {
 
     private func slider(title: String, value: Binding<Double>, gradient: Gradient) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.caption).foregroundStyle(theme.inkSecondary.color)
+            Text(title).font(.dsCaption).foregroundStyle(theme.inkSecondary.color)
             ZStack {
                 Capsule()
                     .fill(LinearGradient(gradient: gradient, startPoint: .leading, endPoint: .trailing))
@@ -260,7 +260,7 @@ public struct ColorSwatchRow: View {
             ZStack {
                 Circle().fill(theme.paperColor(tone: .neutral).color)
                 Image(systemName: "a.circle")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.dsSystem(size: 13, weight: .semibold))
                     .foregroundStyle(theme.inkSecondary.color)
             }
             .frame(width: swatchSize, height: swatchSize)
@@ -299,7 +299,7 @@ public struct ColorSwatchRow: View {
                         )
                     )
                 Image(systemName: "plus")
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.dsSystem(size: 13, weight: .bold))
                     .foregroundStyle(.white)
                     .shadow(color: .black.opacity(0.35), radius: 1)
             }

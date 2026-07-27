@@ -11,6 +11,7 @@ struct ClassNotesApp: App {
 
     init() {
         CMFonts.registerIfNeeded()
+        CMType.applyNavigationBarAppearance()
         let container = ModelContainerFactory.make()
         self.container = container
         let services = AppServices(modelContainer: container)
@@ -23,6 +24,11 @@ struct ClassNotesApp: App {
             RootView()
                 .environment(services)
                 .environment(services.entitlements)
+                // Cabinet Grotesk is the app's voice, exactly as in ClassMate. The
+                // type scale (`Font.dsBody` & co.) covers everything that names a
+                // style; this catches everything that doesn't — plain `Text`, list
+                // rows, alerts, pickers.
+                .environment(\.font, .dsBody)
         }
         .modelContainer(container)
     }

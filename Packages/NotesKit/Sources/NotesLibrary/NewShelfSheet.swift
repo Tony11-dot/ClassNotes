@@ -24,7 +24,7 @@ struct NewShelfSheet: View {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 52))], spacing: 12) {
                         ForEach(ShelfSymbol.allCases, id: \.self) { option in
                             Image(systemName: option.systemName)
-                                .font(.title2)
+                                .font(.dsTitle2)
                                 .foregroundStyle(symbol == option ? theme.accent.color : theme.inkSecondary.color)
                                 .frame(width: 48, height: 48)
                                 .background(

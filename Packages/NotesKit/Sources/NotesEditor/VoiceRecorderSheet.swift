@@ -52,15 +52,15 @@ struct VoiceRecorderSheet: View {
                     .scaleEffect(1 + recorder.level * 0.3)
                     .animation(.easeOut(duration: 0.08), value: recorder.level)
                 Image(systemName: recorder.isRecording ? "waveform" : "mic.fill")
-                    .font(.system(size: 44))
+                    .font(.dsSystem(size: 44))
                     .foregroundStyle(theme.accent.color)
             }
             Text(VoiceBubbleView.timeString(recorder.elapsed))
-                .font(.system(size: 34, weight: .bold).monospacedDigit())
+                .font(.dsSystem(size: 34, weight: .bold).monospacedDigit())
                 .foregroundStyle(theme.ink.color)
             if recorder.isRecording {
                 Label("Hands-free — recording locked", systemImage: "lock.fill")
-                    .font(.caption.weight(.medium))
+                    .font(.dsCaption.weight(.medium))
                     .foregroundStyle(theme.inkSecondary.color)
             }
         }
@@ -69,21 +69,21 @@ struct VoiceRecorderSheet: View {
     private var deniedView: some View {
         VStack(spacing: 14) {
             Image(systemName: "mic.slash.fill")
-                .font(.system(size: 44))
+                .font(.dsSystem(size: 44))
                 .foregroundStyle(theme.inkSecondary.color)
             Text(permissionDenied ? "Microphone access is off" : "Couldn't start recording")
-                .font(.headline)
+                .font(.dsHeadline)
                 .foregroundStyle(theme.ink.color)
             Text(permissionDenied
                  ? "Turn on the microphone for ClassNotes in Settings to record voice notes."
                  : "Something went wrong starting the recorder. Try again.")
-                .font(.subheadline)
+                .font(.dsSubheadline)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(theme.inkSecondary.color)
                 .padding(.horizontal, 40)
             if permissionDenied, let url = URL(string: UIApplication.openSettingsURLString) {
                 Link("Open Settings", destination: url)
-                    .font(.headline)
+                    .font(.dsHeadline)
                     .foregroundStyle(theme.accent.color)
             }
         }
@@ -95,14 +95,14 @@ struct VoiceRecorderSheet: View {
                 recorder.cancel()
                 dismiss()
             } label: {
-                Label("Cancel", systemImage: "xmark").font(.headline)
+                Label("Cancel", systemImage: "xmark").font(.dsHeadline)
             }
             .tint(theme.inkSecondary.color)
 
             if recorder.isRecording {
                 Button { stop() } label: {
                     Image(systemName: "stop.circle.fill")
-                        .font(.system(size: 64))
+                        .font(.dsSystem(size: 64))
                         .foregroundStyle(theme.accent.color)
                 }
                 .accessibilityLabel("Stop and save")

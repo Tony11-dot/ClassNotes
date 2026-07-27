@@ -68,7 +68,7 @@ public struct DSGlassIconButton: View {
     public var body: some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: 17, weight: .medium))
+                .font(.dsSystem(size: 17, weight: .medium))
                 .foregroundStyle(isActive ? theme.accent.color : theme.ink.color)
                 .frame(width: 44, height: 44)
                 .contentShape(Circle())

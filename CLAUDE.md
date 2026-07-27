@@ -81,7 +81,29 @@ Universal app, Swift 6 (strict concurrency), SwiftUI-first, Liquid Glass design 
 - Real-time beautification is `LiveBeautifier`: a settle timer, per-LINE Vision
   recognition on a tight upscaled crop, then `plan(...)` (pure) deciding inserts
   vs. appends to a line already typeset. Only line-shaped ink is touched
-  (`looksLikeWriting`), so diagrams and doodles are never eaten.
+  (`looksLikeWriting`), so diagrams and doodles are never eaten. Vision gets the
+  line re-inked BLACK on an OPAQUE WHITE crop (`recognitionImage`) — the raw
+  `PKDrawing.image` is the pen's own colour on transparency, which recognized
+  nothing, and `apply` returns Bool so a refused pass doesn't advance the run list.
+- NEVER assign `PKCanvasView.drawing` while the pencil is down. The coordinator
+  gates every rewrite (pen shaping, shape snap, scribble-erase, beautification)
+  on `canvasViewDidBeginUsingTool`/`…DidEndUsingTool` and batches them into ONE
+  assignment per pause, because assigning re-renders the page and eats the stroke
+  in flight. `dataRepresentation()` runs inside the debounced save, never per
+  stroke. `PenShaper` no-ops inside a wide sensitivity deadband so the default pen
+  never triggers a rewrite at all.
+- Tape is erased by `PageElementsLayer`, not the canvas: tape is an element, so
+  the eraser tool gets a high-priority gesture over tape strips only.
+- Focus mode (`ToolState.focusMode`, entered by picking up the highlighter) is its
+  own surface — one page, an Exit chip, no rail/bubble/navigation bar.
+- All type comes from `Font.ds*` / `CMType` (Cabinet Grotesk, ClassMate's family).
+  Never `.font(.headline)` or `.font(.system(size:))` — the `ds` variants are the
+  only way the family applies, and `CMType.applyNavigationBarAppearance()` covers
+  UIKit's navigation titles.
+- NOVA's transcript shows the ANSWER only: `NovaReply.display` strips `<think>`
+  blocks (including unterminated ones mid-stream) and harmony channel markers, and
+  `NovaMarkdownText` renders the Markdown so no `**` reaches the screen. The server
+  also asks for `reasoning_format: 'hidden'`.
 - New documents all go through `NotebookRepository.create(...)`: quick note,
   notebook, whiteboard, image, file and scan differ only by `NotebookKind`,
   `PageStyle` and page count. A whiteboard is ONE page in `PageSize.whiteboard`
@@ -93,6 +115,12 @@ Universal app, Swift 6 (strict concurrency), SwiftUI-first, Liquid Glass design 
   (audio / file / link) so the ClassNotes tab can zoom, play voice notes and open
   files and links. Backend: `ClassNotesPage.attachments` (JSONB) in the ClassMate
   repo; keep the DTO, the Prisma column and `NotebookPageAttachment` in step.
+- The library mirror is push-only EXCEPT one channel back: notebooks the user
+  renamed or deleted in the ClassMate ClassNotes tab. `SyncService.pullRemoteChanges`
+  runs at launch BEFORE `pushAll` (a push first would send the stale local title
+  over the rename), applies them via `NotebookRepository.applyRemoteChanges`, then
+  acks so the server can purge its tombstones. Local deletion happens by EXPLICIT
+  id only — "absent from the server" must never delete anything.
 
 ## Milestones
 

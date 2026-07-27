@@ -81,10 +81,10 @@ public struct LibraryListScreen<Destination: View>: View {
                                 Image(systemName: notebook.kind.symbolName)
                             }
                         }
-                            .font(.body.weight(.medium))
+                            .font(.dsBody.weight(.medium))
                             .foregroundStyle(theme.ink.color)
                         Text(notebook.updatedAt, format: .dateTime.day().month().year())
-                            .font(.caption)
+                            .font(.dsCaption)
                             .foregroundStyle(theme.inkSecondary.color)
                     }
                 }

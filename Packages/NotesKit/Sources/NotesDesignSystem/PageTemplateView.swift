@@ -247,7 +247,7 @@ public struct PageTemplateView: View {
                      color: soft, width: 1 * scale)
             }
             let label = Text(days[row])
-                .font(.system(size: max(6, 15 * scale), weight: .semibold))
+                .font(.dsSystem(size: max(6, 15 * scale), weight: .semibold))
                 .foregroundStyle(color)
             context.draw(label, at: CGPoint(x: labelX / 2, y: y + rowHeight / 2), anchor: .center)
         }

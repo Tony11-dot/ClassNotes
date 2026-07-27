@@ -35,7 +35,7 @@ public struct NovaAvatar: View {
                 .shadow(color: theme.accent.color.opacity(0.35), radius: size * 0.25, y: size * 0.08)
 
             Image(systemName: "sparkles")
-                .font(.system(size: size * 0.5, weight: .semibold))
+                .font(.dsSystem(size: size * 0.5, weight: .semibold))
                 .foregroundStyle(.white)
                 .symbolEffect(.pulse, options: animated ? .repeating : .default, value: animated)
         }

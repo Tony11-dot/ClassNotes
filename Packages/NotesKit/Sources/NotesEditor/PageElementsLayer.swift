@@ -19,6 +19,9 @@ struct PageElementsLayer: View {
     let pageID: UUID
     let elements: [PageElement]
     let model: NotebookEditorModel
+    /// Needed for the eraser: tape is an element, not ink, so the canvas's own
+    /// eraser can never touch it — this layer has to do it.
+    let toolState: ToolState
     /// Displayed page size in view points (from the parent GeometryReader).
     let displaySize: CGSize
     /// The page's logical size, so the scale is right for any paper size.
@@ -33,6 +36,9 @@ struct PageElementsLayer: View {
     @State private var dragOffset: CGSize = .zero
     @State private var draggingID: UUID?
     @State private var menuElementID: UUID?
+    /// Strips already removed by the eraser gesture in flight, so one continuous
+    /// scrub deletes each one exactly once.
+    @State private var erasedElementIDs: Set<UUID> = []
     @State private var previewURL: URL?
     @FocusState private var textFieldFocused: Bool
 
@@ -53,6 +59,9 @@ struct PageElementsLayer: View {
                     .simultaneousGesture(resizeGesture(for: element), including: gestureMask(for: element))
                     .simultaneousGesture(longPressGesture(for: element))
                     .onTapGesture { handleTap(element) }
+                    // Erasing tape wins over lifting it, so a rubbed-out strip is
+                    // gone rather than merely revealed.
+                    .highPriorityGesture(eraseGesture(for: element), including: eraseMask(for: element))
                     .popover(isPresented: menuBinding(for: element)) {
                         actionMenu(for: element)
                     }
@@ -66,6 +75,27 @@ struct PageElementsLayer: View {
     /// of it), but nothing should be draggable mid-stroke.
     private func gestureMask(for element: PageElement) -> GestureMask {
         allowsEditing ? .all : .subviews
+    }
+
+    /// The eraser takes tape off the page. It's live only for tape, and only while
+    /// the eraser is the selected tool — anywhere else this gesture must not exist,
+    /// or it would swallow the taps that lift a strip and the drags that move a
+    /// photo. Ink under the strip is untouched: the canvas below still gets every
+    /// touch that isn't on a strip.
+    private func eraseMask(for element: PageElement) -> GestureMask {
+        toolState.tool == .eraser && element.kind == .tape ? .all : .subviews
+    }
+
+    /// Touch down anywhere on a strip removes it — so scrubbing the eraser across a
+    /// page takes out every strip it passes over, which is what an eraser should do.
+    private func eraseGesture(for element: PageElement) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { _ in
+                guard toolState.tool == .eraser, element.kind == .tape else { return }
+                guard erasedElementIDs.insert(element.id).inserted else { return }
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                Task { await model.deleteElement(element.id, on: pageID) }
+            }
     }
 
     private func menuBinding(for element: PageElement) -> Binding<Bool> {
@@ -158,7 +188,7 @@ struct PageElementsLayer: View {
     ) -> some View {
         Button(role: role, action: action) {
             Label(title, systemImage: systemImage)
-                .font(.body)
+                .font(.dsBody)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 16).padding(.vertical, 11)
         }
@@ -269,7 +299,7 @@ struct PageElementsLayer: View {
             Image(systemName: systemImage)
                 .foregroundStyle(theme.accent.color)
             Text(title)
-                .font(.system(size: 15 * scale, weight: .medium))
+                .font(.dsSystem(size: 15 * scale, weight: .medium))
                 .foregroundStyle(theme.ink.color)
                 .lineLimit(1)
         }
@@ -362,7 +392,7 @@ private struct TextBoxEditor: View {
             .toolbar {
                 ToolbarItem(placement: .keyboard) {
                     Button("Done") { onCommit(draft) }
-                        .font(.subheadline.weight(.semibold))
+                        .font(.dsSubheadline.weight(.semibold))
                 }
             }
     }

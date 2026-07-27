@@ -18,17 +18,17 @@ struct AccountSettingsSection: View {
                     ZStack {
                         Circle().fill(theme.accentMuted.color)
                         Text(services.auth.user?.initials ?? "?")
-                            .font(.headline.weight(.heavy))
+                            .font(.dsHeadline.weight(.heavy))
                             .foregroundStyle(theme.accent.color)
                     }
                     .frame(width: 44, height: 44)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(services.auth.user?.bestName ?? "Your profile")
-                            .font(.body.weight(.semibold))
+                            .font(.dsBody.weight(.semibold))
                             .foregroundStyle(theme.ink.color)
                         if let username = services.auth.user?.username {
                             Text("@\(username)")
-                                .font(.caption)
+                                .font(.dsCaption)
                                 .foregroundStyle(theme.inkSecondary.color)
                         }
                     }

@@ -59,7 +59,7 @@ public struct NovaChatView: View {
                     }
                     if let error = conversation.errorText {
                         Text(error)
-                            .font(.footnote)
+                            .font(.dsFootnote)
                             .foregroundStyle(.red)
                     }
                 }
@@ -87,10 +87,12 @@ public struct NovaChatView: View {
         } else {
             HStack(alignment: .top, spacing: 10) {
                 NovaAvatar(size: 26)
-                Text(message.content.isEmpty ? " " : message.content)
-                    .foregroundStyle(theme.ink.color)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                if message.content.isEmpty {
+                    NovaTypingDots()
+                } else {
+                    NovaMarkdownText(message.content)
+                        .foregroundStyle(theme.ink.color)
+                }
             }
         }
     }
@@ -99,13 +101,13 @@ public struct NovaChatView: View {
         VStack(alignment: .leading, spacing: 8) {
             NovaAvatar(size: 40)
             Text("Ask NOVA")
-                .font(.title3.weight(.bold))
+                .font(.dsTitle3.weight(.bold))
                 .foregroundStyle(theme.ink.color)
             Text("""
                  Explain a concept, turn notes into a table, or quiz yourself. \
                  NOVA can make mistakes — double-check important answers.
                  """)
-                .font(.subheadline)
+                .font(.dsSubheadline)
                 .foregroundStyle(theme.inkSecondary.color)
         }
         .padding(.vertical, 12)
@@ -126,7 +128,7 @@ public struct NovaChatView: View {
                 draft = ""
             } label: {
                 Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 30))
+                    .font(.dsSystem(size: 30))
                     .foregroundStyle(theme.accent.color)
             }
             .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty || conversation.streaming)

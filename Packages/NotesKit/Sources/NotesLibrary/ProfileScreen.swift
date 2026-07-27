@@ -86,17 +86,17 @@ public struct ProfileScreen: View {
             ZStack {
                 Circle().fill(theme.accentMuted.color)
                 Text(user?.initials ?? "?")
-                    .font(.title2.weight(.heavy))
+                    .font(.dsTitle2.weight(.heavy))
                     .foregroundStyle(theme.accent.color)
             }
             .frame(width: 64, height: 64)
             VStack(alignment: .leading, spacing: 3) {
                 Text(user?.bestName ?? "Student")
-                    .font(.title3.weight(.heavy))
+                    .font(.dsTitle3.weight(.heavy))
                     .foregroundStyle(theme.ink.color)
                 if let username = user?.username {
                     Text("@\(username)")
-                        .font(.subheadline)
+                        .font(.dsSubheadline)
                         .foregroundStyle(theme.accent.color)
                 }
             }

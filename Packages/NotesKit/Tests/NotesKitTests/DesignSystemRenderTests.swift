@@ -177,6 +177,29 @@ struct DesignSystemRenderTests {
         }
     }
 
+    @Test("No two pens in the tray look alike")
+    func penGlyphsAreDistinct() throws {
+        // The tray has to say which pen is in your hand without opening its panel,
+        // so every preset needs its own silhouette — not just its own colour. Same
+        // ink, same size, same theme: only the shape can differ.
+        let spec = ThemePreset.allCases[0].spec
+        var seen: [String: Data] = [:]
+        for pen in PenLibrary.all {
+            let glyph = PenGlyphView(preset: pen, color: spec.ink, isSelected: false)
+                .environment(\.theme, spec)
+            let image = try #require(
+                render(glyph, size: CGSize(width: 64, height: 26)),
+                "\(pen.id) failed to render"
+            )
+            let png = try #require(image.pngData())
+            if let twin = seen.first(where: { $0.value == png })?.key {
+                Issue.record("\(pen.id) is drawn identically to \(twin)")
+            }
+            seen[pen.id] = png
+        }
+        #expect(seen.count == PenLibrary.all.count)
+    }
+
     @Test("Page content — text, tape, links and chips — renders under every preset",
           arguments: ThemePreset.allCases)
     func pageContent(preset: ThemePreset) {

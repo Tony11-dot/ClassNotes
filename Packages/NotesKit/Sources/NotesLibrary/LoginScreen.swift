@@ -47,10 +47,10 @@ public struct LoginScreen: View {
                 .padding(.bottom, 4)
             VStack(spacing: 4) {
                 Text("Welcome back")
-                    .font(.title2.weight(.bold))
+                    .font(.dsTitle2.weight(.bold))
                     .foregroundStyle(theme.ink.color)
                 Text("Sign in to your ClassMate account.")
-                    .font(.subheadline)
+                    .font(.dsSubheadline)
                     .foregroundStyle(theme.inkSecondary.color)
             }
 
@@ -79,13 +79,13 @@ public struct LoginScreen: View {
             HStack {
                 Spacer()
                 Button("Forgot password?") { showForgot = true }
-                    .font(.subheadline.weight(.semibold))
+                    .font(.dsSubheadline.weight(.semibold))
                     .foregroundStyle(theme.accent.color)
             }
 
             if let error = services.auth.lastError {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .font(.footnote)
+                    .font(.dsFootnote)
                     .foregroundStyle(.red)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -95,7 +95,7 @@ public struct LoginScreen: View {
                     if busy {
                         ProgressView().tint(theme.contrastingInk(on: theme.accent).color)
                     } else {
-                        Text("Sign in").font(.headline)
+                        Text("Sign in").font(.dsHeadline)
                     }
                 }
                 .frame(maxWidth: .infinity, minHeight: 48)
@@ -197,10 +197,10 @@ struct ForgotPasswordScreen: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     Text("Forgot password")
-                        .font(.title.weight(.heavy))
+                        .font(.dsTitle.weight(.heavy))
                         .foregroundStyle(theme.ink.color)
                     Text(headerCopy)
-                        .font(.body)
+                        .font(.dsBody)
                         .foregroundStyle(theme.inkSecondary.color)
                         .lineSpacing(3)
                         .padding(.top, 8)
@@ -238,7 +238,7 @@ struct ForgotPasswordScreen: View {
                             } else {
                                 Image(systemName: mode == .email ? "paperplane.fill" : "message.fill")
                                 Text(mode == .email ? "Email me a reset link" : "Text me a reset link")
-                                    .font(.headline)
+                                    .font(.dsHeadline)
                             }
                         }
                         .frame(maxWidth: .infinity, minHeight: 48)
@@ -254,7 +254,7 @@ struct ForgotPasswordScreen: View {
                             Image(systemName: success ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                                 .foregroundStyle(success ? Color.green : Color.orange)
                         }
-                        .font(.subheadline)
+                        .font(.dsSubheadline)
                         .padding(14)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background((success ? Color.green : Color.orange).opacity(0.12),
@@ -263,7 +263,7 @@ struct ForgotPasswordScreen: View {
                     }
 
                     Text("The link expires in 1 hour and can only be used once.")
-                        .font(.footnote)
+                        .font(.dsFootnote)
                         .foregroundStyle(theme.inkSecondary.color)
                         .padding(.top, 24)
                 }

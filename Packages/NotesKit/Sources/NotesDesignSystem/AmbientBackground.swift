@@ -33,7 +33,7 @@ public struct AmbientBackground: View {
                         let fontSize = 16 + rng.nextUnit() * 26
                         let alpha = (0.05 + rng.nextUnit() * 0.10) * opacity
                         let resolved = context.resolve(
-                            Text(glyph).font(.system(size: fontSize, weight: .semibold))
+                            Text(glyph).font(.dsSystem(size: fontSize, weight: .semibold))
                         )
                         context.opacity = alpha
                         context.draw(

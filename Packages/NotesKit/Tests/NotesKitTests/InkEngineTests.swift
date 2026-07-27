@@ -131,6 +131,22 @@ struct ScribbleDetectorTests {
         #expect(ScribbleEraser.applying(to: drawing) == nil)
     }
 
+    @Test("A scrub over blank paper stays on the page")
+    func scrubOverNothingIsKept() {
+        // Writing fast — a "www", a hatch, a zigzag arrow — reads as a scrub. If
+        // that swallowed the stroke, the letters would appear and vanish a moment
+        // later. An erase that erases nothing is not an erase.
+        let drawing = PKDrawing(strokes: [stroke(from: scrub)])
+        #expect(ScribbleEraser.applying(to: drawing) == nil)
+    }
+
+    @Test("A scrub next to ink it never crosses keeps both")
+    func scrubMissingInkKeepsBoth() {
+        let faraway = stroke(from: (0...10).map { CGPoint(x: Double($0) * 10, y: 600) })
+        let drawing = PKDrawing(strokes: [faraway, stroke(from: scrub)])
+        #expect(ScribbleEraser.applying(to: drawing) == nil)
+    }
+
     private func stroke(from points: [CGPoint]) -> PKStroke {
         let controlPoints = points.enumerated().map { index, location in
             PKStrokePoint(
@@ -169,6 +185,26 @@ struct PenShaperTests {
     func neutralIsNoOp() {
         let settings = PenSettings(stability: 1, sensitivity: 0.5)
         #expect(PenShaper.shaped(stroke(), settings: settings) == nil)
+    }
+
+    @Test("Every shipped pen preset that reads as neutral rebuilds nothing")
+    func shippedDefaultsAvoidPointlessRebuilds() {
+        // Shaping a stroke means reassigning the canvas's whole drawing, which is
+        // what made writing feel laggier the fuller the page got. The DEFAULT pen
+        // must not pay that for a difference nobody can see.
+        let flow = PenLibrary.default
+        #expect(
+            PenShaper.shaped(stroke(), settings: flow.defaults) == nil,
+            "the default Flow Pen must not rebuild strokes"
+        )
+        // …while a pen whose character really is "even line" or "wet nib" still does.
+        for id in ["fineliner", "fountain", "highlighter"] {
+            let preset = PenLibrary.preset(id: id)
+            #expect(
+                PenShaper.shaped(stroke(), settings: preset.defaults) != nil,
+                "\(id) is tuned away from neutral and should still be shaped"
+            )
+        }
     }
 
     @Test("Stability smooths the path and keeps the ink and point count")
@@ -452,6 +488,61 @@ struct LiveBeautifierPlanTests {
         #expect(small > large)
         #expect(small <= 8)
         #expect(large >= 2)
+    }
+
+    @Test("The recognition image is black ink on an opaque white page")
+    func recognitionImageIsHighContrast() throws {
+        // Vision reads dark-on-light. PKDrawing renders the ink in its OWN colour on
+        // a TRANSPARENT background, so light ink (dark theme) or a flattened alpha
+        // gave Vision nothing to read and no line was ever typeset. Whatever colour
+        // the pen was, the image handed to Vision must be black on white.
+        let points = (0...40).map { index in
+            PKStrokePoint(
+                location: CGPoint(x: 10 + Double(index) * 4, y: 20),
+                timeOffset: Double(index) * 0.01,
+                size: CGSize(width: 6, height: 6), opacity: 1, force: 1,
+                azimuth: 0, altitude: .pi / 2
+            )
+        }
+        // White ink, as a dark theme would write with.
+        let stroke = PKStroke(
+            ink: PKInk(.pen, color: .white),
+            path: PKStrokePath(controlPoints: points, creationDate: Date(timeIntervalSince1970: 0))
+        )
+        let region = CGRect(x: 0, y: 0, width: 200, height: 40)
+        let image = LiveBeautifier.recognitionImage(
+            of: PKDrawing(strokes: [stroke]), region: region, scale: 2
+        )
+        let cgImage = try #require(image.cgImage)
+        #expect(cgImage.width == 400 && cgImage.height == 80, "the crop keeps its scale")
+
+        let samples = try #require(Self.samples(of: cgImage))
+        // A corner is bare page…
+        #expect(samples.corner.alpha == 255, "the page must be opaque, not transparent")
+        #expect(samples.corner.luminance > 240, "the page must be white")
+        // …and the middle of the line is ink.
+        #expect(samples.centre.luminance < 80, "the ink must come out dark, got \(samples.centre.luminance)")
+    }
+
+    private struct Pixel { let luminance: Int; let alpha: Int }
+
+    /// Top-left and centre pixels of `image`, as luminance + alpha.
+    private static func samples(of image: CGImage) -> (corner: Pixel, centre: Pixel)? {
+        let width = image.width, height = image.height
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        guard let context = CGContext(
+            data: &bytes, width: width, height: height, bitsPerComponent: 8,
+            bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        func pixel(x: Int, y: Int) -> Pixel {
+            let offset = (y * width + x) * 4
+            let luminance = (Int(bytes[offset]) + Int(bytes[offset + 1]) + Int(bytes[offset + 2])) / 3
+            return Pixel(luminance: luminance, alpha: Int(bytes[offset + 3]))
+        }
+        return (pixel(x: 1, y: 1), pixel(x: width / 2, y: height / 2))
     }
 
     @Test("Settings clamp the type size into a legible range")

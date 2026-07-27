@@ -33,9 +33,9 @@ public struct SupportScreen: View {
                         HStack(spacing: 12) {
                             NovaAvatar(size: 40)
                             VStack(alignment: .leading) {
-                                Text("Ask NOVA").font(.headline).foregroundStyle(theme.ink.color)
+                                Text("Ask NOVA").font(.dsHeadline).foregroundStyle(theme.ink.color)
                                 Text("Get instant help, any time.")
-                                    .font(.caption).foregroundStyle(theme.inkSecondary.color)
+                                    .font(.dsCaption).foregroundStyle(theme.inkSecondary.color)
                             }
                         }
                     }
@@ -89,9 +89,9 @@ public struct SupportScreen: View {
 
     private func faq(_ q: String, _ a: String) -> some View {
         DisclosureGroup {
-            Text(a).font(.subheadline).foregroundStyle(theme.inkSecondary.color)
+            Text(a).font(.dsSubheadline).foregroundStyle(theme.inkSecondary.color)
         } label: {
-            Text(q).font(.subheadline.weight(.semibold)).foregroundStyle(theme.ink.color)
+            Text(q).font(.dsSubheadline.weight(.semibold)).foregroundStyle(theme.ink.color)
         }
     }
 }
@@ -126,7 +126,7 @@ public struct AboutScreen: View {
                     Link("Privacy Policy", destination: ClassMateLinks.privacy)
                         .foregroundStyle(theme.accent.color)
                     Text("ClassNotes · v\(ClassMateLinks.appVersion)")
-                        .font(.caption)
+                        .font(.dsCaption)
                         .foregroundStyle(theme.inkSecondary.color)
                 }
                 .padding(20)
@@ -140,8 +140,8 @@ public struct AboutScreen: View {
 
     private func block(_ title: String, _ body: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.headline).foregroundStyle(theme.accent.color)
-            Text(body).font(.subheadline).foregroundStyle(theme.inkSecondary.color)
+            Text(title).font(.dsHeadline).foregroundStyle(theme.accent.color)
+            Text(body).font(.dsSubheadline).foregroundStyle(theme.inkSecondary.color)
         }
     }
 }

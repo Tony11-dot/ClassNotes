@@ -1,4 +1,5 @@
 import ClassMateTheme
+import NotesDesignSystem
 import SwiftUI
 
 /// The AI "magic pen": drag anywhere — circle, highlight, scribble — and it
@@ -49,7 +50,7 @@ struct MagicPenOverlay: View {
 
             VStack {
                 Label("Circle or highlight anything — NOVA reads it", systemImage: "wand.and.stars")
-                    .font(.footnote.weight(.semibold))
+                    .font(.dsFootnote.weight(.semibold))
                     .foregroundStyle(theme.contrastingInk(on: theme.accent).color)
                     .padding(.horizontal, 14).padding(.vertical, 8)
                     .background(theme.accent.color, in: Capsule())

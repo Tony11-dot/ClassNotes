@@ -98,7 +98,7 @@ struct ThemeEditorScreen: View {
                     .foregroundStyle(theme.ink.color)
                 Spacer()
                 Text(spec.color(for: token).hexString)
-                    .font(.caption.monospaced())
+                    .font(.dsCaption.monospaced())
                     .foregroundStyle(theme.inkSecondary.color)
                 swatchCircle(spec.color(for: token))
             }
@@ -155,7 +155,7 @@ struct TokenColorEditor: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     Text("Palette")
-                        .font(.footnote.weight(.semibold))
+                        .font(.dsFootnote.weight(.semibold))
                         .foregroundStyle(theme.inkSecondary.color)
                     LazyVGrid(
                         columns: [GridItem(.adaptive(minimum: 34, maximum: 40), spacing: 8)],
@@ -175,7 +175,7 @@ struct TokenColorEditor: View {
                         Text("Hex")
                             .foregroundStyle(theme.ink.color)
                         TextField("#RRGGBB", text: $hexField)
-                            .font(.body.monospaced())
+                            .font(.dsBody.monospaced())
                             .textInputAutocapitalization(.characters)
                             .autocorrectionDisabled()
                             .onSubmit(applyHex)
@@ -219,7 +219,7 @@ struct TokenColorEditor: View {
                         .strokeBorder(theme.separator.color, lineWidth: 0.5)
                     if hex == color.withAlpha(1).hexString {
                         Image(systemName: "checkmark")
-                            .font(.caption.bold())
+                            .font(.dsCaption.bold())
                             .foregroundStyle(theme.contrastingInk(on: cellColor).color)
                     }
                 }

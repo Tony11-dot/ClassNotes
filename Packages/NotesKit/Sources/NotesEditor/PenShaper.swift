@@ -19,13 +19,23 @@ import PencilKit
 /// Nothing is rebuilt when the settings ask for no change, so the common case
 /// (stability 1, sensitivity at the ink's own default) costs nothing.
 enum PenShaper {
+    /// PencilKit's own pressure response — the sensitivity value that means
+    /// "leave the stroke exactly as the pencil drew it".
+    static let neutralSensitivity = 0.5
+    /// How far sensitivity has to sit from neutral before a stroke is worth
+    /// rebuilding. Anything inside this band reads identically on the page.
+    static let sensitivityDeadband = 0.25
+
     /// Returns a reshaped copy of `stroke`, or nil when the settings are a no-op.
     static func shaped(_ stroke: PKStroke, settings: PenSettings) -> PKStroke? {
         let window = StrokeSmoothing.window(forStability: settings.stability)
         let needsSmoothing = window > 1
-        // Sensitivity only needs applying when it pulls away from a neutral 1:1
-        // response; a stroke of one point can't be smoothed either way.
-        let needsPressure = abs(settings.sensitivity - 0.5) > 0.01
+        // Sensitivity only needs applying when it pulls FAR from PencilKit's own
+        // 1:1 response. The band is deliberately wide: rebuilding a stroke means
+        // reassigning the canvas's drawing, and a barely-visible tweak isn't worth
+        // that (the default Flow Pen sits at 0.4, so it now costs nothing at all).
+        let needsPressure = abs(settings.sensitivity - Self.neutralSensitivity)
+            > Self.sensitivityDeadband
         guard needsSmoothing || needsPressure else { return nil }
 
         let points = Array(stroke.path)
@@ -80,23 +90,33 @@ enum PenShaper {
 
 /// "Scribble to erase" on a live `PKDrawing`.
 ///
-/// The last stroke is tested with `ScribbleDetector`; when it reads as a scrub,
-/// it's dropped along with every stroke it crossed. Everything else is left
-/// exactly as drawn — the mode never eats normal handwriting.
+/// The last stroke is tested with `ScribbleDetector`; when it reads as a scrub
+/// AND it actually crossed something, it's dropped along with everything it
+/// crossed. Everything else is left exactly as drawn — the mode never eats normal
+/// handwriting.
 enum ScribbleEraser {
-    /// The result of applying the gesture, or nil when the last stroke wasn't a
-    /// scribble (so the caller leaves the drawing alone).
+    /// The result of applying the gesture, or nil when the last stroke wasn't an
+    /// erasing scribble (so the caller leaves the drawing alone).
     static func applying(to drawing: PKDrawing, tolerance: CGFloat = 12) -> PKDrawing? {
         guard let scribble = drawing.strokes.last else { return nil }
         let scrub = path(of: scribble)
         guard ScribbleDetector.isErasureScribble(scrub) else { return nil }
 
+        var erasedSomething = false
         let survivors = drawing.strokes.dropLast().filter { stroke in
             // Cheap reject first: no bounding-box overlap means no crossing.
             guard stroke.renderBounds.intersects(scribble.renderBounds.insetBy(dx: -tolerance, dy: -tolerance))
             else { return true }
-            return !ScribbleDetector.crosses(scrub, path(of: stroke), tolerance: tolerance)
+            if ScribbleDetector.crosses(scrub, path(of: stroke), tolerance: tolerance) {
+                erasedSomething = true
+                return false
+            }
+            return true
         }
+        // A scrub over BLANK paper is just writing — a fast "www", a hatch fill, a
+        // zigzag arrow. Swallowing it made letters vanish a moment after they were
+        // written, so an erase that erases nothing is not an erase.
+        guard erasedSomething else { return nil }
         return PKDrawing(strokes: Array(survivors))
     }
 

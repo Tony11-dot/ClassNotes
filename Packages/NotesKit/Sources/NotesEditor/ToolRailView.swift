@@ -90,7 +90,7 @@ struct ToolRailView: View {
             _ = toolState.selectPen(toolState.pen)
         } label: {
             Image(systemName: "pencil")
-                .font(.system(size: 18, weight: .semibold))
+                .font(.dsSystem(size: 18, weight: .semibold))
                 .foregroundStyle(
                     toolState.tool == .pen
                         ? theme.contrastingInk(on: theme.accent).color
@@ -140,9 +140,9 @@ struct ToolRailView: View {
         } label: {
             VStack(spacing: -2) {
                 Image(systemName: "wand.and.sparkles")
-                    .font(.system(size: 16, weight: .medium))
+                    .font(.dsSystem(size: 16, weight: .medium))
                 Text(toolState.beautify.isEnabled ? "ON" : "OFF")
-                    .font(.system(size: 8, weight: .heavy))
+                    .font(.dsSystem(size: 8, weight: .heavy))
             }
             .foregroundStyle(toolState.beautify.isEnabled ? theme.accent.color : theme.inkSecondary.color)
             .frame(width: 44, height: 42)
@@ -189,10 +189,13 @@ struct ToolRailView: View {
         return Button {
             // First tap picks the pen up; tapping the pen already in hand opens
             // its settings.
-            if toolState.selectPen(preset) {
-                panel = .pen(preset.id)
-            } else {
-                panel = nil
+            let wasInHand = toolState.selectPen(preset)
+            panel = wasInHand ? .pen(preset.id) : nil
+            // The highlighter is the reading tool: picking it up clears the screen
+            // down to the page itself (see ToolState.focusMode). The panel still
+            // opens on the second tap, so it stays tunable.
+            if preset.isHighlighter, !wasInHand {
+                toolState.focusMode = true
             }
         } label: {
             PenGlyphView(
@@ -239,7 +242,7 @@ struct ToolRailView: View {
     ) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: 16, weight: .medium))
+                .font(.dsSystem(size: 16, weight: .medium))
                 .foregroundStyle(isActive ? theme.accent.color : theme.ink.color)
                 .frame(width: 44, height: 38)
                 .contentShape(Circle())

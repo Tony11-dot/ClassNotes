@@ -77,7 +77,7 @@ struct AddContentMenu: View {
             }
         } label: {
             Image(systemName: "plus")
-                .font(.system(size: 17, weight: .medium))
+                .font(.dsSystem(size: 17, weight: .medium))
                 .foregroundStyle(theme.ink.color)
                 .frame(width: 44, height: 44)
                 .contentShape(Circle())

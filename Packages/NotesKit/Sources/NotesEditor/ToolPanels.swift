@@ -29,11 +29,11 @@ struct PanelSlider: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Text(title)
-                    .font(.subheadline.weight(.medium))
+                    .font(.dsSubheadline.weight(.medium))
                     .foregroundStyle(theme.ink.color)
                 if let hint {
                     Image(systemName: "questionmark.circle")
-                        .font(.caption)
+                        .font(.dsCaption)
                         .foregroundStyle(theme.accent.color)
                         .help(hint)
                         .accessibilityLabel(hint)
@@ -43,7 +43,7 @@ struct PanelSlider: View {
                     stepper(-1)
                 }
                 Text(readout)
-                    .font(.subheadline.monospacedDigit())
+                    .font(.dsSubheadline.monospacedDigit())
                     .foregroundStyle(theme.inkSecondary.color)
                 if showsSteppers {
                     stepper(1)
@@ -63,7 +63,7 @@ struct PanelSlider: View {
             value = min(max(value + delta, range.lowerBound), range.upperBound)
         } label: {
             Image(systemName: direction > 0 ? "plus.circle" : "minus.circle")
-                .font(.system(size: 17))
+                .font(.dsSystem(size: 17))
                 .foregroundStyle(theme.accent.color)
         }
         .buttonStyle(.plain)
@@ -94,7 +94,7 @@ struct PanelHeader: View {
             HStack {
                 if let leading {
                     Button(leading.label, action: leading.action)
-                        .font(.subheadline)
+                        .font(.dsSubheadline)
                         .buttonStyle(.plain)
                         .foregroundStyle(theme.accent.color)
                 } else {
@@ -102,12 +102,12 @@ struct PanelHeader: View {
                 }
                 Spacer()
                 Text(title)
-                    .font(.headline)
+                    .font(.dsHeadline)
                     .foregroundStyle(theme.ink.color)
                 Spacer()
                 if let trailing {
                     Button(trailing.label, action: trailing.action)
-                        .font(.subheadline)
+                        .font(.dsSubheadline)
                         .buttonStyle(.plain)
                         .foregroundStyle(theme.accent.color)
                 } else {
@@ -194,7 +194,7 @@ struct PenSettingsPanel: View {
 
                 Divider().overlay(theme.separator.color)
 
-                Text("Color").font(.subheadline.weight(.medium)).foregroundStyle(theme.ink.color)
+                Text("Color").font(.dsSubheadline.weight(.medium)).foregroundStyle(theme.ink.color)
                 ColorSwatchRow(
                     swatches: toolState.inkPalette(theme: theme).map(\.hexString),
                     selection: colorBinding
@@ -208,9 +208,9 @@ struct PenSettingsPanel: View {
                     )) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Scribble to erase")
-                                .font(.subheadline).foregroundStyle(theme.ink.color)
+                                .font(.dsSubheadline).foregroundStyle(theme.ink.color)
                             Text("Scrub back and forth over something to rub it out.")
-                                .font(.caption).foregroundStyle(theme.inkSecondary.color)
+                                .font(.dsCaption).foregroundStyle(theme.inkSecondary.color)
                         }
                     }
                     Toggle(isOn: Binding(
@@ -219,9 +219,9 @@ struct PenSettingsPanel: View {
                     )) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Snap shapes")
-                                .font(.subheadline).foregroundStyle(theme.ink.color)
+                                .font(.dsSubheadline).foregroundStyle(theme.ink.color)
                             Text("Hold at the end of a stroke to straighten it into a shape.")
-                                .font(.caption).foregroundStyle(theme.inkSecondary.color)
+                                .font(.dsCaption).foregroundStyle(theme.inkSecondary.color)
                         }
                     }
                 }
@@ -311,7 +311,7 @@ struct TapePanel: View {
                 .disabled(toolState.tapeShape == .rectangle)
                 .opacity(toolState.tapeShape == .rectangle ? 0.45 : 1)
 
-                Text("Pattern").font(.subheadline.weight(.medium)).foregroundStyle(theme.ink.color)
+                Text("Pattern").font(.dsSubheadline.weight(.medium)).foregroundStyle(theme.ink.color)
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 10) {
                         ForEach(TapePattern.allCases) { pattern in
@@ -330,7 +330,7 @@ struct TapePanel: View {
 
                 Divider().overlay(theme.separator.color)
 
-                Text("Color").font(.subheadline.weight(.medium)).foregroundStyle(theme.ink.color)
+                Text("Color").font(.dsSubheadline.weight(.medium)).foregroundStyle(theme.ink.color)
                 ColorSwatchRow(
                     swatches: theme.coverPalette.prefix(9).map(\.hexString),
                     selection: $toolState.tapeColorHex,
@@ -346,7 +346,7 @@ struct TapePanel: View {
                 Label {
                     Text("Tap a strip to reveal what's under it, tap again to cover it. "
                          + "Long-press a strip to delete it, or set the eraser to “Tape only”.")
-                        .font(.caption)
+                        .font(.dsCaption)
                         .foregroundStyle(theme.inkSecondary.color)
                 } icon: {
                     Image(systemName: "questionmark.circle")
@@ -365,7 +365,7 @@ struct TapePanel: View {
         return Button { toolState.tapeShape = shape } label: {
             VStack(spacing: 6) {
                 Image(systemName: shape.symbolName)
-                    .font(.system(size: 19))
+                    .font(.dsSystem(size: 19))
                     .foregroundStyle(isOn ? theme.accent.color : theme.ink.color)
                     .frame(width: 52, height: 52)
                     .background(
@@ -377,7 +377,7 @@ struct TapePanel: View {
                         lineWidth: isOn ? 1.5 : 0.5
                     ))
                 Text(shape.displayName)
-                    .font(.caption2)
+                    .font(.dsCaption2)
                     .foregroundStyle(isOn ? theme.accent.color : theme.inkSecondary.color)
                     .lineLimit(1)
             }
@@ -390,7 +390,7 @@ struct TapePanel: View {
     ) -> some View {
         Button(action: action) {
             HStack {
-                Text(title).font(.subheadline).foregroundStyle(theme.ink.color)
+                Text(title).font(.dsSubheadline).foregroundStyle(theme.ink.color)
                 Spacer()
                 Image(systemName: systemImage).foregroundStyle(theme.ink.color)
             }
@@ -426,19 +426,19 @@ struct EraserPanel: View {
                 )
             case .stroke:
                 Text("Removes a whole stroke on contact. Undo brings it back.")
-                    .font(.subheadline).foregroundStyle(theme.inkSecondary.color)
+                    .font(.dsSubheadline).foregroundStyle(theme.inkSecondary.color)
             case .tapeOnly:
                 Text("Only lifts tape. Tap a strip to peel it off; the ink underneath is untouched.")
-                    .font(.subheadline).foregroundStyle(theme.inkSecondary.color)
+                    .font(.dsSubheadline).foregroundStyle(theme.inkSecondary.color)
             }
 
             Divider().overlay(theme.separator.color)
 
             Toggle(isOn: $toolState.scribbleToErase) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Scribble to erase").font(.subheadline).foregroundStyle(theme.ink.color)
+                    Text("Scribble to erase").font(.dsSubheadline).foregroundStyle(theme.ink.color)
                     Text("With any pen, scrub back and forth over something to rub it out.")
-                        .font(.caption).foregroundStyle(theme.inkSecondary.color)
+                        .font(.dsCaption).foregroundStyle(theme.inkSecondary.color)
                 }
             }
         }

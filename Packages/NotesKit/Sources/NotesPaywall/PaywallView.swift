@@ -53,13 +53,13 @@ public struct PaywallView: View {
     private var header: some View {
         VStack(spacing: 8) {
             Image(systemName: "sparkles")
-                .font(.system(size: 36, weight: .light))
+                .font(.dsSystem(size: 36, weight: .light))
                 .foregroundStyle(theme.accent.color)
             Text("ClassNotes Premium")
-                .font(.title2.weight(.bold))
+                .font(.dsTitle2.weight(.bold))
                 .foregroundStyle(theme.ink.color)
             Text("Everything in the free app stays free. Premium adds the studio.")
-                .font(.subheadline)
+                .font(.dsSubheadline)
                 .foregroundStyle(theme.inkSecondary.color)
                 .multilineTextAlignment(.center)
         }
@@ -71,7 +71,7 @@ public struct PaywallView: View {
             ForEach(orderedFeatures) { feature in
                 HStack(spacing: 12) {
                     Image(systemName: feature.symbolName)
-                        .font(.system(size: 17))
+                        .font(.dsSystem(size: 17))
                         .foregroundStyle(theme.accent.color)
                         .frame(width: 28)
                     Text(feature.displayName)
@@ -80,7 +80,7 @@ public struct PaywallView: View {
                     Spacer()
                     if feature.tier == .subscription {
                         Text("Subscription")
-                            .font(.caption2)
+                            .font(.dsCaption2)
                             .foregroundStyle(theme.inkSecondary.color)
                     }
                 }
@@ -101,12 +101,12 @@ public struct PaywallView: View {
     private var productButtons: some View {
         if entitlements.isPremium {
             Label("Premium is active", systemImage: "checkmark.seal.fill")
-                .font(.headline)
+                .font(.dsHeadline)
                 .foregroundStyle(theme.accent.color)
                 .padding(.vertical, 8)
         } else if entitlements.products.isEmpty {
             Text("Purchases are unavailable right now. You can restore an existing purchase below.")
-                .font(.footnote)
+                .font(.dsFootnote)
                 .foregroundStyle(theme.inkSecondary.color)
                 .multilineTextAlignment(.center)
         } else {
@@ -118,18 +118,18 @@ public struct PaywallView: View {
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(product.displayName)
-                                    .font(.body.weight(.semibold))
+                                    .font(.dsBody.weight(.semibold))
                                 if product.id == EntitlementService.lifetimeProductID {
                                     Text("One-time purchase · all local features")
-                                        .font(.caption)
+                                        .font(.dsCaption)
                                 } else {
                                     Text("Includes sync & AI features")
-                                        .font(.caption)
+                                        .font(.dsCaption)
                                 }
                             }
                             Spacer()
                             Text(product.displayPrice)
-                                .font(.body.weight(.semibold))
+                                .font(.dsBody.weight(.semibold))
                         }
                         .frame(maxWidth: .infinity)
                     }
@@ -138,7 +138,7 @@ public struct PaywallView: View {
                 }
                 if let purchaseError {
                     Text(purchaseError)
-                        .font(.footnote)
+                        .font(.dsFootnote)
                         .foregroundStyle(.red)
                 }
             }
@@ -155,7 +155,7 @@ public struct PaywallView: View {
             .buttonStyle(.glass)
             if let restoreError = entitlements.lastRestoreError {
                 Text(restoreError)
-                    .font(.footnote)
+                    .font(.dsFootnote)
                     .foregroundStyle(.red)
             }
         }

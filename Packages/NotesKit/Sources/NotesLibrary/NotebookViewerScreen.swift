@@ -89,7 +89,7 @@ public struct NotebookViewerScreen: View {
                 zoomedPage = page
             } label: {
                 Image(systemName: "arrow.up.left.and.arrow.down.right")
-                    .font(.footnote.weight(.semibold))
+                    .font(.dsFootnote.weight(.semibold))
                     .foregroundStyle(theme.ink.color)
                     .padding(8)
                     .dsGlass(in: Circle())
@@ -240,7 +240,7 @@ private struct ZoomablePageView: View {
                 dismiss()
             } label: {
                 Image(systemName: "xmark")
-                    .font(.headline)
+                    .font(.dsHeadline)
                     .foregroundStyle(theme.ink.color)
                     .padding(12)
                     .dsGlass(in: Circle())

@@ -85,7 +85,7 @@ final class LiveBeautifier {
         fontName: String,
         pageSize: CGSize,
         drawing: @escaping @MainActor () -> PKDrawing?,
-        apply: @escaping @MainActor (BeautifyPlan, PKDrawing) async -> Void
+        apply: @escaping @MainActor (BeautifyPlan, PKDrawing) async -> Bool
     ) {
         guard settings.isEnabled else { return }
         settleTask?.cancel()
@@ -107,7 +107,7 @@ final class LiveBeautifier {
         fontName: String,
         pageSize: CGSize,
         drawing: @escaping @MainActor () -> PKDrawing?,
-        apply: @escaping @MainActor (BeautifyPlan, PKDrawing) async -> Void
+        apply: @escaping @MainActor (BeautifyPlan, PKDrawing) async -> Bool
     ) async {
         settleTask?.cancel()
         await run(
@@ -122,7 +122,7 @@ final class LiveBeautifier {
         fontName: String,
         pageSize: CGSize,
         drawing: @MainActor () -> PKDrawing?,
-        apply: @MainActor (BeautifyPlan, PKDrawing) async -> Void
+        apply: @MainActor (BeautifyPlan, PKDrawing) async -> Bool
     ) async {
         guard let current = drawing(), !current.strokes.isEmpty else { return }
         isWorking = true
@@ -147,8 +147,12 @@ final class LiveBeautifier {
         let remaining = latest.strokes.enumerated()
             .filter { !plan.consumedStrokes.contains($0.offset) }
             .map(\.element)
-        runs[pageID] = plan.runs
-        await apply(plan, PKDrawing(strokes: remaining))
+        // Only remember the new runs if the canvas actually took the pass. A
+        // refused apply (the pencil came back down mid-pass) must leave the page's
+        // run list alone, or the next pass would append to text that isn't there.
+        if await apply(plan, PKDrawing(strokes: remaining)) {
+            runs[pageID] = plan.runs
+        }
     }
 
     // MARK: - Recognition
@@ -172,7 +176,9 @@ final class LiveBeautifier {
                 .intersection(CGRect(origin: .zero, size: pageSize))
             guard region.width > 4, region.height > 4 else { continue }
 
-            let image = lineDrawing.image(from: region, scale: Self.renderScale(for: bounds))
+            let image = Self.recognitionImage(
+                of: lineDrawing, region: region, scale: Self.renderScale(for: bounds)
+            )
             let text = (try? await ocr.recognizeText(in: image, languages: [settings.language])) ?? ""
             let cleaned = text
                 .replacingOccurrences(of: "\n", with: " ")
@@ -187,6 +193,37 @@ final class LiveBeautifier {
             ))
         }
         return result
+    }
+
+    /// The image Vision actually reads: the line's ink re-inked to solid black on
+    /// an OPAQUE WHITE page.
+    ///
+    /// `PKDrawing.image(from:scale:)` hands back the ink in its own colour on a
+    /// TRANSPARENT background. Recognition on that is a coin toss — flattening the
+    /// alpha can put dark ink on a dark field (and on a dark theme the ink is light
+    /// to begin with), so passes came back with no text at all and nothing was ever
+    /// typeset. Forcing black-on-white is what makes beautification fire reliably.
+    static func recognitionImage(
+        of drawing: PKDrawing, region: CGRect, scale: CGFloat
+    ) -> UIImage {
+        let inked = PKDrawing(strokes: drawing.strokes.map { stroke in
+            PKStroke(
+                ink: PKInk(stroke.ink.inkType, color: .black),
+                path: stroke.path,
+                transform: stroke.transform,
+                mask: stroke.mask
+            )
+        })
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = scale
+        format.opaque = true
+        let size = region.size
+        return UIGraphicsImageRenderer(size: size, format: format).image { context in
+            UIColor.white.setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+            inked.image(from: region, scale: scale)
+                .draw(in: CGRect(origin: .zero, size: size))
+        }
     }
 
     /// Small writing needs more pixels; huge writing needs fewer. Keeps the crop

@@ -32,6 +32,42 @@ public enum APIError: Error, Equatable, Sendable {
     case notAuthenticated
 }
 
+/// What the ClassMate ClassNotes tab changed, for this device to apply.
+///
+/// The library mirror is push-only in the normal case, so managing notebooks from
+/// ClassMate needs this one channel back: without it a delete there would be
+/// undone by the next launch's push, and a rename would silently revert.
+public struct LibraryChanges: Decodable, Sendable, Equatable {
+    /// Notebooks deleted in ClassMate. This device removes its local copies.
+    public let deletedIds: [String]
+    /// Notebooks renamed / re-shelved in ClassMate.
+    public let edited: [Edit]
+
+    public struct Edit: Decodable, Sendable, Equatable {
+        public let id: String
+        public let title: String
+        public let shelfId: String?
+        public let coverColorHex: String
+
+        public init(id: String, title: String, shelfId: String?, coverColorHex: String) {
+            self.id = id
+            self.title = title
+            self.shelfId = shelfId
+            self.coverColorHex = coverColorHex
+        }
+    }
+
+    public init(deletedIds: [String], edited: [Edit]) {
+        self.deletedIds = deletedIds
+        self.edited = edited
+    }
+
+    /// Every id in the payload — what gets acknowledged once applied.
+    public var allIDs: [String] { deletedIds + edited.map(\.id) }
+
+    public var isEmpty: Bool { deletedIds.isEmpty && edited.isEmpty }
+}
+
 /// Upload body for `PUT /classnotes/notebooks/:id` — the notebook metadata the
 /// ClassMate "ClassNotes" tab renders. The id travels in the URL, so it is NOT
 /// part of the body (the backend rejects unknown fields).
@@ -304,6 +340,31 @@ public struct ClassMateAPIClient: Sendable {
     /// the ClassMate ClassNotes tab shows real content, not blank paper.
     public func putNotebookPages(id: String, body: NotebookPagesBody, token: String) async throws {
         try await putJSON(path: "/classnotes/notebooks/\(id)/pages", body: body, token: token)
+    }
+
+    /// `GET /classnotes/changes` — what the ClassMate ClassNotes tab changed since
+    /// this device last acknowledged: notebooks deleted there, and notebooks
+    /// renamed / re-shelved there. Pulled at launch BEFORE pushing, so a rename
+    /// made in ClassMate isn't overwritten by the older local copy.
+    public func fetchLibraryChanges(token: String) async throws -> LibraryChanges {
+        let (data, status) = try await send(
+            request(path: "/classnotes/changes", method: "GET", token: token)
+        )
+        try ensureSuccess(status)
+        guard let decoded = try? JSONDecoder().decode(LibraryChanges.self, from: data) else {
+            throw APIError.decoding
+        }
+        return decoded
+    }
+
+    /// `POST /classnotes/changes/ack` — these ids are applied locally, so the
+    /// server can purge the tombstones and hand authority back to this device.
+    public func acknowledgeChanges(ids: [String], token: String) async throws {
+        guard !ids.isEmpty else { return }
+        var req = request(path: "/classnotes/changes/ack", method: "POST", token: token)
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["ids": ids])
+        let (_, status) = try await send(req)
+        try ensureSuccess(status)
     }
 
     /// `DELETE /classnotes/notebooks/:id`.

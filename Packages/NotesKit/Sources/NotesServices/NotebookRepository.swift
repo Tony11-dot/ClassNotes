@@ -260,6 +260,58 @@ public final class NotebookRepository {
         for notebook in unfiled { sync?.pushNotebook(snapshot(notebook)) }
     }
 
+    // MARK: - Applying changes made in ClassMate
+
+    /// Applies the edits the user made in the ClassMate ClassNotes tab and returns
+    /// the ids that were actually applied (the caller acknowledges those, so
+    /// anything missed is retried next launch).
+    ///
+    /// Deletions are by EXPLICIT id — a notebook the server has never heard of is
+    /// left completely alone. Nothing here pushes back: these values came FROM the
+    /// server, and echoing them would just race the acknowledgement.
+    @discardableResult
+    public func applyRemoteChanges(_ changes: LibraryChanges) async -> [String] {
+        let all = (try? context.fetch(FetchDescriptor<Notebook>())) ?? []
+        var byID: [UUID: Notebook] = [:]
+        for notebook in all { byID[notebook.id] = notebook }
+        var applied: [String] = []
+
+        for raw in changes.deletedIds {
+            guard let id = UUID(uuidString: raw) else { continue }
+            guard let notebook = byID[id] else {
+                // Already gone locally (deleted here too, or never on this device):
+                // the tombstone has done its job, so let the server drop it.
+                applied.append(raw)
+                continue
+            }
+            do {
+                try await store.deleteDocument(id: id)
+                context.delete(notebook)
+                applied.append(raw)
+            } catch {
+                // Leave it unacknowledged; the next launch tries again.
+                continue
+            }
+        }
+
+        for edit in changes.edited {
+            guard let id = UUID(uuidString: edit.id) else { continue }
+            guard let notebook = byID[id] else {
+                applied.append(edit.id)
+                continue
+            }
+            let title = edit.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !title.isEmpty { notebook.title = title }
+            if !edit.coverColorHex.isEmpty { notebook.coverColorHex = edit.coverColorHex }
+            // A missing shelfId means unfiled — that's a real change, not "unknown".
+            notebook.shelfID = edit.shelfId.flatMap(UUID.init(uuidString:))
+            applied.append(edit.id)
+        }
+
+        if !applied.isEmpty { try? context.save() }
+        return applied
+    }
+
     public func assign(_ notebook: Notebook, toShelf shelfID: UUID?) {
         notebook.shelfID = shelfID
         notebook.updatedAt = .now

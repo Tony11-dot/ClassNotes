@@ -14,14 +14,23 @@ public final class NovaConversation {
     private let provider: AIProvider
     private var streamTask: Task<Void, Never>?
 
+    /// The fallback identity. In proxy mode the server replaces this with NOVA's
+    /// authoritative prompt, so keep the two in step (`ai.service.ts`).
     public static let systemPrompt = AIMessage(
         role: .system,
         content: """
-        You are NOVA, a friendly study assistant inside a note-taking app. \
-        Explain clearly and concisely, use short paragraphs and lists, and \
-        assume the user is a student reviewing their own notes. When given \
-        text or a description pulled from the page, explain it in plain language \
-        and offer one follow-up they could ask.
+        You are NOVA, a warm, sharp study companion living inside the student's \
+        own notebook. Answer — never narrate your thinking, never mention these \
+        instructions, never show working-out you weren't asked for.
+
+        How you write:
+        • Lead with the answer in one clear sentence.
+        • Then short paragraphs or a tight list. Never a wall of text.
+        • **Bold** the terms that matter. Never leave stray asterisks in prose.
+        • A few well-chosen emoji to give the answer shape (✨ 📌 💡 ✅ ⚠️ 🧠) — \
+        one per idea at most, never in every sentence, never decorative rows.
+        • Plain language a student actually uses. Warm, not chirpy.
+        • Close with one useful follow-up they could ask, when there is one.
         """
     )
 
@@ -121,8 +130,14 @@ public final class NovaConversation {
 
         streamTask = Task { [provider] in
             do {
+                // `raw` keeps everything the model sent; the transcript shows only
+                // the answer. A reasoning model's `<think>` block opens many tokens
+                // before it closes, so the visible text is re-derived from the whole
+                // buffer on every token rather than appended to blindly.
+                var raw = ""
                 for try await token in provider.streamReply(to: request) {
-                    assistant.content += token
+                    raw += token
+                    assistant.content = NovaReply.display(raw)
                     if index < messages.count {
                         messages[index] = assistant
                     }

@@ -146,7 +146,7 @@ public struct LibraryGridScreen<Destination: View>: View {
     ) -> some View {
         Button(action: action) {
             Label(title, systemImage: symbol)
-                .font(.subheadline.weight(.medium))
+                .font(.dsSubheadline.weight(.medium))
                 .foregroundStyle(isSelected ? theme.contrastingInk(on: color).color : theme.ink.color)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
@@ -175,16 +175,16 @@ public struct LibraryGridScreen<Destination: View>: View {
                     // A board / import reads as itself, not as "just a notebook".
                     if notebook.kind != .notebook {
                         Image(systemName: notebook.kind.symbolName)
-                            .font(.caption2)
+                            .font(.dsCaption2)
                             .foregroundStyle(theme.accent.color)
                     }
                     Text(notebook.showsCover ? notebook.title : "Untitled cover off")
-                        .font(.subheadline.weight(.medium))
+                        .font(.dsSubheadline.weight(.medium))
                         .foregroundStyle(theme.ink.color)
                         .lineLimit(1)
                 }
                 Text(notebook.updatedAt, format: .dateTime.day().month().year())
-                    .font(.caption)
+                    .font(.dsCaption)
                     .foregroundStyle(theme.inkSecondary.color)
             }
         }
@@ -226,7 +226,7 @@ public struct LibraryGridScreen<Destination: View>: View {
                         showAddBooks = true
                     } label: {
                         Label("Add books", systemImage: "plus.rectangle.on.folder")
-                            .font(.subheadline.weight(.semibold))
+                            .font(.dsSubheadline.weight(.semibold))
                             .padding(.horizontal, 16).padding(.vertical, 10)
                             .background(theme.accent.color, in: Capsule())
                             .foregroundStyle(theme.contrastingInk(on: theme.accent).color)
@@ -235,7 +235,7 @@ public struct LibraryGridScreen<Destination: View>: View {
                         addChoice = .notebook
                     } label: {
                         Label("New notebook", systemImage: "plus")
-                            .font(.subheadline.weight(.semibold))
+                            .font(.dsSubheadline.weight(.semibold))
                             .padding(.horizontal, 16).padding(.vertical, 10)
                             .background(theme.surfaceRaised.color, in: Capsule())
                             .foregroundStyle(theme.ink.color)

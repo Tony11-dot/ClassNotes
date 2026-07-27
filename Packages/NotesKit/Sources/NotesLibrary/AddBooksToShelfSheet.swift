@@ -68,13 +68,13 @@ struct AddBooksToShelfSheet: View {
                     )
                     .shadow(color: .black.opacity(0.16), radius: 10, y: 5)
                     Image(systemName: "plus.circle.fill")
-                        .font(.title3)
+                        .font(.dsTitle3)
                         .foregroundStyle(theme.accent.color)
                         .background(Circle().fill(.white))
                         .padding(8)
                 }
                 Text(notebook.title)
-                    .font(.caption).foregroundStyle(theme.ink.color).lineLimit(1)
+                    .font(.dsCaption).foregroundStyle(theme.ink.color).lineLimit(1)
             }
         }
         .buttonStyle(.plain)

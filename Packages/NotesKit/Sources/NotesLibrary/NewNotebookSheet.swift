@@ -7,10 +7,16 @@ import SwiftUI
 
 /// The New Notebook screen.
 ///
-/// Layout, top to bottom: a Cancel / title / Create bar; a row with the live cover
-/// and paper previews beside the title, cover switch, direction and size; then
-/// every template, grouped; then paper colour, line colour and rule spacing along
-/// the bottom. Everything previews live, so what you see is what gets created.
+/// ONE scroll, top to bottom: the Cancel / title / Create bar is the only pinned
+/// part; below it the cover and paper previews (two big rectangles, side by side),
+/// then the title / cover / direction / size settings, then every template, then
+/// paper colour, line colour and rule spacing. Everything previews live, so what
+/// you see is what gets created.
+///
+/// Why one scroll: with the settings pinned at the top and the colour pickers
+/// pinned at the bottom, a short window squeezed both — labels wrapped onto two
+/// lines and the colour rows were cut off with no way to reach them. Now every
+/// section is full width, every label is one line, and the whole page moves.
 struct NewNotebookSheet: View {
     @Environment(AppServices.self) private var services
     @Environment(\.theme) private var theme
@@ -60,11 +66,21 @@ struct NewNotebookSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             topBar
-            summaryRow
             Divider().overlay(theme.separator.color)
-            templateGallery
-            Divider().overlay(theme.separator.color)
-            bottomBar
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    previewRow
+                    detailsCard
+                    if kind != .whiteboard { geometryCard }
+                    templateSection
+                    colorSection
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 18)
+                .padding(.bottom, 28)
+                .frame(maxWidth: 900, alignment: .leading)
+                .frame(maxWidth: .infinity)
+            }
         }
         .background(theme.surface.color)
         .onAppear {
@@ -86,7 +102,7 @@ struct NewNotebookSheet: View {
     private var topBar: some View {
         HStack {
             Button("Cancel") { dismiss() }
-                .font(.headline)
+                .font(.dsHeadline)
                 .foregroundStyle(theme.ink.color)
                 .padding(.horizontal, 18).padding(.vertical, 10)
                 .background(theme.surfaceRaised.color, in: Capsule())
@@ -94,7 +110,7 @@ struct NewNotebookSheet: View {
 
             Spacer()
             Text(kind == .whiteboard ? "New Whiteboard" : "New Notebook")
-                .font(.title3.weight(.bold))
+                .font(.dsTitle3.weight(.bold))
                 .foregroundStyle(theme.ink.color)
             Spacer()
 
@@ -102,7 +118,7 @@ struct NewNotebookSheet: View {
                 create()
             } label: {
                 Text("Create")
-                    .font(.headline)
+                    .font(.dsHeadline)
                     .foregroundStyle(theme.contrastingInk(on: theme.accent).color)
                     .padding(.horizontal, 26).padding(.vertical, 12)
                     .background(theme.accent.color, in: Capsule())
@@ -115,42 +131,32 @@ struct NewNotebookSheet: View {
         .padding(.vertical, 14)
     }
 
-    // MARK: - Summary row (cover · paper · settings)
+    // MARK: - Previews (two big rectangles, side by side)
 
-    private var summaryRow: some View {
-        HStack(alignment: .top, spacing: 18) {
-            if kind != .whiteboard {
-                coverPreview
-            }
+    private var previewRow: some View {
+        HStack(alignment: .top, spacing: 16) {
+            if kind != .whiteboard { coverPreview }
             paperPreview
-            VStack(spacing: 14) {
-                detailsCard
-                if kind != .whiteboard {
-                    geometryCard
-                }
-            }
-            .frame(maxWidth: .infinity)
         }
-        .padding(18)
+        .frame(maxWidth: .infinity)
     }
 
+    /// The cover, in the same big rectangular card as the paper preview — the two
+    /// entry buttons now match instead of the cover floating loose beside it.
     private var coverPreview: some View {
         Button {
             showCoverPicker = true
         } label: {
-            VStack(spacing: 8) {
+            previewCard(
+                title: coverDesign.displayName,
+                caption: "Cover",
+                accessory: "chevron.right"
+            ) {
                 NotebookCoverView(
                     title: previewTitle, coverColor: coverColor,
                     design: coverDesign, showsTitle: showsCover
                 )
-                .frame(width: 132)
                 .shadow(color: .black.opacity(0.18), radius: 10, y: 5)
-                Text(coverDesign.displayName)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(theme.ink.color)
-                Text("Cover")
-                    .font(.caption)
-                    .foregroundStyle(theme.inkSecondary.color)
             }
         }
         .buttonStyle(.plain)
@@ -158,24 +164,53 @@ struct NewNotebookSheet: View {
     }
 
     private var paperPreview: some View {
-        VStack(spacing: 8) {
+        previewCard(title: style.template.displayName, caption: "Template") {
             PageTemplateView(style: style)
                 .aspectRatio(PageTemplateView.aspectRatio(of: style), contentMode: .fit)
-                .frame(height: 176)
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .strokeBorder(theme.separator.color, lineWidth: 0.5)
                 )
                 .shadow(color: .black.opacity(0.12), radius: 8, y: 4)
-            Text(style.template.displayName)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(theme.ink.color)
-            Text("Template")
-                .font(.caption)
-                .foregroundStyle(theme.inkSecondary.color)
+        }
+    }
+
+    /// One preview rectangle: the art centred in a fixed-height well, then a
+    /// single-line name and caption. Both cards are the same size whatever they
+    /// hold, and long names shrink rather than wrapping onto a second line.
+    private func previewCard<Content: View>(
+        title: String,
+        caption: String,
+        accessory: String? = nil,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(spacing: 10) {
+            content()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(height: 190)
+            HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(.dsSubheadline.weight(.semibold))
+                        .foregroundStyle(theme.ink.color)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                    Text(caption)
+                        .font(.dsCaption)
+                        .foregroundStyle(theme.inkSecondary.color)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                if let accessory {
+                    Image(systemName: accessory)
+                        .font(.dsCaption.weight(.bold))
+                        .foregroundStyle(theme.inkSecondary.color)
+                }
+            }
         }
         .padding(14)
+        .frame(maxWidth: .infinity)
         .background(theme.surfaceRaised.color, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
@@ -183,12 +218,15 @@ struct NewNotebookSheet: View {
         VStack(spacing: 0) {
             HStack {
                 Text("Title")
-                    .font(.headline)
+                    .font(.dsHeadline)
                     .foregroundStyle(theme.ink.color)
-                    .frame(width: 92, alignment: .leading)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .frame(minWidth: 68, alignment: .leading)
                 TextField(placeholderTitle, text: $title)
-                    .font(.title3)
+                    .font(.dsTitle3)
                     .foregroundStyle(theme.ink.color)
+                    .lineLimit(1)
             }
             .padding(.horizontal, 18).padding(.vertical, 14)
 
@@ -196,7 +234,7 @@ struct NewNotebookSheet: View {
                 Divider().overlay(theme.separator.color).padding(.leading, 18)
                 HStack {
                     Text("Cover")
-                        .font(.headline)
+                        .font(.dsHeadline)
                         .foregroundStyle(theme.ink.color)
                     Spacer()
                     Toggle("", isOn: $showsCover).labelsHidden()
@@ -229,41 +267,44 @@ struct NewNotebookSheet: View {
     ) -> some View {
         HStack {
             Text(label)
-                .font(.headline)
+                .font(.dsHeadline)
                 .foregroundStyle(theme.ink.color)
-            Spacer()
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+            Spacer(minLength: 8)
             content()
                 .pickerStyle(.menu)
                 .labelsHidden()
                 .tint(theme.ink.color)
+                .fixedSize()
         }
         .padding(.horizontal, 18).padding(.vertical, 8)
     }
 
     // MARK: - Templates
 
-    private var templateGallery: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                ForEach(PageTemplate.Family.allCases) { family in
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text(family.displayName)
-                            .font(.title3.weight(.bold))
-                            .foregroundStyle(theme.ink.color)
-                        LazyVGrid(
-                            columns: [GridItem(.adaptive(minimum: 118, maximum: 190), spacing: 22)],
-                            spacing: 20
-                        ) {
-                            ForEach(family.templates) { template in
-                                templateChip(template)
-                            }
+    /// Inline in the page's own scroll — a nested ScrollView here was the reason
+    /// only the middle of the screen moved.
+    private var templateSection: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            ForEach(PageTemplate.Family.allCases) { family in
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(family.displayName)
+                        .font(.dsHeadline)
+                        .foregroundStyle(theme.ink.color)
+                        .lineLimit(1)
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 108, maximum: 168), spacing: 16)],
+                        spacing: 16
+                    ) {
+                        ForEach(family.templates) { template in
+                            templateChip(template)
                         }
                     }
                 }
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 20)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func templateChip(_ template: PageTemplate) -> some View {
@@ -287,7 +328,7 @@ struct NewNotebookSheet: View {
                         )
                     if isSelected {
                         Image(systemName: "checkmark")
-                            .font(.system(size: 13, weight: .bold))
+                            .font(.dsSystem(size: 13, weight: .bold))
                             .foregroundStyle(theme.contrastingInk(on: theme.accent).color)
                             .frame(width: 26, height: 26)
                             .background(theme.accent.color, in: Circle())
@@ -296,42 +337,31 @@ struct NewNotebookSheet: View {
                 }
                 .shadow(color: .black.opacity(isSelected ? 0.14 : 0.06), radius: 8, y: 4)
                 Text(template.displayName)
-                    .font(.subheadline.weight(isSelected ? .semibold : .regular))
+                    .font(.dsSubheadline.weight(isSelected ? .semibold : .regular))
                     .foregroundStyle(isSelected ? theme.ink.color : theme.inkSecondary.color)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
             }
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
-    // MARK: - Bottom bar (colors + spacing)
+    // MARK: - Colours + spacing
 
-    private var bottomBar: some View {
-        HStack(alignment: .top, spacing: 26) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Paper Color")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(theme.inkSecondary.color)
+    /// Full-width rows, stacked. Side by side, each colour row was squeezed to a
+    /// third of the window and its swatches ran off the edge with nothing to say so.
+    private var colorSection: some View {
+        VStack(spacing: 0) {
+            settingRow("Paper colour") {
                 PaperSwatchRow(selection: $style.paperColorHex)
             }
-            Divider().frame(height: 52).overlay(theme.separator.color)
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Line Color")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(theme.inkSecondary.color)
+            Divider().overlay(theme.separator.color).padding(.leading, 18)
+            settingRow("Line colour") {
                 LineColorRow(selection: $style.lineColorHex)
             }
-            Divider().frame(height: 52).overlay(theme.separator.color)
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text("Spacing")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(theme.inkSecondary.color)
-                    Spacer()
-                    Text("\(style.lineSpacingSteps)")
-                        .font(.subheadline.monospacedDigit())
-                        .foregroundStyle(theme.ink.color)
-                }
+            Divider().overlay(theme.separator.color).padding(.leading, 18)
+            settingRow("Line spacing", trailing: "\(style.lineSpacingSteps)") {
                 Slider(
                     value: Binding(
                         get: { Double(style.lineSpacingSteps) },
@@ -343,11 +373,31 @@ struct NewNotebookSheet: View {
                 .disabled(!style.template.honorsLineSpacing)
                 .opacity(style.template.honorsLineSpacing ? 1 : 0.4)
             }
-            .frame(maxWidth: 260)
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 16)
-        .background(theme.surface.color)
+        .background(theme.surfaceRaised.color, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    /// A one-line label with its control on the row below, full width.
+    private func settingRow<Content: View>(
+        _ label: String, trailing: String? = nil, @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(label)
+                    .font(.dsSubheadline.weight(.semibold))
+                    .foregroundStyle(theme.inkSecondary.color)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                if let trailing {
+                    Text(trailing)
+                        .font(.dsSubheadline.monospacedDigit())
+                        .foregroundStyle(theme.ink.color)
+                }
+            }
+            content()
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
     }
 
     // MARK: - Create

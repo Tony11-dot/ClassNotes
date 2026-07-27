@@ -41,10 +41,10 @@ struct PageManagerView: View {
 
     private var header: some View {
         HStack {
-            Text("Pages").font(.headline).foregroundStyle(theme.ink.color)
+            Text("Pages").font(.dsHeadline).foregroundStyle(theme.ink.color)
             Spacer()
             Text("\(model.pages.count)")
-                .font(.subheadline).foregroundStyle(theme.inkSecondary.color)
+                .font(.dsSubheadline).foregroundStyle(theme.inkSecondary.color)
             Button { isVisible = false } label: {
                 Image(systemName: "sidebar.left").foregroundStyle(theme.ink.color)
             }
@@ -66,7 +66,7 @@ struct PageManagerView: View {
                 )
                 .shadow(color: .black.opacity(0.12), radius: 4, y: 2)
             Text("\(number)")
-                .font(.caption.weight(isCurrent ? .bold : .regular))
+                .font(.dsCaption.weight(isCurrent ? .bold : .regular))
                 .foregroundStyle(isCurrent ? theme.accent.color : theme.inkSecondary.color)
         }
         .contentShape(Rectangle())
@@ -110,7 +110,7 @@ struct PageManagerView: View {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .strokeBorder(theme.separator.color, style: StrokeStyle(lineWidth: 1, dash: [5]))
                 .aspectRatio(PageGeometry.size.width / PageGeometry.size.height, contentMode: .fit)
-                .overlay(Image(systemName: "plus").font(.title3).foregroundStyle(theme.accent.color))
+                .overlay(Image(systemName: "plus").font(.dsTitle3).foregroundStyle(theme.accent.color))
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Add page")

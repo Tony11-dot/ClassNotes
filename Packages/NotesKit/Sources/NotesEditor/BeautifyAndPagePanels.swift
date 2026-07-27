@@ -26,20 +26,20 @@ struct BeautifyPanel: View {
 
                 Toggle(isOn: $toolState.beautify.isEnabled) {
                     Text("Real-time handwriting beautification")
-                        .font(.subheadline).foregroundStyle(theme.ink.color)
+                        .font(.dsSubheadline).foregroundStyle(theme.ink.color)
                 }
 
                 Text("Write normally. When you pause, each line is read on-device and "
                      + "re-set in your font, right where you wrote it.")
-                    .font(.caption).foregroundStyle(theme.inkSecondary.color)
+                    .font(.dsCaption).foregroundStyle(theme.inkSecondary.color)
 
                 Divider().overlay(theme.separator.color)
 
                 HStack {
-                    Text("Writing font").font(.subheadline).foregroundStyle(theme.ink.color)
+                    Text("Writing font").font(.dsSubheadline).foregroundStyle(theme.ink.color)
                     Spacer()
                     Text(selectedFont.displayName)
-                        .font(.subheadline).foregroundStyle(theme.inkSecondary.color)
+                        .font(.dsSubheadline).foregroundStyle(theme.inkSecondary.color)
                         .lineLimit(1)
                 }
                 FontRow(selected: $toolState.beautify.fontID, custom: services.fontStore.fonts)
@@ -47,16 +47,16 @@ struct BeautifyPanel: View {
                     showFontImporter = true
                 } label: {
                     Label("Add font (OTF / TTF)", systemImage: "plus")
-                        .font(.caption.weight(.semibold))
+                        .font(.dsCaption.weight(.semibold))
                         .foregroundStyle(theme.accent.color)
                 }
                 .buttonStyle(.plain)
 
                 Toggle(isOn: $toolState.beautify.dynamicBold) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Dynamic Bold").font(.subheadline).foregroundStyle(theme.ink.color)
+                        Text("Dynamic Bold").font(.dsSubheadline).foregroundStyle(theme.ink.color)
                         Text("Press harder and the typeset words come out heavier.")
-                            .font(.caption).foregroundStyle(theme.inkSecondary.color)
+                            .font(.dsCaption).foregroundStyle(theme.inkSecondary.color)
                     }
                 }
 
@@ -66,13 +66,13 @@ struct BeautifyPanel: View {
                     showLanguages = true
                 } label: {
                     HStack {
-                        Text("Writing language").font(.subheadline).foregroundStyle(theme.ink.color)
+                        Text("Writing language").font(.dsSubheadline).foregroundStyle(theme.ink.color)
                         Spacer()
                         Text(BeautifyLanguage.named(toolState.beautify.language).displayName)
-                            .font(.subheadline).foregroundStyle(theme.inkSecondary.color)
+                            .font(.dsSubheadline).foregroundStyle(theme.inkSecondary.color)
                             .lineLimit(1)
                         Image(systemName: "chevron.right")
-                            .font(.caption).foregroundStyle(theme.inkSecondary.color)
+                            .font(.dsCaption).foregroundStyle(theme.inkSecondary.color)
                     }
                     .contentShape(Rectangle())
                 }
@@ -82,7 +82,7 @@ struct BeautifyPanel: View {
 
                 Toggle(isOn: $toolState.beautify.unifySizeAndSpacing) {
                     Text("Unify Font Size & Line Spacing")
-                        .font(.subheadline).foregroundStyle(theme.ink.color)
+                        .font(.dsSubheadline).foregroundStyle(theme.ink.color)
                 }
 
                 if toolState.beautify.unifySizeAndSpacing {
@@ -104,7 +104,7 @@ struct BeautifyPanel: View {
                     )
                 } else {
                     Text("Each line keeps the size you wrote it at.")
-                        .font(.caption).foregroundStyle(theme.inkSecondary.color)
+                        .font(.dsCaption).foregroundStyle(theme.inkSecondary.color)
                 }
 
                 PanelSlider(
@@ -120,7 +120,7 @@ struct BeautifyPanel: View {
                     onBeautifyNow()
                 } label: {
                     Label("Beautify this page now", systemImage: "text.badge.checkmark")
-                        .font(.subheadline.weight(.semibold))
+                        .font(.dsSubheadline.weight(.semibold))
                         .frame(maxWidth: .infinity, minHeight: 38)
                 }
                 .buttonStyle(.glassProminent)
@@ -238,9 +238,9 @@ struct TextBoxPanel: View {
         VStack(alignment: .leading, spacing: 14) {
             PanelHeader(title: "Text")
             Text("Tap anywhere on the page to drop a text box, then type.")
-                .font(.caption).foregroundStyle(theme.inkSecondary.color)
+                .font(.dsCaption).foregroundStyle(theme.inkSecondary.color)
 
-            Text("Font").font(.subheadline.weight(.medium)).foregroundStyle(theme.ink.color)
+            Text("Font").font(.dsSubheadline.weight(.medium)).foregroundStyle(theme.ink.color)
             FontRow(selected: $toolState.textFontID, custom: services.fontStore.fonts)
 
             PanelSlider(
@@ -252,7 +252,7 @@ struct TextBoxPanel: View {
                 showsSteppers: true
             )
 
-            Text("Color").font(.subheadline.weight(.medium)).foregroundStyle(theme.ink.color)
+            Text("Color").font(.dsSubheadline.weight(.medium)).foregroundStyle(theme.ink.color)
             ColorSwatchRow(
                 swatches: toolState.inkPalette(theme: theme).map(\.hexString),
                 selection: $toolState.textColorHex,
@@ -281,7 +281,7 @@ struct PageSettingsPanel: View {
             VStack(alignment: .leading, spacing: 16) {
                 PanelHeader(title: "Page")
 
-                Text("Paper").font(.subheadline.weight(.medium)).foregroundStyle(theme.ink.color)
+                Text("Paper").font(.dsSubheadline.weight(.medium)).foregroundStyle(theme.ink.color)
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         ForEach(PageTemplate.allCases) { template in
@@ -301,15 +301,15 @@ struct PageSettingsPanel: View {
                     )
                 }
 
-                Text("Line color").font(.subheadline.weight(.medium)).foregroundStyle(theme.ink.color)
+                Text("Line color").font(.dsSubheadline.weight(.medium)).foregroundStyle(theme.ink.color)
                 LineColorRow(selection: lineColorBinding)
 
-                Text("Paper color").font(.subheadline.weight(.medium)).foregroundStyle(theme.ink.color)
+                Text("Paper color").font(.dsSubheadline.weight(.medium)).foregroundStyle(theme.ink.color)
                 PaperSwatchRow(selection: paperColorBinding)
 
                 Divider().overlay(theme.separator.color)
 
-                Text("Margin line").font(.subheadline.weight(.medium)).foregroundStyle(theme.ink.color)
+                Text("Margin line").font(.dsSubheadline.weight(.medium)).foregroundStyle(theme.ink.color)
                 Picker("Margin", selection: marginPositionBinding) {
                     ForEach(PageMargin.Position.allCases) { Text($0.displayName).tag($0) }
                 }
@@ -325,7 +325,7 @@ struct PageSettingsPanel: View {
                     if let pageID { Task { await model.applyStyleToAllPages(from: pageID) } }
                 } label: {
                     Label("Apply to every page", systemImage: "square.on.square")
-                        .font(.subheadline.weight(.semibold))
+                        .font(.dsSubheadline.weight(.semibold))
                         .frame(maxWidth: .infinity, minHeight: 36)
                 }
                 .buttonStyle(.glass)
@@ -344,14 +344,14 @@ struct PageSettingsPanel: View {
         } label: {
             VStack(spacing: 4) {
                 Image(systemName: template.symbolName)
-                    .font(.system(size: 17))
+                    .font(.dsSystem(size: 17))
                     .frame(width: 44, height: 44)
                     .foregroundStyle(isOn ? theme.accent.color : theme.ink.color)
                     .background(theme.surface.color, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .strokeBorder(isOn ? theme.accent.color : theme.separator.color, lineWidth: isOn ? 2 : 0.5))
                 Text(template.displayName)
-                    .font(.caption2)
+                    .font(.dsCaption2)
                     .foregroundStyle(isOn ? theme.accent.color : theme.inkSecondary.color)
             }
             .frame(width: 52)
@@ -431,7 +431,7 @@ struct PageSettingsPanel: View {
             ZStack {
                 Circle().fill(fill).frame(width: 28, height: 28)
                 if hex == nil {
-                    Image(systemName: "a.circle").font(.system(size: 13)).foregroundStyle(theme.ink.color)
+                    Image(systemName: "a.circle").font(.dsSystem(size: 13)).foregroundStyle(theme.ink.color)
                 }
             }
             .overlay {

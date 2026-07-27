@@ -150,7 +150,7 @@ public struct PageContentView: View {
         HStack(spacing: 8 * scale) {
             Image(systemName: systemImage).foregroundStyle(theme.accent.color)
             Text(title)
-                .font(.system(size: 15 * scale, weight: .medium))
+                .font(.dsSystem(size: 15 * scale, weight: .medium))
                 .foregroundStyle(theme.ink.color)
                 .lineLimit(1)
         }

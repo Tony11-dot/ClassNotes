@@ -17,13 +17,13 @@ public struct EmptyStateView: View {
     public var body: some View {
         VStack(spacing: 12) {
             Image(systemName: systemImage)
-                .font(.system(size: 44, weight: .light))
+                .font(.dsSystem(size: 44, weight: .light))
                 .foregroundStyle(theme.accent.color)
             Text(title)
-                .font(.title3.weight(.semibold))
+                .font(.dsTitle3.weight(.semibold))
                 .foregroundStyle(theme.ink.color)
             Text(message)
-                .font(.subheadline)
+                .font(.dsSubheadline)
                 .foregroundStyle(theme.inkSecondary.color)
                 .multilineTextAlignment(.center)
         }

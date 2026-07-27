@@ -188,7 +188,7 @@ struct AddContentFlows: ViewModifier {
     private var noticeBanner: some View {
         if let notice {
             Text(notice)
-                .font(.subheadline.weight(.medium))
+                .font(.dsSubheadline.weight(.medium))
                 .foregroundStyle(theme.contrastingInk(on: theme.accent).color)
                 .padding(.horizontal, 16).padding(.vertical, 10)
                 .background(theme.accent.color, in: Capsule())
@@ -208,7 +208,7 @@ struct AddContentFlows: ViewModifier {
             VStack(spacing: 12) {
                 BrandLoader(size: 44)
                 Text("Preparing…")
-                    .font(.subheadline.weight(.semibold))
+                    .font(.dsSubheadline.weight(.semibold))
                     .foregroundStyle(theme.ink.color)
             }
             .padding(24)

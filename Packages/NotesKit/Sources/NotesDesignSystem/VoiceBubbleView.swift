@@ -24,7 +24,7 @@ public struct VoiceBubbleView: View {
                 player.toggle(url: url)
             } label: {
                 Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 20, weight: .semibold))
+                    .font(.dsSystem(size: 20, weight: .semibold))
                     .foregroundStyle(theme.contrastingInk(on: theme.accent).color)
                     .frame(width: 30, height: 36)
             }
@@ -35,7 +35,7 @@ public struct VoiceBubbleView: View {
                 .frame(minWidth: 90)
 
             Text(Self.timeString(duration))
-                .font(.caption2.monospacedDigit())
+                .font(.dsCaption2.monospacedDigit())
                 .foregroundStyle(theme.contrastingInk(on: theme.accent).color.opacity(0.85))
         }
         .padding(.horizontal, 12)

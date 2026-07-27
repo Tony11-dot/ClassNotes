@@ -40,10 +40,14 @@ struct CoverDesignPicker: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                header
-                Divider().overlay(theme.separator.color)
-                gallery
+            // One scroll, header included — pinned above the gallery, the preview
+            // and its colour row got squeezed on a short window.
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    header
+                    Divider().overlay(theme.separator.color)
+                    gallery
+                }
             }
             .background(theme.surface.color)
             .navigationTitle("Cover")
@@ -63,13 +67,16 @@ struct CoverDesignPicker: View {
                 .shadow(color: .black.opacity(0.18), radius: 10, y: 5)
             VStack(alignment: .leading, spacing: 8) {
                 Text(design.displayName)
-                    .font(.title3.weight(.bold))
+                    .font(.dsTitle3.weight(.bold))
                     .foregroundStyle(theme.ink.color)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
                 Text(design.category.displayName)
-                    .font(.subheadline)
+                    .font(.dsSubheadline)
                     .foregroundStyle(theme.inkSecondary.color)
-                Text("Color")
-                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                Text("Colour")
+                    .font(.dsCaption.weight(.semibold))
                     .foregroundStyle(theme.inkSecondary.color)
                 ColorSwatchRow(swatches: palette, selection: $colorHex)
             }
@@ -79,26 +86,25 @@ struct CoverDesignPicker: View {
     }
 
     private var gallery: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                ForEach(CoverDesign.Category.allCases) { category in
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text(category.displayName)
-                            .font(.headline)
-                            .foregroundStyle(theme.ink.color)
-                        LazyVGrid(
-                            columns: [GridItem(.adaptive(minimum: 96, maximum: 132), spacing: 18)],
-                            spacing: 18
-                        ) {
-                            ForEach(category.designs) { option in
-                                chip(option)
-                            }
+        VStack(alignment: .leading, spacing: 24) {
+            ForEach(CoverDesign.Category.allCases) { category in
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(category.displayName)
+                        .font(.dsHeadline)
+                        .foregroundStyle(theme.ink.color)
+                        .lineLimit(1)
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 96, maximum: 132), spacing: 18)],
+                        spacing: 18
+                    ) {
+                        ForEach(category.designs) { option in
+                            chip(option)
                         }
                     }
                 }
             }
-            .padding(20)
         }
+        .padding(20)
     }
 
     private func chip(_ option: CoverDesign) -> some View {
@@ -117,7 +123,7 @@ struct CoverDesignPicker: View {
                     )
                     .shadow(color: .black.opacity(isSelected ? 0.2 : 0.1), radius: 7, y: 3)
                 Text(option.displayName)
-                    .font(.caption)
+                    .font(.dsCaption)
                     .foregroundStyle(isSelected ? theme.ink.color : theme.inkSecondary.color)
                     .lineLimit(1)
             }

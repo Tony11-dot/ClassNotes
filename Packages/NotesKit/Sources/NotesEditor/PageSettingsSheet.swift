@@ -89,7 +89,7 @@ struct PageSettingsSheet: View {
                     }
                     Text("Changing the size of a page that already has ink keeps the "
                          + "strokes where they are; they may sit differently on the new paper.")
-                        .font(.caption)
+                        .font(.dsCaption)
                         .foregroundStyle(theme.inkSecondary.color)
                 }
             }
@@ -130,7 +130,7 @@ struct PageSettingsSheet: View {
                                           lineWidth: selected ? 2 : 0.5)
                     )
                 Text(option.displayName)
-                    .font(.caption2)
+                    .font(.dsCaption2)
                     .foregroundStyle(selected ? theme.accent.color : theme.inkSecondary.color)
                     .lineLimit(1)
             }

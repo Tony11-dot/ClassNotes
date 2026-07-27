@@ -67,6 +67,20 @@ public struct EditorScreen: View {
     var isBoard: Bool { notebook.kind.isSinglePage }
 
     public var body: some View {
+        // Focus mode is its own screen: one page, an Exit button, nothing else.
+        if toolState.focusMode {
+            focusSurface
+                .navigationTitle(notebook.title)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar(.hidden, for: .navigationBar)
+                .statusBarHidden()
+                .onDisappear { syncPageContent() }
+        } else {
+            editorSurface
+        }
+    }
+
+    private var editorSurface: some View {
         ZStack(alignment: .leading) {
             theme.surface.color.ignoresSafeArea()
             if isBoard {
@@ -210,7 +224,7 @@ public struct EditorScreen: View {
     var noticeBanner: some View {
         if let editorNotice {
             Text(editorNotice)
-                .font(.subheadline.weight(.medium))
+                .font(.dsSubheadline.weight(.medium))
                 .foregroundStyle(theme.contrastingInk(on: theme.accent).color)
                 .padding(.horizontal, 16).padding(.vertical, 10)
                 .background(theme.accent.color, in: Capsule())
@@ -231,7 +245,7 @@ public struct EditorScreen: View {
                 theme.ink.withAlpha(0.12).color.ignoresSafeArea()
                 VStack(spacing: 12) {
                     BrandLoader(size: 44)
-                    Text("Beautifying…").font(.subheadline.weight(.semibold))
+                    Text("Beautifying…").font(.dsSubheadline.weight(.semibold))
                         .foregroundStyle(theme.ink.color)
                 }
                 .padding(24)
@@ -318,6 +332,8 @@ extension EditorScreen {
                 tracker.setDrawing(remaining, for: pageID)
                 await model.apply(plan: plan, to: pageID)
                 didChange = !plan.isEmpty
+                // Tapping Beautify is an explicit request, so it always commits.
+                return true
             }
         )
         if !didChange {
@@ -420,6 +436,7 @@ extension EditorScreen {
             if let ink { Image(uiImage: ink).resizable().scaledToFit() }
             PageElementsLayer(
                 pageID: page.id, elements: page.elements, model: model,
+                toolState: toolState,
                 displaySize: logicalSize, logicalSize: logicalSize,
                 allowsEditing: false, editingTextID: .constant(nil)
             )

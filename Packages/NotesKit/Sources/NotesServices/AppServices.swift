@@ -75,9 +75,15 @@ public final class AppServices {
             await auth.restore()
             await entitlements.refreshEntitlements()
             await entitlements.loadProducts()
-            // Once the ClassMate session is restored, reconcile the whole local
-            // library up to the backend (first run + any missed per-edit pushes).
-            // No-ops when signed out (SyncService checks the token).
+            // PULL first: notebooks the user deleted or renamed in the ClassMate
+            // ClassNotes tab. Pushing first would send this device's stale copy
+            // back over those edits and undo them.
+            await sync.pullRemoteChanges { [repository] changes in
+                await repository.applyRemoteChanges(changes)
+            }
+            // Then reconcile the whole local library up to the backend (first run
+            // + any missed per-edit pushes). No-ops when signed out
+            // (SyncService checks the token).
             let snapshot = repository.fullSnapshot()
             sync.pushAll(notebooks: snapshot.notebooks, shelves: snapshot.shelves)
         }

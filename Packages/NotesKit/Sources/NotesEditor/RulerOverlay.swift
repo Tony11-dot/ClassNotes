@@ -1,4 +1,5 @@
 import ClassMateTheme
+import NotesDesignSystem
 import SwiftUI
 
 /// A translucent straight-edge you position with two draggable ends — one per
@@ -80,7 +81,7 @@ struct RulerOverlay: View {
         let len = max(1, hypot(normal.dx, normal.dy))
         let offset = CGPoint(x: mid.x + normal.dx / len * 40, y: mid.y + normal.dy / len * 40)
         return Text(String(format: "%.1f cm · %.1f in · %.0f°", cm, inches, degrees))
-            .font(.caption.weight(.semibold).monospacedDigit())
+            .font(.dsCaption.weight(.semibold).monospacedDigit())
             .foregroundStyle(theme.ink.color)
             .padding(.horizontal, 10).padding(.vertical, 5)
             .background(theme.surfaceRaised.color, in: Capsule())
@@ -107,7 +108,7 @@ struct RulerOverlay: View {
             isVisible = false
         } label: {
             Image(systemName: "xmark.circle.fill")
-                .font(.system(size: 22))
+                .font(.dsSystem(size: 22))
                 .foregroundStyle(theme.ink.color, theme.surfaceRaised.color)
         }
         .position(x: point.x, y: point.y - 40)

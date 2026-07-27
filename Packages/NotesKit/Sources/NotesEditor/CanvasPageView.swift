@@ -200,12 +200,20 @@ struct CanvasPageView: UIViewRepresentable {
         private let onFocus: (UUID) -> Void
         private var saveTask: Task<Void, Never>?
         private var loaded = false
-        /// Stroke count after the last change, so we can tell an ADDED stroke
-        /// (candidate for shaping / snapping / scribble-erase) from an erase or a
-        /// replacement we made ourselves.
-        private var lastStrokeCount = 0
+        /// How many strokes have already been through the ink pass, so a pass only
+        /// looks at what's new. Reset downwards whenever strokes disappear (erase,
+        /// undo, a beautification wipe).
+        private var processedStrokeCount = 0
         /// Guards the reentrant `drawing` assignments we make while reshaping.
         private var isRewriting = false
+        /// True between `canvasViewDidBeginUsingTool` and `…DidEndUsingTool`, i.e.
+        /// the pencil is DOWN. Assigning `PKCanvasView.drawing` in that window
+        /// tears down the stroke in flight — which is why letters written straight
+        /// after another one "appeared and erased a second later". Every rewrite
+        /// (pen shaping, shape snap, scribble-erase, beautification) waits for the
+        /// hand to lift.
+        private var isUsingTool = false
+        private var inkPassTask: Task<Void, Never>?
 
         init(
             notebookID: UUID,
@@ -235,66 +243,109 @@ struct CanvasPageView: UIViewRepresentable {
                    let drawing = try? PKDrawing(data: data) {
                     canvas?.drawing = drawing
                 }
-                lastStrokeCount = canvas?.drawing.strokes.count ?? 0
+                // Ink already on the page was shaped when it was written; a pass
+                // over it would only cost time and re-smooth what's settled.
+                processedStrokeCount = canvas?.drawing.strokes.count ?? 0
                 loaded = true
             }
         }
 
         // MARK: PKCanvasViewDelegate
 
+        func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
+            isUsingTool = true
+            // Anything queued would land under the moving pencil — hold it.
+            inkPassTask?.cancel()
+        }
+
+        func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
+            isUsingTool = false
+            scheduleInkPass()
+        }
+
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
             guard loaded, !isRewriting else { return }
             tracker.activeCanvas = canvasView
             onFocus(pageID)
 
-            let added = canvasView.drawing.strokes.count == lastStrokeCount + 1
-            if added, handleScribbleErase(on: canvasView) {
-                lastStrokeCount = canvasView.drawing.strokes.count
-                scheduleSave(canvasView.drawing)
-                return
-            }
-            if added {
-                reshapeLastStroke(on: canvasView)
-            }
-            lastStrokeCount = canvasView.drawing.strokes.count
-            scheduleSave(canvasView.drawing)
+            // Strokes went away (eraser, undo) — our "already processed" mark has
+            // to come back with them or the next pass reads the wrong indices.
+            let count = canvasView.drawing.strokes.count
+            if count < processedStrokeCount { processedStrokeCount = count }
+
+            scheduleSave()
             scheduleBeautification()
+            // A change with the pencil up (undo, paste, an erase) still deserves a
+            // pass; one with the pencil down waits for `didEndUsingTool`.
+            if !isUsingTool { scheduleInkPass() }
         }
 
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
             (scrollView as? PageCanvasView)?.syncContentSize()
         }
 
-        /// Scribble-to-erase: a quick back-and-forth scrub deletes what it crosses.
-        /// Returns true when the gesture was consumed as an erase.
-        private func handleScribbleErase(on canvasView: PKCanvasView) -> Bool {
-            guard toolState.scribbleToErase, toolState.tool == .pen,
-                  let cleaned = ScribbleEraser.applying(to: canvasView.drawing) else { return false }
-            isRewriting = true
-            canvasView.drawing = cleaned
-            isRewriting = false
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            return true
+        // MARK: Ink pass
+
+        /// Queues the post-stroke pass. Debounced so writing several letters in
+        /// quick succession costs ONE canvas rewrite instead of one per stroke —
+        /// assigning `.drawing` re-renders the whole page, which is what made a
+        /// filling page feel progressively laggier.
+        private func scheduleInkPass() {
+            inkPassTask?.cancel()
+            inkPassTask = Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(90))
+                guard !Task.isCancelled, let self, !self.isUsingTool else { return }
+                self.runInkPass()
+            }
         }
 
-        /// Snap a held stroke to a clean shape, otherwise apply the pen's own
-        /// stability / sensitivity tuning to it.
-        private func reshapeLastStroke(on canvasView: PKCanvasView) {
-            var drawing = canvasView.drawing
-            guard let last = drawing.strokes.last else { return }
-            let replacement: PKStroke?
-            if toolState.snapShapes, let snapped = ShapeSnapper.snapped(last) {
-                replacement = snapped
-            } else if toolState.tool == .pen {
-                replacement = PenShaper.shaped(last, settings: toolState.penSettings)
-            } else {
-                replacement = nil
+        /// Scribble-to-erase, then shape-snap / pen tuning for every stroke added
+        /// since the last pass — all folded into a single `drawing` assignment.
+        private func runInkPass() {
+            guard loaded, let canvas else { return }
+            var drawing = canvas.drawing
+            let count = drawing.strokes.count
+            guard count > processedStrokeCount else {
+                processedStrokeCount = count
+                return
             }
-            guard let replacement else { return }
+
+            if toolState.scribbleToErase, toolState.tool == .pen,
+               let cleaned = ScribbleEraser.applying(to: drawing) {
+                processedStrokeCount = cleaned.strokes.count
+                replace(cleaned, on: canvas)
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                scheduleSave()
+                return
+            }
+
+            var changed = false
+            if toolState.tool == .pen {
+                for index in processedStrokeCount..<count {
+                    let stroke = drawing.strokes[index]
+                    if toolState.snapShapes, let snapped = ShapeSnapper.snapped(stroke) {
+                        drawing.strokes[index] = snapped
+                        changed = true
+                    } else if let shaped = PenShaper.shaped(stroke, settings: toolState.penSettings) {
+                        drawing.strokes[index] = shaped
+                        changed = true
+                    }
+                }
+            }
+            processedStrokeCount = count
+            guard changed else { return }
+            replace(drawing, on: canvas)
+            scheduleSave()
+        }
+
+        /// Assigns a rewritten drawing without mistaking the resulting delegate
+        /// callback for the user's own input. The flag clears on the NEXT main-actor
+        /// turn because PKCanvasView reports the change asynchronously — clearing it
+        /// on the same line let our own rewrite come back as "new ink".
+        private func replace(_ drawing: PKDrawing, on canvas: PKCanvasView) {
             isRewriting = true
-            drawing.strokes[drawing.strokes.count - 1] = replacement
-            canvasView.drawing = drawing
-            isRewriting = false
+            canvas.drawing = drawing
+            Task { @MainActor [weak self] in self?.isRewriting = false }
         }
 
         /// Hand the page to the live beautifier; it debounces and only fires once
@@ -308,26 +359,35 @@ struct CanvasPageView: UIViewRepresentable {
                 pageSize: pageSize,
                 drawing: { [weak self] in self?.canvas?.drawing },
                 apply: { [weak self] plan, remaining in
-                    guard let self else { return }
-                    self.isRewriting = true
-                    self.canvas?.drawing = remaining
-                    self.lastStrokeCount = remaining.strokes.count
-                    self.isRewriting = false
+                    guard let self, let canvas = self.canvas else { return false }
+                    // Never swap the ink out from under a moving pencil. Refusing
+                    // here keeps the beautifier's bookkeeping intact, and the pass
+                    // re-runs when the hand next rests.
+                    guard !self.isUsingTool else { return false }
+                    self.processedStrokeCount = remaining.strokes.count
+                    self.replace(remaining, on: canvas)
                     await self.onBeautified(plan)
-                    self.scheduleSave(remaining)
+                    self.scheduleSave()
+                    return true
                 }
             )
         }
 
         // MARK: Saving
 
-        private func scheduleSave(_ drawing: PKDrawing) {
+        /// Debounced page save. The drawing is serialized INSIDE the task, once the
+        /// hand has been still for 600 ms — doing it per change meant every stroke
+        /// paid `dataRepresentation()` for the whole page on the main thread, so
+        /// writing got slower the more there was on the page.
+        private func scheduleSave() {
             saveTask?.cancel()
-            let data = drawing.dataRepresentation()
-            saveTask = Task { [store, notebookID, pageID] in
+            saveTask = Task { [weak self] in
                 try? await Task.sleep(for: .milliseconds(600))
-                guard !Task.isCancelled else { return }
-                try? await store.savePageData(data, notebook: notebookID, page: pageID)
+                guard !Task.isCancelled, let self, self.loaded,
+                      let data = self.canvas?.drawing.dataRepresentation() else { return }
+                try? await self.store.savePageData(
+                    data, notebook: self.notebookID, page: self.pageID
+                )
             }
         }
 

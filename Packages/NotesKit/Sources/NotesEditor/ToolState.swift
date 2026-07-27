@@ -146,6 +146,14 @@ public final class ToolState {
 
     public var beautify = BeautifySettings()
 
+    // MARK: - Focus mode
+
+    /// Reading / highlighting mode: everything except the page you're on goes away
+    /// — rail, bubble, navigation bar, the other pages — leaving the paper and an
+    /// Exit button. Picking the highlighter up turns it on, because that's the tool
+    /// you reach for when you're reading rather than writing.
+    public var focusMode = false
+
     public init() {}
 
     /// The pen draws unless we're moving things, laying tape, or placing text —

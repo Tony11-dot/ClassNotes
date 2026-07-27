@@ -76,11 +76,11 @@ public struct NovaSidebar: View {
             NovaAvatar(size: 26, animated: conversation.streaming)
             VStack(alignment: .leading, spacing: 1) {
                 Text(chat?.title ?? "NOVA")
-                    .font(.subheadline.weight(.semibold))
+                    .font(.dsSubheadline.weight(.semibold))
                     .foregroundStyle(theme.ink.color)
                     .lineLimit(1)
                 Text(conversation.streaming ? "Thinking…" : "Saved to this notebook")
-                    .font(.caption2)
+                    .font(.dsCaption2)
                     .foregroundStyle(theme.inkSecondary.color)
             }
             Spacer()
@@ -134,7 +134,7 @@ public struct NovaSidebar: View {
                         }
                     }
                     if let error = conversation.errorText {
-                        Text(error).font(.footnote).foregroundStyle(.red)
+                        Text(error).font(.dsFootnote).foregroundStyle(.red)
                     }
                 }
                 .padding(16)
@@ -151,14 +151,14 @@ public struct NovaSidebar: View {
         VStack(alignment: .leading, spacing: 10) {
             NovaAvatar(size: 38)
             Text("Ask NOVA about these notes")
-                .font(.headline)
+                .font(.dsHeadline)
                 .foregroundStyle(theme.ink.color)
             Text("""
                  Circle anything on the page and NOVA explains it. Or just ask — \
                  summarise a page, build a quiz, define a term. Chats stay with this \
                  notebook.
                  """)
-                .font(.footnote)
+                .font(.dsFootnote)
                 .foregroundStyle(theme.inkSecondary.color)
         }
         .padding(.vertical, 8)
@@ -179,7 +179,7 @@ public struct NovaSidebar: View {
                 draft = ""
             } label: {
                 Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 30))
+                    .font(.dsSystem(size: 30))
                     .foregroundStyle(theme.accent.color)
             }
             .buttonStyle(.plain)
@@ -198,10 +198,10 @@ public struct NovaSidebar: View {
             if saved.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "clock")
-                        .font(.system(size: 26))
+                        .font(.dsSystem(size: 26))
                         .foregroundStyle(theme.inkSecondary.color)
                     Text("No saved chats yet")
-                        .font(.subheadline)
+                        .font(.dsSubheadline)
                         .foregroundStyle(theme.inkSecondary.color)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -213,15 +213,15 @@ public struct NovaSidebar: View {
                         } label: {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(saved.title)
-                                    .font(.subheadline.weight(.medium))
+                                    .font(.dsSubheadline.weight(.medium))
                                     .foregroundStyle(theme.ink.color)
                                     .lineLimit(1)
                                 Text(saved.preview)
-                                    .font(.caption)
+                                    .font(.dsCaption)
                                     .foregroundStyle(theme.inkSecondary.color)
                                     .lineLimit(2)
                                 Text(saved.updatedAt, format: .relative(presentation: .named))
-                                    .font(.caption2)
+                                    .font(.dsCaption2)
                                     .foregroundStyle(theme.inkSecondary.color)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -308,7 +308,7 @@ struct NovaMessageRow: View {
                 VStack(alignment: .trailing, spacing: 6) {
                     if message.imageData != nil {
                         Label("From the page", systemImage: "lasso.badge.sparkles")
-                            .font(.caption2.weight(.semibold))
+                            .font(.dsCaption2.weight(.semibold))
                             .foregroundStyle(theme.inkSecondary.color)
                     }
                     Text(message.content)
@@ -324,12 +324,47 @@ struct NovaMessageRow: View {
         } else {
             HStack(alignment: .top, spacing: 10) {
                 NovaAvatar(size: 24)
-                Text(message.content.isEmpty ? " " : message.content)
-                    .foregroundStyle(theme.ink.color)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                if message.content.isEmpty {
+                    // A reply that has arrived but is still all reasoning: show a
+                    // pulse, not an empty row.
+                    NovaTypingDots()
+                } else {
+                    NovaMarkdownText(message.content)
+                        .foregroundStyle(theme.ink.color)
+                }
             }
         }
+    }
+}
+
+/// Three breathing dots for the gap between "asked" and "the first word of the
+/// answer" — with reasoning hidden, that gap is real, and a blank row looked broken.
+struct NovaTypingDots: View {
+    @Environment(\.theme) private var theme
+    @State private var phase = 0.0
+
+    var body: some View {
+        HStack(spacing: 5) {
+            ForEach(0..<3, id: \.self) { index in
+                Circle()
+                    .fill(theme.accent.color)
+                    .frame(width: 6, height: 6)
+                    .opacity(0.35 + 0.65 * pulse(index))
+            }
+        }
+        .frame(height: 18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityLabel("NOVA is thinking")
+        .onAppear {
+            withAnimation(.linear(duration: 1.2).repeatForever(autoreverses: false)) {
+                phase = 3
+            }
+        }
+    }
+
+    private func pulse(_ index: Int) -> Double {
+        let offset = (phase - Double(index)).truncatingRemainder(dividingBy: 3)
+        return max(0, 1 - abs(offset - 0.5) * 1.6)
     }
 }
 

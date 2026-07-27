@@ -27,6 +27,71 @@ extension EditorScreen {
         }
     }
 
+    // MARK: - Focus mode
+
+    /// Focus mode: the page you're on, as large as it fits, and an Exit button.
+    /// No rail, no bubble, no navigation bar, no neighbouring pages — the pencil
+    /// still draws, so you can read and highlight without anything in the way.
+    @ViewBuilder
+    var focusSurface: some View {
+        let page = model.page(model.focusedPageID) ?? model.pages.first
+        ZStack {
+            theme.surface.color.ignoresSafeArea()
+            if let page {
+                GeometryReader { geo in
+                    let size = focusPageSize(for: page, in: geo.size)
+                    ZStack {
+                        PageTemplateView(style: page.style)
+                        if let bg = backgroundImage(for: page) {
+                            Image(uiImage: bg).resizable().scaledToFit()
+                        }
+                        canvasStack(page, displaySize: size, allowsZoom: false)
+                    }
+                    .frame(width: size.width, height: size.height)
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .shadow(color: .black.opacity(0.2), radius: 22, y: 10)
+                    .position(x: geo.size.width / 2, y: geo.size.height / 2)
+                }
+            } else {
+                BrandLoader(size: 56)
+            }
+        }
+        .overlay(alignment: .topTrailing) { exitFocusButton }
+        .overlay(alignment: .top) { noticeBanner }
+        .ignoresSafeArea(edges: .bottom)
+    }
+
+    /// The largest the page fits in `available`, keeping its own aspect ratio.
+    func focusPageSize(for page: PageRecord, in available: CGSize) -> CGSize {
+        let logical = page.logicalSize
+        guard logical.width > 0, logical.height > 0 else { return available }
+        let inset: CGFloat = 24
+        let box = CGSize(
+            width: max(available.width - inset * 2, 1),
+            height: max(available.height - inset * 2, 1)
+        )
+        let scale = min(box.width / logical.width, box.height / logical.height)
+        return CGSize(width: logical.width * scale, height: logical.height * scale)
+    }
+
+    var exitFocusButton: some View {
+        Button {
+            toolState.focusMode = false
+        } label: {
+            Label("Exit", systemImage: "arrow.down.right.and.arrow.up.left")
+                .font(.dsSubheadline.weight(.semibold))
+                .padding(.horizontal, 14)
+                .frame(height: 40)
+                .foregroundStyle(theme.ink.color)
+        }
+        .buttonStyle(.plain)
+        .dsGlass(in: Capsule(), interactive: true)
+        .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
+        .padding(.trailing, 18)
+        .padding(.top, 12)
+        .accessibilityLabel("Exit focus mode")
+    }
+
     // MARK: - Pages
 
     var pageScroll: some View {
@@ -85,7 +150,7 @@ extension EditorScreen {
             ZStack {
                 Circle().stroke(theme.separator.color, lineWidth: 2).frame(width: 40, height: 40)
                 ProgressView().tint(theme.accent.color)
-                Image(systemName: "plus").font(.caption.weight(.bold)).foregroundStyle(theme.accent.color)
+                Image(systemName: "plus").font(.dsCaption.weight(.bold)).foregroundStyle(theme.accent.color)
                     .offset(y: 14)
             }
             .padding(16)
@@ -147,6 +212,7 @@ extension EditorScreen {
             pageID: page.id,
             elements: page.elements,
             model: model,
+            toolState: toolState,
             displaySize: displaySize,
             logicalSize: page.logicalSize,
             allowsEditing: !toolState.isDrawingEnabled,

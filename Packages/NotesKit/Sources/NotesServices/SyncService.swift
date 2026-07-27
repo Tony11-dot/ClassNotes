@@ -137,4 +137,28 @@ public final class SyncService {
         for shelf in shelves { pushShelf(shelf) }
         for notebook in notebooks { pushNotebook(notebook) }
     }
+
+    // MARK: - Pull (launch, before pushing)
+
+    /// Applies what the user changed from the ClassMate ClassNotes tab — notebooks
+    /// they deleted or renamed there — then acknowledges them.
+    ///
+    /// This MUST run before `pushAll`, because a push would otherwise send the
+    /// stale local title straight back over a rename made in ClassMate. Deletions
+    /// are applied by EXPLICIT id only: "absent from the server" is never taken as
+    /// a reason to delete anything locally, so a fresh account or a failed request
+    /// can't wipe the library.
+    ///
+    /// `apply` does the local work on the main actor and returns the ids it
+    /// actually handled; only those are acknowledged, so anything that failed is
+    /// retried on the next launch.
+    public func pullRemoteChanges(
+        apply: @MainActor (LibraryChanges) async -> [String]
+    ) async {
+        guard let token = auth.token else { return }
+        guard let changes = try? await client.fetchLibraryChanges(token: token),
+              !changes.isEmpty else { return }
+        let applied = await apply(changes)
+        try? await client.acknowledgeChanges(ids: applied, token: token)
+    }
 }
