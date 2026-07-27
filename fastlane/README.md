@@ -31,6 +31,14 @@ Headless signing repair: create+install an Apple Distribution cert + App Store p
 
 Bump build number (from TestFlight), build, and upload to TestFlight.
 
+### ios latest
+
+```sh
+[bundle exec] fastlane ios latest
+```
+
+Print the latest build number TestFlight has for ClassNotes — the post-ship verification (read-only, uploads nothing).
+
 ### ios upload
 
 ```sh

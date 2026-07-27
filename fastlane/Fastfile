@@ -38,6 +38,12 @@ def asc_api_key
   )
 end
 
+# Without this, a bare `fastlane beta` (what the README and the runbook say to
+# type) dies with "Could not find 'beta'" and only `fastlane ios beta` works —
+# and fastlane still exits 0 on some paths, so a ship can look like it happened
+# when nothing was built. iOS is the only platform here; make it the default.
+default_platform(:ios)
+
 platform :ios do
 
   desc "Headless signing repair: create+install an Apple Distribution cert + " \
@@ -104,6 +110,17 @@ platform :ios do
       changelog:                         changelog,
     )
     UI.success "✅ Uploaded ClassNotes (#{next_build}) to TestFlight!"
+  end
+
+  desc "Print the latest build number TestFlight has for ClassNotes — the " \
+       "post-ship verification (read-only, uploads nothing)."
+  lane :latest do
+    build = latest_testflight_build_number(
+      api_key:              asc_api_key,
+      app_identifier:       BUNDLE_ID,
+      initial_build_number: 0,
+    )
+    UI.success "TestFlight has ClassNotes build #{build}"
   end
 
   desc "Re-upload the last-built IPA to TestFlight (skip build)."
