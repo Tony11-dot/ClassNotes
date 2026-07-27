@@ -9,44 +9,49 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
-/// iPad notebook editor: scrolling multi-page PencilKit canvas + the draggable
-/// tool rail, page manager, media/voice/text tools, ruler and NOVA layered on
-/// top. Only `App/Routing` may import this module.
+/// iPad notebook editor: a scrolling multi-page PencilKit canvas (or one pannable
+/// board), with the draggable tool rail, page manager, tape and text layers, the
+/// ruler, and NOVA's saved-chat sidebar on top.
+///
+/// Only `App/Routing` may import this module.
 public struct EditorScreen: View {
-    @Environment(AppServices.self) private var services
-    @Environment(\.theme) private var theme
+    @Environment(AppServices.self) var services
+    @Environment(\.theme) var theme
 
-    private let notebook: Notebook
+    let notebook: Notebook
 
-    @Environment(\.paperTone) private var paperTone
+    @Environment(\.paperTone) var paperTone
 
-    @State private var model: NotebookEditorModel
-    @State private var toolState = ToolState()
-    @State private var tracker = ActiveCanvasTracker()
+    @State var model: NotebookEditorModel
+    @State var toolState = ToolState()
+    @State var tracker = ActiveCanvasTracker()
+    @State var beautifier = LiveBeautifier()
 
-    @State private var rulerVisible = false
-    @State private var explainMode = false
-    @State private var showPages = false
-    @State private var addingBottom = false
-    @State private var addingTop = false
+    @State var rulerVisible = false
+    @State var explainMode = false
+    @State var showPages = false
+    @State var addingBottom = false
+    @State var addingTop = false
     /// Each page's frame in the editor coordinate space, so the magic pen can
     /// map a circled region back to page-logical coordinates for cropping.
-    @State private var pageFrames: [UUID: CGRect] = [:]
+    @State var pageFrames: [UUID: CGRect] = [:]
 
     // Insertion sheets/state
-    @State private var photoItem: PhotosPickerItem?
-    @State private var showPhotoPicker = false
-    @State private var showFileImporter = false
-    @State private var showRecorder = false
-    @State private var ocrText: OCRResult?
-    @State private var novaConversation: NovaConversation?
-    @State private var showNova = false
-    @State private var beautifying = false
-    @State private var editorNotice: String?
-    @State private var pageSettings: PageRecord?
+    @State var photoItem: PhotosPickerItem?
+    @State var showPhotoPicker = false
+    @State var showFileImporter = false
+    @State var showRecorder = false
+    @State var showScanner = false
+    @State var ocrText: OCRResult?
+    @State var novaConversation: NovaConversation?
+    @State var showNova = false
+    @State var editingTextID: UUID?
+    @State var beautifying = false
+    @State var editorNotice: String?
+    @State var pageSettings: PageRecord?
     /// Decoded PDF/image page backgrounds, cached so SwiftUI re-renders don't
     /// re-decode the PNG on every frame.
-    @State private var backgroundCache = PageImageCache()
+    @State var backgroundCache = PageImageCache()
 
     public init(notebook: Notebook) {
         self.notebook = notebook
@@ -58,12 +63,19 @@ public struct EditorScreen: View {
         ))
     }
 
+    /// A board is one page you pan and zoom; a notebook scrolls page by page.
+    var isBoard: Bool { notebook.kind.isSinglePage }
+
     public var body: some View {
         ZStack(alignment: .leading) {
             theme.surface.color.ignoresSafeArea()
-            pageScroll
-            edgeLoader(top: true).opacity(addingTop ? 1 : 0)
-            edgeLoader(top: false).opacity(addingBottom ? 1 : 0)
+            if isBoard {
+                boardSurface
+            } else {
+                pageScroll
+                edgeLoader(top: true).opacity(addingTop ? 1 : 0)
+                edgeLoader(top: false).opacity(addingBottom ? 1 : 0)
+            }
 
             if model.manifest == nil {
                 BrandLoader(size: 56).frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -80,7 +92,7 @@ public struct EditorScreen: View {
             }
 
             // Page manager slides in from the leading edge.
-            if showPages {
+            if showPages, !isBoard {
                 PageManagerView(model: model, isVisible: $showPages) { id in
                     model.focusedPageID = id
                 }
@@ -98,14 +110,21 @@ public struct EditorScreen: View {
                 onPhoto: { showPhotoPicker = true },
                 onFile: { showFileImporter = true },
                 onRecord: { showRecorder = true },
-                onBeautify: { Task { await beautifyFocusedPage() } }
+                onBeautifyNow: { Task { await beautifyFocusedPage() } },
+                onNova: { openNova() },
+                onTapeVisibility: { hidden in
+                    Task { await model.setAllTape(hidden: hidden, on: model.focusedPageID) }
+                }
             )
             .zIndex(3)
         }
         .coordinateSpace(.named("editor"))
+        .overlay(alignment: .bottomTrailing) { novaBubble }
+        .overlay(alignment: .trailing) { novaPanel }
         .overlay(alignment: .top) { noticeBanner }
         .overlay { beautifyingOverlay }
         .animation(.spring(duration: 0.3), value: showPages)
+        .animation(.spring(duration: 0.3), value: showNova)
         .animation(.spring(duration: 0.3), value: editorNotice)
         .navigationTitle(notebook.title)
         .navigationBarTitleDisplayMode(.inline)
@@ -116,7 +135,8 @@ public struct EditorScreen: View {
         }
         .onDisappear {
             services.repository.touch(notebook)
-            syncPageImages()
+            beautifier.reset()
+            syncPageContent()
         }
         .photosPicker(isPresented: $showPhotoPicker, selection: $photoItem, matching: .images)
         .onChange(of: photoItem) { _, item in Task { await handlePickedPhoto(item) } }
@@ -128,6 +148,15 @@ public struct EditorScreen: View {
                 Task { await model.insertVoice(fileURL: url, duration: duration) }
             }
         }
+        .sheet(isPresented: $showScanner) {
+            DocumentScannerView { images in
+                Task {
+                    if await model.importImages(images) != nil {
+                        editorNotice = "Scan added — annotate it with any tool."
+                    }
+                }
+            }
+        }
         .sheet(item: $ocrText) { result in
             RecognizedTextSheet(text: result.text) { text, fontName in
                 Task {
@@ -135,27 +164,50 @@ public struct EditorScreen: View {
                 }
             }
         }
-        .sheet(isPresented: $showNova) {
-            if let conversation = novaConversation {
-                NovaChatView(conversation: conversation)
-            }
-        }
         .sheet(item: $pageSettings) { page in
-            PageSettingsSheet(page: page) { template, margin, paperColorHex in
-                Task {
-                    await model.updatePageSettings(
-                        pageID: page.id, template: template, margin: margin,
-                        paperColorHex: paperColorHex, clearPaperColor: paperColorHex == nil
-                    )
-                }
+            PageSettingsSheet(page: page) { style in
+                Task { await model.updatePageSettings(pageID: page.id, style: style) }
             }
         }
+    }
+
+    // MARK: - NOVA
+
+    @ViewBuilder
+    var novaBubble: some View {
+        if !showNova {
+            NovaBubble(isActive: novaConversation?.streaming ?? false) { openNova() }
+                .padding(.trailing, 26)
+                .padding(.bottom, 30)
+                .transition(.scale.combined(with: .opacity))
+        }
+    }
+
+    @ViewBuilder
+    var novaPanel: some View {
+        if showNova, let conversation = novaConversation {
+            NovaSidebar(
+                conversation: conversation,
+                store: services.novaChats,
+                notebookID: notebook.id,
+                onClose: { showNova = false }
+            )
+            .transition(.move(edge: .trailing))
+            .zIndex(5)
+        }
+    }
+
+    func openNova() {
+        if novaConversation == nil {
+            novaConversation = services.makeNovaConversation()
+        }
+        showNova = true
     }
 
     // MARK: - Transient notices & progress
 
     @ViewBuilder
-    private var noticeBanner: some View {
+    var noticeBanner: some View {
         if let editorNotice {
             Text(editorNotice)
                 .font(.subheadline.weight(.medium))
@@ -173,7 +225,7 @@ public struct EditorScreen: View {
     }
 
     @ViewBuilder
-    private var beautifyingOverlay: some View {
+    var beautifyingOverlay: some View {
         if beautifying {
             ZStack {
                 theme.ink.withAlpha(0.12).color.ignoresSafeArea()
@@ -191,132 +243,18 @@ public struct EditorScreen: View {
         }
     }
 
-    // MARK: - Pages
-
-    private var pageScroll: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 32) {
-                    ForEach(model.pages) { page in
-                        pageView(page).id(page.id)
-                    }
-                }
-                .padding(.vertical, 28)
-            }
-            .onScrollGeometryChange(for: Overscroll.self) { geo in
-                let topRest = -geo.contentInsets.top
-                let bottomRest = geo.contentSize.height - geo.containerSize.height + geo.contentInsets.bottom
-                return Overscroll(
-                    top: topRest - geo.contentOffset.y,
-                    bottom: geo.contentOffset.y - bottomRest,
-                    scrollable: geo.contentSize.height > geo.containerSize.height
-                )
-            } action: { _, over in
-                handleOverscroll(over, proxy: proxy)
-            }
-        }
-    }
-
-    /// Over-scroll past either end grows the notebook: keep dragging past the
-    /// last page (or above the first) and a new page — inheriting that page's
-    /// paper + margin — slides in.
-    private func handleOverscroll(_ over: Overscroll, proxy: ScrollViewProxy) {
-        guard over.scrollable else { return }
-        let threshold: CGFloat = 120
-        if over.bottom > threshold, !addingBottom {
-            addingBottom = true
-            Task {
-                _ = await model.appendInheritingLast()
-                addingBottom = false
-            }
-        }
-        if over.top > threshold, !addingTop {
-            addingTop = true
-            let anchor = model.pages.first?.id
-            Task {
-                _ = await model.prependInheritingFirst()
-                // Keep the viewport steady: the new page grew above, so pin the
-                // page that used to be first back to the top.
-                if let anchor { proxy.scrollTo(anchor, anchor: .top) }
-                addingTop = false
-            }
-        }
-    }
-
-    private func edgeLoader(top: Bool) -> some View {
-        VStack {
-            if !top { Spacer() }
-            ZStack {
-                Circle().stroke(theme.separator.color, lineWidth: 2).frame(width: 40, height: 40)
-                ProgressView().tint(theme.accent.color)
-                Image(systemName: "plus").font(.caption.weight(.bold)).foregroundStyle(theme.accent.color)
-                    .offset(y: 14)
-            }
-            .padding(16)
-            if top { Spacer() }
-        }
-        .frame(maxWidth: .infinity)
-        .allowsHitTesting(false)
-    }
-
-    private func pageView(_ page: PageRecord) -> some View {
-        GeometryReader { geo in
-            ZStack {
-                PageTemplateView(template: page.template, margin: page.margin, paperColorHex: page.paperColorHex)
-                if let bg = backgroundImage(for: page) {
-                    Image(uiImage: bg).resizable().scaledToFit()
-                }
-                CanvasPageView(
-                    notebookID: notebook.id,
-                    page: page,
-                    toolState: toolState,
-                    tracker: tracker,
-                    onFocus: { model.focusedPageID = $0 }
-                )
-                PageElementsLayer(
-                    pageID: page.id,
-                    elements: page.elements,
-                    model: model,
-                    displaySize: geo.size
-                )
-            }
-            .contentShape(Rectangle())
-            .onTapGesture { model.focusedPageID = page.id }
-        }
-        .aspectRatio(
-            PageGeometry.size.width / PageGeometry.size.height,
-            contentMode: .fit
-        )
-        .frame(maxWidth: 840)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(
-                    model.focusedPageID == page.id ? theme.accent.color.opacity(0.5) : theme.separator.color,
-                    lineWidth: model.focusedPageID == page.id ? 1.5 : 0.5
-                )
-        )
-        .shadow(color: .black.opacity(0.16), radius: 16, y: 8)
-        .padding(.horizontal, 40)
-        .onGeometryChange(for: CGRect.self) { proxy in
-            proxy.frame(in: .named("editor"))
-        } action: { frame in
-            pageFrames[page.id] = frame
-        }
-    }
-
-    // MARK: - Toolbar (NOVA + editable handwriting→text; drawing tools live in the rail)
+    // MARK: - Toolbar
 
     @ToolbarContentBuilder
-    private var toolbarContent: some ToolbarContent {
+    var toolbarContent: some ToolbarContent {
         ToolbarItemGroup(placement: .topBarTrailing) {
             Button {
                 explainMode.toggle()
             } label: {
-                Image(systemName: "sparkles")
+                Image(systemName: "lasso.badge.sparkles")
             }
             .tint(explainMode ? theme.accent.color : theme.ink.color)
-            .accessibilityLabel("Ask NOVA about a selection")
+            .accessibilityLabel("Circle something for NOVA to explain")
 
             Menu {
                 Button { Task { await recognizeHandwriting() } } label: {
@@ -330,59 +268,70 @@ public struct EditorScreen: View {
                 Button { showFileImporter = true } label: {
                     Label("Import PDF / file", systemImage: "doc.badge.plus")
                 }
+                Button { showScanner = true } label: {
+                    Label("Scan a document", systemImage: "doc.viewfinder")
+                }
+                Divider()
+                Button {
+                    Task { await model.setAllTape(hidden: true, on: nil) }
+                } label: {
+                    Label("Reveal all tape", systemImage: "eye")
+                }
+                Button {
+                    Task { await model.setAllTape(hidden: false, on: nil) }
+                } label: {
+                    Label("Cover all tape", systemImage: "eye.slash")
+                }
             } label: {
                 Image(systemName: "ellipsis.circle")
             }
             .accessibilityLabel("More")
         }
     }
-
 }
 
 // MARK: - Actions
 
 extension EditorScreen {
-    /// Beautify = transform the handwriting IN PLACE: OCR the page's ink, let
-    /// NOVA tidy it into clean prose, drop it where the writing was, then wipe
-    /// the ink. Falls back to the raw OCR text if NOVA is unreachable/offline.
-    private func beautifyFocusedPage() async {
-        // Grab the best live drawing — the focused page if it has ink, otherwise
-        // whatever canvas was last drawn on — so Beautify never silently no-ops
-        // because the target canvas scrolled offscreen.
-        guard let (pageID, drawing) = tracker.bestDrawing(preferring: model.focusedPageID) else {
+    /// Beautifies the focused page right now: the same engine the real-time pass
+    /// uses, run on demand from the ✨ panel.
+    func beautifyFocusedPage() async {
+        guard let (pageID, drawing) = tracker.bestDrawing(preferring: model.focusedPageID),
+              !drawing.strokes.isEmpty else {
             editorNotice = "Write something with the pencil first, then tap Beautify."
             return
         }
         beautifying = true
         defer { beautifying = false }
-        let raw = await model.recognizedHandwriting(pageID: pageID, drawing: drawing)
-        guard !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            editorNotice = "Couldn't read that handwriting. Try writing a little larger."
-            return
-        }
-        let cleaned = await services.beautifyText(raw) ?? raw
-        let origin = tracker.inkBounds(for: pageID)?.origin ?? .zero
-        // Honor the selected font — including a user-uploaded OTF/TTF.
-        let font = services.fontStore.resolve(id: toolState.beautifyFontID)
-            ?? FontLibrary.font(id: toolState.beautifyFontID)
-        await model.placeBeautifiedText(
-            cleaned, at: origin,
-            fontName: font.fontName,
-            colorHex: theme.ink.hexString,
-            pageID: pageID
+        let pageSize = model.page(pageID)?.logicalSize ?? PageGeometry.size
+        var settings = toolState.beautify
+        // The button works whether or not the live switch is on.
+        settings.isEnabled = true
+        var didChange = false
+        await beautifier.runNow(
+            pageID: pageID,
+            settings: settings,
+            fontName: beautifyFontName,
+            pageSize: pageSize,
+            drawing: { tracker.drawing(for: pageID) },
+            apply: { plan, remaining in
+                tracker.setDrawing(remaining, for: pageID)
+                await model.apply(plan: plan, to: pageID)
+                didChange = !plan.isEmpty
+            }
         )
-        // Replace, don't stack: remove the original handwriting now that its
-        // typeset version sits in the same spot.
-        tracker.clearDrawing(for: pageID)
+        if !didChange {
+            editorNotice = "Couldn't read that handwriting. Try writing a little larger."
+        }
     }
 
-    private func handlePickedPhoto(_ item: PhotosPickerItem?) async {
+    func handlePickedPhoto(_ item: PhotosPickerItem?) async {
         guard let item, let data = try? await item.loadTransferable(type: Data.self) else { return }
         await model.insertImage(data, fileExtension: "jpg")
         photoItem = nil
     }
 
-    private func handleImportedFile(_ result: Result<URL, Error>) {
+    func handleImportedFile(_ result: Result<URL, Error>) {
         guard case .success(let url) = result else { return }
         let accessing = url.startAccessingSecurityScopedResource()
         defer { if accessing { url.stopAccessingSecurityScopedResource() } }
@@ -404,16 +353,18 @@ extension EditorScreen {
         }
     }
 
-    private func recognizeHandwriting() async {
+    func recognizeHandwriting() async {
         guard let pageID = model.focusedPageID,
               let drawing = tracker.drawing(for: pageID) else { return }
-        let text = await model.recognizeText(pageID: pageID, drawing: drawing)
+        let text = await model.recognizeText(
+            pageID: pageID, drawing: drawing, language: toolState.beautify.language
+        )
         if !text.isEmpty { ocrText = OCRResult(text: text) }
     }
 
     /// Magic pen finished: map the scribble to the page under it, crop that
-    /// region (text OR image), and hand it to NOVA.
-    private func handleMagicPen(_ points: [CGPoint]) {
+    /// region (text OR image), and hand it to NOVA in the sidebar.
+    func handleMagicPen(_ points: [CGPoint]) {
         explainMode = false
         guard points.count > 1 else { return }
         let xs = points.map(\.x), ys = points.map(\.y)
@@ -427,7 +378,8 @@ extension EditorScreen {
             ?? model.focusedPageID.flatMap { id in pageFrames[id].map { (id, $0) } }
         guard let (pageID, frame) = target, frame.width > 1 else { return }
 
-        let scale = frame.width / PageGeometry.size.width
+        let logicalSize = model.page(pageID)?.logicalSize ?? PageGeometry.size
+        let scale = frame.width / logicalSize.width
         let onPage = region.intersection(frame)
         guard onPage.width > 8, onPage.height > 8 else { return }
         let logical = CGRect(
@@ -441,32 +393,38 @@ extension EditorScreen {
     }
 
     @MainActor
-    private func runMagicExplain(pageID: UUID, logicalRegion: CGRect) async {
+    func runMagicExplain(pageID: UUID, logicalRegion: CGRect) async {
         guard let page = model.page(pageID) else { return }
         let full = renderPageImage(page)
-        let cropped = crop(full, to: logicalRegion) ?? full
+        let cropped = crop(full, to: logicalRegion, logicalSize: page.logicalSize) ?? full
         let ocr = await model.ocr(image: cropped)
         let jpeg = cropped.jpegData(compressionQuality: 0.7) ?? Data()
 
-        let conversation = services.makeNovaConversation()
-        conversation.explainRegion(image: jpeg, ocrHint: ocr)
-        novaConversation = conversation
+        if novaConversation == nil {
+            novaConversation = services.makeNovaConversation()
+        }
+        novaConversation?.explainRegion(image: jpeg, ocrHint: ocr)
         showNova = true
     }
 
-    /// Renders one page (paper + margin + ink + elements) to an image in the
-    /// fixed logical page space, so the magic pen can crop a region from it.
+    /// Renders one page (paper + margin + ink + elements) to an image in its own
+    /// logical page space, so the magic pen can crop a region from it.
     @MainActor
-    private func renderPageImage(_ page: PageRecord, scale: CGFloat = 2) -> UIImage {
-        let pageRect = CGRect(origin: .zero, size: PageGeometry.size)
+    func renderPageImage(_ page: PageRecord, scale: CGFloat = 2) -> UIImage {
+        let logicalSize = page.logicalSize
+        let pageRect = CGRect(origin: .zero, size: logicalSize)
         let ink = tracker.drawing(for: page.id)?.image(from: pageRect, scale: scale)
         let content = ZStack {
-            PageTemplateView(template: page.template, margin: page.margin, paperColorHex: page.paperColorHex)
+            PageTemplateView(style: page.style)
             if let bg = backgroundImage(for: page) { Image(uiImage: bg).resizable().scaledToFit() }
             if let ink { Image(uiImage: ink).resizable().scaledToFit() }
-            PageElementsLayer(pageID: page.id, elements: page.elements, model: model, displaySize: PageGeometry.size)
+            PageElementsLayer(
+                pageID: page.id, elements: page.elements, model: model,
+                displaySize: logicalSize, logicalSize: logicalSize,
+                allowsEditing: false, editingTextID: .constant(nil)
+            )
         }
-        .frame(width: PageGeometry.size.width, height: PageGeometry.size.height)
+        .frame(width: logicalSize.width, height: logicalSize.height)
         .environment(\.theme, theme)
         .environment(\.paperTone, paperTone)
         let renderer = ImageRenderer(content: content)
@@ -474,24 +432,65 @@ extension EditorScreen {
         return renderer.uiImage ?? UIImage()
     }
 
-    /// Render every page to a PNG and push it up so the ClassMate ClassNotes tab
-    /// shows real content. Best-effort; SyncService no-ops when signed out.
+    /// Render every page to a PNG and push it up — with the page's playable and
+    /// openable attachments — so the ClassMate ClassNotes tab shows real content.
+    /// Best-effort; SyncService no-ops when signed out.
     @MainActor
-    private func syncPageImages() {
+    func syncPageContent() {
         let pages = model.pages
         guard !pages.isEmpty else { return }
         let images: [NotebookPageImage] = pages.enumerated().compactMap { index, page in
             guard let data = renderPageImage(page, scale: 1.5).pngData() else { return nil }
             return NotebookPageImage(
                 pageIndex: index,
-                dataUrl: "data:image/png;base64,\(data.base64EncodedString())"
+                dataUrl: "data:image/png;base64,\(data.base64EncodedString())",
+                attachments: attachments(for: page)
             )
         }
         services.sync.pushPageImages(notebookID: notebook.id, images: images)
     }
 
+    /// The page's voice notes, files and links, packaged so ClassMate can play and
+    /// open them. Audio and small files travel as data URLs; links as their URL.
+    @MainActor
+    func attachments(for page: PageRecord) -> [NotebookPageAttachment] {
+        page.elements.compactMap { element in
+            switch element.kind {
+            case .audio:
+                guard let filename = element.payloadFilename,
+                      let data = try? Data(contentsOf: model.mediaURL(filename: filename)),
+                      data.count <= NotebookPageAttachment.maximumPayloadBytes else { return nil }
+                return NotebookPageAttachment(
+                    kind: "audio",
+                    name: element.displayName ?? "Voice note",
+                    durationSeconds: element.durationSeconds,
+                    dataUrl: "data:audio/m4a;base64,\(data.base64EncodedString())"
+                )
+            case .file:
+                guard let filename = element.payloadFilename,
+                      let data = try? Data(contentsOf: model.mediaURL(filename: filename)),
+                      data.count <= NotebookPageAttachment.maximumPayloadBytes else { return nil }
+                let mime = NotebookPageAttachment.mimeType(forExtension: (filename as NSString).pathExtension)
+                return NotebookPageAttachment(
+                    kind: "file",
+                    name: element.displayName ?? filename,
+                    dataUrl: "data:\(mime);base64,\(data.base64EncodedString())"
+                )
+            case .link:
+                guard let url = element.urlString else { return nil }
+                return NotebookPageAttachment(
+                    kind: "link",
+                    name: element.displayName ?? url,
+                    url: url
+                )
+            case .image, .text, .tape:
+                return nil
+            }
+        }
+    }
+
     /// The decoded background image for a page (imported PDF/image), or nil.
-    private func backgroundImage(for page: PageRecord) -> UIImage? {
+    func backgroundImage(for page: PageRecord) -> UIImage? {
         guard let filename = page.backgroundPayloadFilename else { return nil }
         if let cached = backgroundCache.image(for: filename) { return cached }
         guard let data = try? Data(contentsOf: model.mediaURL(filename: filename)),
@@ -500,9 +499,9 @@ extension EditorScreen {
         return image
     }
 
-    private func crop(_ image: UIImage, to logical: CGRect) -> UIImage? {
+    func crop(_ image: UIImage, to logical: CGRect, logicalSize: CGSize) -> UIImage? {
         guard let cg = image.cgImage else { return nil }
-        let pixelsPerPoint = CGFloat(cg.width) / PageGeometry.size.width
+        let pixelsPerPoint = CGFloat(cg.width) / logicalSize.width
         let px = CGRect(
             x: logical.minX * pixelsPerPoint, y: logical.minY * pixelsPerPoint,
             width: logical.width * pixelsPerPoint, height: logical.height * pixelsPerPoint
@@ -514,7 +513,7 @@ extension EditorScreen {
 
 /// Over-scroll distances past the top/bottom of the page scroll, used to grow
 /// the notebook on demand.
-private struct Overscroll: Equatable {
+struct Overscroll: Equatable {
     var top: CGFloat
     var bottom: CGFloat
     var scrollable: Bool

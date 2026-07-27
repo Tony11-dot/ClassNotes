@@ -1,0 +1,222 @@
+import CoreGraphics
+import Foundation
+
+/// Path smoothing behind the pen's "Stability" slider.
+///
+/// Stability 1 leaves the pencil's own path alone; higher values average each
+/// point against its neighbours, which straightens the tremor out of a slow line
+/// without shortening it (endpoints are pinned).
+public enum StrokeSmoothing {
+    /// The averaging window for a stability step. 1 → 1 (identity).
+    public static func window(forStability stability: Int) -> Int {
+        let clamped = min(max(stability, PenSettings.stabilityRange.lowerBound),
+                          PenSettings.stabilityRange.upperBound)
+        return clamped * 2 - 1
+    }
+
+    /// Moving-average smoothing with pinned endpoints. Returns `points` unchanged
+    /// for a window of 1 or a path too short to average.
+    public static func smooth(_ points: [CGPoint], window: Int) -> [CGPoint] {
+        guard window > 1, points.count > 2 else { return points }
+        let half = window / 2
+        var result = points
+        for index in 1..<(points.count - 1) {
+            let lower = max(0, index - half)
+            let upper = min(points.count - 1, index + half)
+            var sumX: CGFloat = 0
+            var sumY: CGFloat = 0
+            for j in lower...upper {
+                sumX += points[j].x
+                sumY += points[j].y
+            }
+            let count = CGFloat(upper - lower + 1)
+            result[index] = CGPoint(x: sumX / count, y: sumY / count)
+        }
+        return result
+    }
+
+    public static func smooth(_ points: [CGPoint], stability: Int) -> [CGPoint] {
+        smooth(points, window: window(forStability: stability))
+    }
+}
+
+/// "Scribble to erase": when the mode is on, a quick back-and-forth scrub is
+/// treated as an erase gesture instead of a stroke, and every stroke it crosses
+/// is removed along with the scribble itself.
+///
+/// The test is deliberately conservative — a scribble has to reverse direction
+/// several times *and* fold back over its own bounding box — so ordinary
+/// handwriting (an `m`, a `w`, a crossed `t`) is never mistaken for one.
+public enum ScribbleDetector {
+    /// Minimum direction reversals along the dominant axis.
+    public static let minimumReversals = 4
+    /// Minimum path length relative to the bounding box's diagonal.
+    public static let minimumFoldRatio: CGFloat = 2.6
+
+    public static func isErasureScribble(_ points: [CGPoint]) -> Bool {
+        guard points.count >= 8 else { return false }
+        let box = boundingBox(points)
+        let diagonal = hypot(box.width, box.height)
+        guard diagonal > 24 else { return false }
+        let length = pathLength(points)
+        guard length / diagonal >= minimumFoldRatio else { return false }
+        return reversals(points, horizontal: box.width >= box.height) >= minimumReversals
+    }
+
+    /// Counts sign changes of travel along the dominant axis, ignoring jitter
+    /// below a few points of movement.
+    public static func reversals(_ points: [CGPoint], horizontal: Bool) -> Int {
+        var count = 0
+        var lastSign = 0
+        var accumulated: CGFloat = 0
+        for index in 1..<points.count {
+            let delta = horizontal
+                ? points[index].x - points[index - 1].x
+                : points[index].y - points[index - 1].y
+            accumulated += delta
+            guard abs(accumulated) > 6 else { continue }
+            let sign = accumulated > 0 ? 1 : -1
+            if lastSign != 0, sign != lastSign { count += 1 }
+            lastSign = sign
+            accumulated = 0
+        }
+        return count
+    }
+
+    /// True when any sampled point of `path` comes within `tolerance` of any
+    /// sampled point of `other` — the "did the scrub cross this stroke" test.
+    public static func crosses(_ path: [CGPoint], _ other: [CGPoint], tolerance: CGFloat) -> Bool {
+        guard !path.isEmpty, !other.isEmpty else { return false }
+        let toleranceSquared = tolerance * tolerance
+        // Sample both paths so a very long stroke doesn't make this quadratic-slow.
+        let scrub = sampled(path, maximum: 96)
+        let target = sampled(other, maximum: 96)
+        for point in scrub {
+            for candidate in target {
+                let dx = point.x - candidate.x
+                let dy = point.y - candidate.y
+                if dx * dx + dy * dy <= toleranceSquared { return true }
+            }
+        }
+        return false
+    }
+
+    private static func sampled(_ points: [CGPoint], maximum: Int) -> [CGPoint] {
+        guard points.count > maximum else { return points }
+        let step = points.count / maximum
+        return points.enumerated().compactMap { $0.offset % step == 0 ? $0.element : nil }
+    }
+
+    public static func pathLength(_ points: [CGPoint]) -> CGFloat {
+        guard points.count > 1 else { return 0 }
+        var total: CGFloat = 0
+        for index in 1..<points.count {
+            total += hypot(points[index].x - points[index - 1].x, points[index].y - points[index - 1].y)
+        }
+        return total
+    }
+
+    public static func boundingBox(_ points: [CGPoint]) -> CGRect {
+        guard let first = points.first else { return .zero }
+        var minX = first.x, maxX = first.x, minY = first.y, maxY = first.y
+        for point in points.dropFirst() {
+            minX = min(minX, point.x); maxX = max(maxX, point.x)
+            minY = min(minY, point.y); maxY = max(maxY, point.y)
+        }
+        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+    }
+}
+
+/// Groups stroke bounding boxes into lines of writing — the unit real-time
+/// beautification recognizes and replaces. Pure geometry so it can be tested
+/// without a canvas.
+public enum LineGrouper {
+    /// Groups indices of `boxes` into lines, top-to-bottom, each line's members
+    /// ordered left-to-right. Two boxes share a line when they overlap vertically
+    /// by more than `overlap` of the shorter box.
+    public static func lines(of boxes: [CGRect], overlap: CGFloat = 0.4) -> [[Int]] {
+        let ordered = boxes.enumerated()
+            .filter { !$0.element.isNull && $0.element.height > 0 }
+            .sorted { $0.element.midY < $1.element.midY }
+        var groups: [[Int]] = []
+        var bands: [CGRect] = []
+
+        for (index, box) in ordered {
+            if let match = bands.indices.first(where: { shareLine(bands[$0], box, overlap: overlap) }) {
+                groups[match].append(index)
+                bands[match] = bands[match].union(box)
+            } else {
+                groups.append([index])
+                bands.append(box)
+            }
+        }
+
+        // Sort members left-to-right, then lines top-to-bottom by their band.
+        let sorted = zip(groups, bands)
+            .map { group, band in (group.sorted { boxes[$0].minX < boxes[$1].minX }, band) }
+            .sorted { $0.1.midY < $1.1.midY }
+        return sorted.map(\.0)
+    }
+
+    static func shareLine(_ band: CGRect, _ box: CGRect, overlap: CGFloat) -> Bool {
+        let top = max(band.minY, box.minY)
+        let bottom = min(band.maxY, box.maxY)
+        let shared = bottom - top
+        guard shared > 0 else { return false }
+        return shared >= min(band.height, box.height) * overlap
+    }
+}
+
+/// Where a beautified line of text goes, and when new writing should join a line
+/// that was already typeset. Pure so the placement rules are pinned by tests.
+public enum BeautifyLayout {
+    /// The frame for a run of typeset text replacing handwriting in `inkBounds`.
+    /// The type sits on the handwriting's own baseline so nothing appears to jump.
+    public static func frame(
+        inkBounds: CGRect,
+        typeSize: Double,
+        lineSpacing: Double,
+        characterCount: Int,
+        in pageSize: CGSize
+    ) -> CGRect {
+        let height = max(typeSize * max(lineSpacing, 1) + 6, typeSize * 1.2)
+        // A typeset run is usually narrower than the handwriting; keep room for
+        // the words that are actually there, and for a few more on the same line.
+        let estimated = Double(max(characterCount, 1)) * typeSize * 0.58 + typeSize
+        let width = min(
+            Double(pageSize.width) - 16,
+            max(Double(inkBounds.width) * 1.05, estimated)
+        )
+        let x = min(max(Double(inkBounds.minX), 8), max(8, Double(pageSize.width) - width - 8))
+        // Center the type band on the handwriting's visual middle.
+        let y = min(
+            max(Double(inkBounds.midY) - height / 2, 4),
+            max(4, Double(pageSize.height) - height - 4)
+        )
+        return CGRect(x: x, y: y, width: width, height: height)
+    }
+
+    /// True when a freshly recognized line belongs to an existing typeset run —
+    /// the student kept writing on the same line, so the words should be appended
+    /// rather than dropped on top as a second box.
+    public static func continues(
+        existing: CGRect, incoming: CGRect, typeSize: Double
+    ) -> Bool {
+        let top = max(existing.minY, incoming.minY)
+        let bottom = min(existing.maxY, incoming.maxY)
+        let shared = bottom - top
+        guard shared > 0, shared >= min(existing.height, incoming.height) * 0.5 else { return false }
+        // Continues to the right of the run, within a few characters' gap.
+        let gap = incoming.minX - existing.maxX
+        return gap > -existing.width * 0.5 && gap < CGFloat(typeSize) * 6
+    }
+
+    /// The two runs joined: the appended text and the widened frame.
+    public static func merged(
+        existing: CGRect, incoming: CGRect, in pageSize: CGSize
+    ) -> CGRect {
+        let union = existing.union(incoming)
+        let width = min(union.width, pageSize.width - union.minX - 8)
+        return CGRect(x: union.minX, y: existing.minY, width: max(width, existing.width), height: existing.height)
+    }
+}

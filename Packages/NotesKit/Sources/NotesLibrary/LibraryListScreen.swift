@@ -68,11 +68,19 @@ public struct LibraryListScreen<Destination: View>: View {
                 HStack(spacing: 14) {
                     NotebookCoverView(
                         title: "",
-                        coverColor: ThemeColor(hex: notebook.coverColorHex) ?? theme.accent
+                        coverColor: ThemeColor(hex: notebook.coverColorHex) ?? theme.accent,
+                        design: notebook.coverDesign,
+                        showsTitle: false
                     )
                     .frame(width: 34)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(notebook.title)
+                        Label {
+                            Text(notebook.title)
+                        } icon: {
+                            if notebook.kind != .notebook {
+                                Image(systemName: notebook.kind.symbolName)
+                            }
+                        }
                             .font(.body.weight(.medium))
                             .foregroundStyle(theme.ink.color)
                         Text(notebook.updatedAt, format: .dateTime.day().month().year())

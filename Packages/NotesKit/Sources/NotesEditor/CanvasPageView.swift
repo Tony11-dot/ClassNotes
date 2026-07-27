@@ -5,14 +5,14 @@ import NotesServices
 import PencilKit
 import SwiftUI
 
-/// Tracks which page's canvas last received ink so palette undo/redo targets
-/// the right undo stack.
+/// Tracks which page's canvas last received ink so undo/redo and the page tools
+/// target the right canvas.
 @MainActor
 @Observable
 public final class ActiveCanvasTracker {
     public weak var activeCanvas: PKCanvasView?
-    /// Live canvases by page, so tools (OCR, circle-to-explain) can read a
-    /// page's current ink without waiting for the debounced save.
+    /// Live canvases by page, so tools (OCR, beautify, circle-to-explain) can read
+    /// a page's current ink without waiting for the debounced save.
     private var canvases: [UUID: Weak] = [:]
 
     public init() {}
@@ -35,7 +35,6 @@ public final class ActiveCanvasTracker {
         if let pageID, let drawing = canvases[pageID]?.view?.drawing, !drawing.strokes.isEmpty {
             return (pageID, drawing)
         }
-        // Fall back to any registered canvas that actually has ink.
         for (id, weak) in canvases {
             if let drawing = weak.view?.drawing, !drawing.strokes.isEmpty {
                 return (id, drawing)
@@ -44,7 +43,7 @@ public final class ActiveCanvasTracker {
         return nil
     }
 
-    /// Replace a page's live drawing (used by shape-snapping and clear).
+    /// Replace a page's live drawing (used by shape-snapping, beautify and clear).
     public func setDrawing(_ drawing: PKDrawing, for pageID: UUID) {
         canvases[pageID]?.view?.drawing = drawing
     }
@@ -54,36 +53,56 @@ public final class ActiveCanvasTracker {
     }
 
     /// The bounding box of a page's ink in logical page space, or nil if empty.
-    /// Used by beautify to drop the typeset text where the handwriting was.
     public func inkBounds(for pageID: UUID) -> CGRect? {
         guard let bounds = canvases[pageID]?.view?.drawing.bounds,
               !bounds.isNull, !bounds.isEmpty else { return nil }
         return bounds
     }
 
-    /// Wipe a page's ink (beautify replaces handwriting with typeset text in
-    /// place). Setting `.drawing` fires the canvas delegate, which persists it.
+    /// Wipe a page's ink. Setting `.drawing` fires the canvas delegate, which
+    /// persists it.
     public func clearDrawing(for pageID: UUID) {
         canvases[pageID]?.view?.drawing = PKDrawing()
     }
 }
 
-/// `PKCanvasView` pinned to the fixed logical page space (768×1024): ink
-/// coordinates are device-independent, and the scroll view zoom keeps strokes
-/// vector-crisp at any on-screen size.
+/// `PKCanvasView` pinned to the page's logical space: ink coordinates are
+/// device-independent, and the scroll view zoom keeps strokes vector-crisp at any
+/// on-screen size. Boards (`allowsZoom`) start fitted and pinch to zoom in.
 final class PageCanvasView: PKCanvasView {
+    var logicalSize: CGSize = PageGeometry.size
+    var allowsZoom = false
+    private var didFit = false
+
     override func layoutSubviews() {
         super.layoutSubviews()
-        let scale = bounds.width / PageGeometry.size.width
-        guard scale > 0 else { return }
-        if abs(zoomScale - scale) > 0.0001 {
-            minimumZoomScale = scale
-            maximumZoomScale = scale
-            zoomScale = scale
+        guard bounds.width > 0, logicalSize.width > 0, logicalSize.height > 0 else { return }
+        if allowsZoom {
+            let fit = min(bounds.width / logicalSize.width, bounds.height / logicalSize.height)
+            guard fit > 0 else { return }
+            minimumZoomScale = fit
+            maximumZoomScale = fit * 8
+            isScrollEnabled = true
+            if !didFit {
+                zoomScale = fit
+                didFit = true
+            }
+        } else {
+            let fit = bounds.width / logicalSize.width
+            guard fit > 0 else { return }
+            if abs(zoomScale - fit) > 0.0001 {
+                minimumZoomScale = fit
+                maximumZoomScale = fit
+                zoomScale = fit
+            }
         }
+        syncContentSize()
+    }
+
+    func syncContentSize() {
         contentSize = CGSize(
-            width: PageGeometry.size.width * scale,
-            height: PageGeometry.size.height * scale
+            width: logicalSize.width * zoomScale,
+            height: logicalSize.height * zoomScale
         )
     }
 }
@@ -95,16 +114,29 @@ struct CanvasPageView: UIViewRepresentable {
     let page: PageRecord
     let toolState: ToolState
     let tracker: ActiveCanvasTracker
+    let beautifier: LiveBeautifier
+    /// The resolved PostScript name for the beautification font (custom faces
+    /// included) — the editor owns the font store, so it resolves this.
+    let beautifyFontName: String
+    /// A board pans and zooms instead of being pinned to a fit scale.
+    var allowsZoom = false
     var onFocus: (UUID) -> Void = { _ in }
+    /// Applies a finished beautification pass to the manifest.
+    var onBeautified: (BeautifyPlan) async -> Void = { _ in }
 
     @Environment(AppServices.self) private var services
     @Environment(\.theme) private var theme
 
     func makeUIView(context: Context) -> PageCanvasView {
         let canvas = PageCanvasView()
+        canvas.logicalSize = page.logicalSize
+        canvas.allowsZoom = allowsZoom
         canvas.backgroundColor = .clear
         canvas.isOpaque = false
-        canvas.isScrollEnabled = false
+        canvas.isScrollEnabled = allowsZoom
+        canvas.bouncesZoom = false
+        canvas.showsVerticalScrollIndicator = allowsZoom
+        canvas.showsHorizontalScrollIndicator = allowsZoom
         // Pencil-only drawing = system-grade palm rejection; fingers scroll
         // the page list instead of leaving marks.
         canvas.drawingPolicy = .pencilOnly
@@ -123,9 +155,13 @@ struct CanvasPageView: UIViewRepresentable {
 
     func updateUIView(_ canvas: PageCanvasView, context: Context) {
         context.coordinator.toolState = toolState
+        context.coordinator.beautifyFontName = beautifyFontName
+        context.coordinator.onBeautified = onBeautified
+        context.coordinator.pageSize = page.logicalSize
+        canvas.logicalSize = page.logicalSize
         canvas.tool = toolState.pkTool(theme: theme)
-        // Hand (object) mode: stop the canvas from capturing the pencil so the
-        // element layer's move/resize gestures win. Any other tool draws.
+        // Tape / text / move modes: stop the canvas from capturing the pencil so
+        // the overlay's gestures win. Any writing tool draws.
         canvas.drawingGestureRecognizer.isEnabled = toolState.isDrawingEnabled
         canvas.overrideUserInterfaceStyle = theme.isDark ? .dark : .light
     }
@@ -138,43 +174,58 @@ struct CanvasPageView: UIViewRepresentable {
         Coordinator(
             notebookID: notebookID,
             pageID: page.id,
+            pageSize: page.logicalSize,
             store: services.documentStore,
             toolState: toolState,
             tracker: tracker,
+            beautifier: beautifier,
+            beautifyFontName: beautifyFontName,
             onFocus: onFocus
         )
     }
 
     @MainActor
     final class Coordinator: NSObject, PKCanvasViewDelegate, UIPencilInteractionDelegate {
-        weak var canvas: PKCanvasView?
+        weak var canvas: PageCanvasView?
         var toolState: ToolState
+        var beautifyFontName: String
+        var pageSize: CGSize
+        var onBeautified: (BeautifyPlan) async -> Void = { _ in }
 
         private let notebookID: UUID
         private let pageID: UUID
         private let store: DocumentStore
         private let tracker: ActiveCanvasTracker
+        private let beautifier: LiveBeautifier
         private let onFocus: (UUID) -> Void
         private var saveTask: Task<Void, Never>?
         private var loaded = false
         /// Stroke count after the last change, so we can tell an ADDED stroke
-        /// (candidate for shape-snapping) from an erase or a snap replacement.
+        /// (candidate for shaping / snapping / scribble-erase) from an erase or a
+        /// replacement we made ourselves.
         private var lastStrokeCount = 0
-        private var isSnapping = false
+        /// Guards the reentrant `drawing` assignments we make while reshaping.
+        private var isRewriting = false
 
         init(
             notebookID: UUID,
             pageID: UUID,
+            pageSize: CGSize,
             store: DocumentStore,
             toolState: ToolState,
             tracker: ActiveCanvasTracker,
+            beautifier: LiveBeautifier,
+            beautifyFontName: String,
             onFocus: @escaping (UUID) -> Void
         ) {
             self.notebookID = notebookID
             self.pageID = pageID
+            self.pageSize = pageSize
             self.store = store
             self.toolState = toolState
             self.tracker = tracker
+            self.beautifier = beautifier
+            self.beautifyFontName = beautifyFontName
             self.onFocus = onFocus
         }
 
@@ -192,26 +243,80 @@ struct CanvasPageView: UIViewRepresentable {
         // MARK: PKCanvasViewDelegate
 
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
-            guard loaded, !isSnapping else { return }
+            guard loaded, !isRewriting else { return }
             tracker.activeCanvas = canvasView
             onFocus(pageID)
-            maybeSnapShape(on: canvasView)
+
+            let added = canvasView.drawing.strokes.count == lastStrokeCount + 1
+            if added, handleScribbleErase(on: canvasView) {
+                lastStrokeCount = canvasView.drawing.strokes.count
+                scheduleSave(canvasView.drawing)
+                return
+            }
+            if added {
+                reshapeLastStroke(on: canvasView)
+            }
             lastStrokeCount = canvasView.drawing.strokes.count
             scheduleSave(canvasView.drawing)
+            scheduleBeautification()
         }
 
-        /// If the user just completed a stroke and held at its end, replace it
-        /// with a clean geometric shape (line / ellipse / rectangle / triangle).
-        private func maybeSnapShape(on canvasView: PKCanvasView) {
-            let strokes = canvasView.drawing.strokes
-            guard strokes.count == lastStrokeCount + 1,
-                  let last = strokes.last,
-                  let snapped = ShapeSnapper.snapped(last) else { return }
-            isSnapping = true
+        func scrollViewDidZoom(_ scrollView: UIScrollView) {
+            (scrollView as? PageCanvasView)?.syncContentSize()
+        }
+
+        /// Scribble-to-erase: a quick back-and-forth scrub deletes what it crosses.
+        /// Returns true when the gesture was consumed as an erase.
+        private func handleScribbleErase(on canvasView: PKCanvasView) -> Bool {
+            guard toolState.scribbleToErase, toolState.tool == .pen,
+                  let cleaned = ScribbleEraser.applying(to: canvasView.drawing) else { return false }
+            isRewriting = true
+            canvasView.drawing = cleaned
+            isRewriting = false
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            return true
+        }
+
+        /// Snap a held stroke to a clean shape, otherwise apply the pen's own
+        /// stability / sensitivity tuning to it.
+        private func reshapeLastStroke(on canvasView: PKCanvasView) {
             var drawing = canvasView.drawing
-            drawing.strokes[drawing.strokes.count - 1] = snapped
+            guard let last = drawing.strokes.last else { return }
+            let replacement: PKStroke?
+            if toolState.snapShapes, let snapped = ShapeSnapper.snapped(last) {
+                replacement = snapped
+            } else if toolState.tool == .pen {
+                replacement = PenShaper.shaped(last, settings: toolState.penSettings)
+            } else {
+                replacement = nil
+            }
+            guard let replacement else { return }
+            isRewriting = true
+            drawing.strokes[drawing.strokes.count - 1] = replacement
             canvasView.drawing = drawing
-            isSnapping = false
+            isRewriting = false
+        }
+
+        /// Hand the page to the live beautifier; it debounces and only fires once
+        /// the pencil rests.
+        private func scheduleBeautification() {
+            guard toolState.beautify.isEnabled else { return }
+            beautifier.inkChanged(
+                pageID: pageID,
+                settings: toolState.beautify,
+                fontName: beautifyFontName,
+                pageSize: pageSize,
+                drawing: { [weak self] in self?.canvas?.drawing },
+                apply: { [weak self] plan, remaining in
+                    guard let self else { return }
+                    self.isRewriting = true
+                    self.canvas?.drawing = remaining
+                    self.lastStrokeCount = remaining.strokes.count
+                    self.isRewriting = false
+                    await self.onBeautified(plan)
+                    self.scheduleSave(remaining)
+                }
+            )
         }
 
         // MARK: Saving

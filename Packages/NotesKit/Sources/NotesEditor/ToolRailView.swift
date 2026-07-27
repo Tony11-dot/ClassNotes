@@ -1,15 +1,22 @@
 import ClassMateTheme
 import NotesDesignSystem
 import NotesModels
+import NotesServices
 import SwiftUI
 
 /// The editor's floating tool rail: draggable, snaps to the left/right edge.
-/// Each drawing tool (pen / marker / eraser) taps to select AND expands its
-/// settings in a popover; ruler toggles the straight-edge; insert/record fire
-/// actions; hand switches to object mode; page settings and the page manager
-/// each open their own panel.
+///
+/// Two halves, top to bottom:
+/// - **Modes and actions** — write, tape, text box, photo, file, voice note, the
+///   page manager, and the real-time beautification switch.
+/// - **The pen tray** — every instrument in `PenLibrary` plus the eraser and the
+///   ruler. The selected instrument lifts out of the rail; tapping it a second
+///   time opens its settings, exactly like picking a pen up off a desk and then
+///   inspecting it.
+/// - **NOVA**, at the foot.
 struct ToolRailView: View {
     @Environment(\.theme) private var theme
+    @Environment(AppServices.self) private var services
 
     @Bindable var toolState: ToolState
     let model: NotebookEditorModel
@@ -20,17 +27,26 @@ struct ToolRailView: View {
     let onPhoto: () -> Void
     let onFile: () -> Void
     let onRecord: () -> Void
-    let onBeautify: () -> Void
+    let onBeautifyNow: () -> Void
+    let onNova: () -> Void
+    let onTapeVisibility: (Bool) -> Void
 
     @State private var center: CGPoint?
     @State private var dragStart: CGPoint?
     @State private var panel: Panel?
     @Namespace private var glassNamespace
 
-    enum Panel: Hashable { case pen, marker, eraser, pageSettings }
+    enum Panel: Hashable {
+        case pen(String)
+        case eraser
+        case tape
+        case text
+        case beautify
+        case pageSettings
+    }
 
     private static let edgeInset: CGFloat = 30
-    private static let railWidth: CGFloat = 60
+    private static let railWidth: CGFloat = 58
 
     var body: some View {
         GeometryReader { geo in
@@ -43,37 +59,12 @@ struct ToolRailView: View {
 
     private var rail: some View {
         GlassEffectContainer {
-            VStack(spacing: 3) {
-                toolButton(.pen, panel: .pen)
-                toolButton(.marker, panel: .marker)
-                toolButton(.eraser, panel: .eraser)
-
+            VStack(spacing: 2) {
+                modeButtons
                 divider
-
-                DSGlassIconButton("Ruler", systemImage: "ruler", isActive: rulerVisible) {
-                    rulerVisible.toggle()
-                }
-
+                penTray
                 divider
-
-                DSGlassIconButton("Photo", systemImage: "photo") { onPhoto() }
-                DSGlassIconButton("File", systemImage: "paperclip") { onFile() }
-                DSGlassIconButton("Record", systemImage: "mic") { onRecord() }
-
-                divider
-
-                DSGlassIconButton("Hand", systemImage: ToolState.Tool.hand.symbolName,
-                                  isActive: toolState.tool == .hand) {
-                    toolState.select(.hand)
-                    panel = nil
-                }
-                pageSettingsButton
-                DSGlassIconButton("Pages", systemImage: "square.grid.2x2", isActive: showPages) {
-                    showPages.toggle()
-                }
-
-                divider
-
+                DSGlassIconButton("Ask NOVA", systemImage: "sparkles") { onNova() }
                 DSGlassIconButton("Undo", systemImage: "arrow.uturn.backward") {
                     tracker.activeCanvas?.undoManager?.undo()
                 }
@@ -81,51 +72,190 @@ struct ToolRailView: View {
                     tracker.activeCanvas?.undoManager?.redo()
                 }
             }
-            .padding(.vertical, 10)
-            .padding(.horizontal, 6)
-            .dsGlass(in: RoundedRectangle(cornerRadius: 28, style: .continuous), interactive: true)
+            .padding(.vertical, 8)
+            .padding(.horizontal, 5)
+            .dsGlass(in: RoundedRectangle(cornerRadius: 26, style: .continuous), interactive: true)
             .glassEffectID("tool-rail", in: glassNamespace)
         }
         .shadow(color: .black.opacity(0.22), radius: 16, y: 8)
         .frame(width: Self.railWidth)
     }
 
-    private var divider: some View {
-        Divider().frame(width: 26).overlay(theme.separator.color).padding(.vertical, 2)
-    }
-
-    private func toolButton(_ tool: ToolState.Tool, panel which: Panel) -> some View {
-        DSGlassIconButton(tool.displayName, systemImage: tool.symbolName, isActive: toolState.tool == tool) {
-            toolState.select(tool)
-            panel = which
-        }
-        .popover(isPresented: panelBinding(which), arrowEdge: .leading) {
-            toolPanel(for: which)
-                .presentationCompactAdaptation(.popover)
-        }
-    }
-
-    private var pageSettingsButton: some View {
-        DSGlassIconButton("Page settings", systemImage: "slider.horizontal.3") {
-            panel = .pageSettings
-        }
-        .popover(isPresented: panelBinding(.pageSettings), arrowEdge: .leading) {
-            PageSettingsPanel(model: model)
-                .presentationCompactAdaptation(.popover)
-        }
-    }
+    // MARK: - Modes
 
     @ViewBuilder
-    private func toolPanel(for which: Panel) -> some View {
-        switch which {
-        case .pen: PenPanel(toolState: toolState, onBeautify: onBeautify)
-        case .marker: MarkerPanel(toolState: toolState)
-        case .eraser: EraserPanel(toolState: toolState)
-        case .pageSettings: PageSettingsPanel(model: model)
+    private var modeButtons: some View {
+        // Write — the headline control, filled when active like the screenshot.
+        Button {
+            _ = toolState.selectPen(toolState.pen)
+        } label: {
+            Image(systemName: "pencil")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(
+                    toolState.tool == .pen
+                        ? theme.contrastingInk(on: theme.accent).color
+                        : theme.ink.color
+                )
+                .frame(width: 40, height: 40)
+                .background {
+                    if toolState.tool == .pen { Circle().fill(theme.accent.color) }
+                }
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Write")
+        .padding(.bottom, 2)
+
+        railButton("Tape", systemImage: "square.on.square.dashed", isActive: toolState.tool == .tape) {
+            toolState.select(.tape)
+            panel = .tape
+        }
+        .popover(isPresented: binding(.tape), arrowEdge: .leading) {
+            TapePanel(toolState: toolState, onVisibility: onTapeVisibility)
+                .presentationCompactAdaptation(.popover)
+        }
+
+        railButton("Voice note", systemImage: "mic") { onRecord() }
+        railButton("Photo", systemImage: "photo") { onPhoto() }
+
+        railButton("Text box", systemImage: "textformat", isActive: toolState.tool == .text) {
+            toolState.select(.text)
+            panel = .text
+        }
+        .popover(isPresented: binding(.text), arrowEdge: .leading) {
+            TextBoxPanel(toolState: toolState)
+                .presentationCompactAdaptation(.popover)
+        }
+
+        railButton("File", systemImage: "paperclip") { onFile() }
+        railButton("Pages", systemImage: "book", isActive: showPages) { showPages.toggle() }
+
+        beautifyButton
+    }
+
+    /// The ✨ switch: a tap opens its settings, a long press flips it on/off.
+    private var beautifyButton: some View {
+        Button {
+            panel = .beautify
+        } label: {
+            VStack(spacing: -2) {
+                Image(systemName: "wand.and.sparkles")
+                    .font(.system(size: 16, weight: .medium))
+                Text(toolState.beautify.isEnabled ? "ON" : "OFF")
+                    .font(.system(size: 8, weight: .heavy))
+            }
+            .foregroundStyle(toolState.beautify.isEnabled ? theme.accent.color : theme.inkSecondary.color)
+            .frame(width: 44, height: 42)
+            .background {
+                if toolState.beautify.isEnabled { Circle().fill(theme.accentMuted.color) }
+            }
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Real-time handwriting beautification")
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.4).onEnded { _ in
+                toolState.beautify.isEnabled.toggle()
+            }
+        )
+        .popover(isPresented: binding(.beautify), arrowEdge: .leading) {
+            BeautifyPanel(toolState: toolState, onBeautifyNow: onBeautifyNow)
+                .presentationCompactAdaptation(.popover)
         }
     }
 
-    private func panelBinding(_ which: Panel) -> Binding<Bool> {
+    // MARK: - Pen tray
+
+    private var penTray: some View {
+        VStack(spacing: 4) {
+            ForEach(PenLibrary.all) { preset in
+                trayItem(preset)
+            }
+            eraserItem
+            railButton("Ruler", systemImage: "ruler", isActive: rulerVisible) {
+                rulerVisible.toggle()
+            }
+            railButton("Move things", systemImage: "hand.point.up.left", isActive: toolState.tool == .hand) {
+                toolState.select(.hand)
+                panel = nil
+            }
+        }
+    }
+
+    private func trayItem(_ preset: PenPreset) -> some View {
+        let isSelected = toolState.tool == .pen && toolState.penPresetID == preset.id
+        let settings = toolState.settings(for: preset)
+        let color = settings.colorHex.flatMap(ThemeColor.init(hex:)) ?? theme.ink
+        return Button {
+            // First tap picks the pen up; tapping the pen already in hand opens
+            // its settings.
+            if toolState.selectPen(preset) {
+                panel = .pen(preset.id)
+            } else {
+                panel = nil
+            }
+        } label: {
+            PenGlyphView(
+                preset: preset,
+                color: color.withAlpha(max(0.35, settings.concentration)),
+                isSelected: isSelected
+            )
+            .frame(width: 46, height: 20)
+            // The selected instrument slides out of the rail, toward the page.
+            .offset(x: isSelected ? 10 : 0)
+            .scaleEffect(isSelected ? 1.08 : 1, anchor: .leading)
+            .frame(width: 46, height: 26)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .animation(.spring(duration: 0.26), value: isSelected)
+        .accessibilityLabel(preset.displayName)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .popover(isPresented: binding(.pen(preset.id)), arrowEdge: .leading) {
+            PenSettingsPanel(toolState: toolState, preset: preset)
+                .presentationCompactAdaptation(.popover)
+        }
+    }
+
+    private var eraserItem: some View {
+        railButton("Eraser", systemImage: "eraser", isActive: toolState.tool == .eraser) {
+            if toolState.tool == .eraser {
+                panel = .eraser
+            } else {
+                toolState.select(.eraser)
+            }
+        }
+        .popover(isPresented: binding(.eraser), arrowEdge: .leading) {
+            EraserPanel(toolState: toolState)
+                .presentationCompactAdaptation(.popover)
+        }
+    }
+
+    // MARK: - Plumbing
+
+    private func railButton(
+        _ label: String, systemImage: String, isActive: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(isActive ? theme.accent.color : theme.ink.color)
+                .frame(width: 44, height: 38)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .background {
+            if isActive { Circle().fill(theme.accentMuted.color).frame(width: 38, height: 38) }
+        }
+    }
+
+    private var divider: some View {
+        Divider().frame(width: 26).overlay(theme.separator.color).padding(.vertical, 3)
+    }
+
+    private func binding(_ which: Panel) -> Binding<Bool> {
         Binding(get: { panel == which }, set: { panel = $0 ? which : nil })
     }
 
@@ -150,7 +280,7 @@ struct ToolRailView: View {
                 let snappedX = current.x < size.width / 2
                     ? Self.edgeInset + half
                     : size.width - Self.edgeInset - half
-                let clampedY = min(max(current.y, 180), size.height - 180)
+                let clampedY = min(max(current.y, 260), max(260, size.height - 260))
                 center = CGPoint(x: snappedX, y: clampedY)
             }
     }

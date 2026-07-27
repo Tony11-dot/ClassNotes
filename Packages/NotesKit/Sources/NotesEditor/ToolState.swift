@@ -5,17 +5,27 @@ import PencilKit
 import UIKit
 
 /// The editor's tool selection + per-tool options, mapped to PencilKit tools.
-/// Default ink colors come from the active theme; the swatch palette is the
-/// theme's ink, accent and cover colors.
+///
+/// The rail has two halves. The top half switches *mode* (write / tape / text /
+/// move) and fires actions; the bottom half is the pen tray — every instrument in
+/// `PenLibrary`, the eraser and the ruler — where the selected one lifts out of
+/// the rail and tapping it again opens its settings.
+///
+/// Default ink colors come from the active theme.
 @MainActor
 @Observable
 public final class ToolState {
-    /// Canvas-affecting modes. Rail actions (ruler, insert, record, page
-    /// settings, page manager) are NOT tools — they live alongside these.
+    /// Canvas-affecting modes. Rail actions (insert, record, page settings, page
+    /// manager, NOVA) are NOT tools — they live alongside these.
     public enum Tool: String, CaseIterable, Sendable, Identifiable {
+        /// Writing with the selected pen from the tray.
         case pen
-        case marker
         case eraser
+        /// Laying down sticky tape that masks what's underneath.
+        case tape
+        /// Tapping the page drops a typed text box.
+        case text
+        /// Moving / resizing the things already on the page; the pencil doesn't draw.
         case hand
 
         public var id: String { rawValue }
@@ -23,101 +33,127 @@ public final class ToolState {
         public var displayName: String {
             switch self {
             case .pen: "Pen"
-            case .marker: "Marker"
             case .eraser: "Eraser"
-            case .hand: "Hand"
+            case .tape: "Tape"
+            case .text: "Text"
+            case .hand: "Move"
             }
         }
 
         public var symbolName: String {
             switch self {
             case .pen: "pencil.tip"
-            case .marker: "highlighter"
             case .eraser: "eraser"
+            case .tape: "square.on.square.dashed"
+            case .text: "textformat"
             case .hand: "hand.point.up.left"
             }
         }
-
-        /// The pen/marker tools carry ink options; eraser has its own; hand has
-        /// none (it moves objects, the pencil doesn't draw).
-        public var hasInkOptions: Bool { self == .pen || self == .marker }
     }
 
-    /// Pen stroke character — maps to PencilKit ink types.
-    public enum PenInk: String, CaseIterable, Sendable, Identifiable {
-        case pen
-        case pencil
-        case fountain
-        case monoline
-
-        public var id: String { rawValue }
-
-        public var displayName: String {
-            switch self {
-            case .pen: "Pen"
-            case .pencil: "Pencil"
-            case .fountain: "Fountain"
-            case .monoline: "Monoline"
-            }
-        }
-
-        public var pkInkType: PKInk.InkType {
-            switch self {
-            case .pen: .pen
-            case .pencil: .pencil
-            case .fountain: .fountainPen
-            case .monoline: .monoline
-            }
-        }
-    }
-
-    /// Eraser precision: pixel (accurate, adjustable size) or whole-stroke.
+    /// Eraser precision: pixel (accurate, adjustable size) or whole-stroke, plus
+    /// tape-only so a strip can be removed without touching the ink under it.
     public enum EraserMode: String, CaseIterable, Sendable, Identifiable {
         case pixel
         case stroke
+        case tapeOnly
 
         public var id: String { rawValue }
 
         public var displayName: String {
             switch self {
             case .pixel: "Pixel"
-            case .stroke: "Whole stroke"
+            case .stroke: "Stroke"
+            case .tapeOnly: "Tape only"
             }
         }
     }
 
+    // MARK: - Mode
+
     public var tool: Tool = .pen
-    /// Last pen/marker tool, for Pencil double-tap toggling.
+    /// Last writing tool, for Pencil double-tap toggling.
     public private(set) var previousDrawingTool: Tool = .pen
 
-    // Pen
-    /// `nil` = follow the theme's ink color.
-    public var penColorHex: String?
-    public var penWidth: Double = 3
-    public var penInk: PenInk = .pen
-    /// Handwriting beautification: when on, "Beautify" re-typesets the page's
-    /// handwriting into `beautifyFontID` (a real text element, not a textbox).
-    public var beautifyEnabled: Bool = false
-    public var beautifyFontID: String = FontLibrary.default.id
+    // MARK: - Pen tray
 
-    // Marker
-    public var markerColorHex: String?
-    public var markerWidth: Double = 14
-    public var markerOpacity: Double = 0.4
+    /// The instrument currently in hand.
+    public var penPresetID: String = PenLibrary.default.id
+    /// Per-instrument tuning, so switching pens keeps each one's own settings.
+    private var tuning: [String: PenSettings] = [:]
 
-    // Eraser
+    public var pen: PenPreset { PenLibrary.preset(id: penPresetID) }
+
+    public func settings(for preset: PenPreset) -> PenSettings {
+        (tuning[preset.id] ?? preset.defaults).normalized(in: preset.widthRange)
+    }
+
+    public var penSettings: PenSettings {
+        get { settings(for: pen) }
+        set { tuning[pen.id] = newValue.normalized(in: pen.widthRange) }
+    }
+
+    /// Stores one instrument's tuning. Panels edit whichever pen they were opened
+    /// for, which is normally — but not necessarily — the one in hand.
+    public func setSettings(_ settings: PenSettings, for preset: PenPreset) {
+        tuning[preset.id] = settings.normalized(in: preset.widthRange)
+    }
+
+    /// Restores one instrument to its catalog defaults ("Reset" in its panel).
+    public func resetPen(_ preset: PenPreset) {
+        tuning[preset.id] = preset.defaults
+    }
+
+    /// Selects a tray instrument. Returns `true` when it was ALREADY selected —
+    /// the rail uses that to open the instrument's settings on the second tap.
+    @discardableResult
+    public func selectPen(_ preset: PenPreset) -> Bool {
+        let wasCurrent = tool == .pen && penPresetID == preset.id
+        penPresetID = preset.id
+        select(.pen)
+        return wasCurrent
+    }
+
+    // MARK: - Tape
+
+    public var tapeShape: TapeShape = .draw
+    public var tapePattern: TapePattern = .stripes
+    public var tapeThickness: Double = TapeGeometry.defaultThickness
+    /// `nil` = follow the theme accent.
+    public var tapeColorHex: String?
+
+    public func tapeColor(theme: ThemeSpec) -> ThemeColor {
+        tapeColorHex.flatMap(ThemeColor.init(hex:)) ?? theme.accentMuted
+    }
+
+    // MARK: - Eraser
+
     public var eraserMode: EraserMode = .pixel
     public var eraserWidth: Double = 20
+    /// Scribble to erase: a quick back-and-forth scrub removes what it crosses
+    /// instead of leaving a stroke. Works with any pen selected.
+    public var scribbleToErase: Bool = false
+    /// Hold at the end of a stroke to straighten it into a clean shape.
+    public var snapShapes: Bool = true
+
+    // MARK: - Text boxes
+
+    public var textFontID: String = FontLibrary.default.id
+    public var textSize: Double = 20
+    public var textColorHex: String?
+
+    // MARK: - Real-time beautification
+
+    public var beautify = BeautifySettings()
 
     public init() {}
 
-    /// The pen draws unless we're in hand (object) mode.
-    public var isDrawingEnabled: Bool { tool != .hand }
-
-    public var beautifyFont: HandwritingFont { FontLibrary.font(id: beautifyFontID) }
+    /// The pen draws unless we're moving things, laying tape, or placing text —
+    /// those modes own the pencil themselves.
+    public var isDrawingEnabled: Bool { tool == .pen || tool == .eraser }
 
     public func select(_ newTool: Tool) {
-        if tool == .pen || tool == .marker {
+        if tool == .pen || tool == .eraser {
             previousDrawingTool = tool
         }
         tool = newTool
@@ -128,17 +164,17 @@ public final class ToolState {
     public func handlePencilTap(preferred: UIPencilPreferredAction) {
         switch preferred {
         case .switchPrevious:
-            let target = previousDrawingTool
-            if tool == .pen || tool == .marker { previousDrawingTool = tool }
+            let target = previousDrawingTool == tool ? Tool.pen : previousDrawingTool
+            previousDrawingTool = tool
             tool = target
         default:
             toggleEraser()
         }
     }
 
-    /// Apple Pencil squeeze: cycle pen → marker → eraser → hand.
+    /// Apple Pencil squeeze: cycle pen → eraser → tape → hand.
     public func handlePencilSqueeze() {
-        let order: [Tool] = [.pen, .marker, .eraser, .hand]
+        let order: [Tool] = [.pen, .eraser, .tape, .hand]
         guard let index = order.firstIndex(of: tool) else {
             select(.pen)
             return
@@ -148,14 +184,15 @@ public final class ToolState {
 
     private func toggleEraser() {
         if tool == .eraser {
-            tool = previousDrawingTool
+            tool = previousDrawingTool == .eraser ? .pen : previousDrawingTool
         } else {
             select(.eraser)
         }
     }
 
-    // MARK: - Colors / widths for the active tool
+    // MARK: - Colors
 
+    /// Swatches offered for ink: the theme's ink + accent, then its cover palette.
     public func inkPalette(theme: ThemeSpec) -> [ThemeColor] {
         var seen = Set<String>()
         var palette: [ThemeColor] = []
@@ -169,27 +206,22 @@ public final class ToolState {
     }
 
     public func currentColor(theme: ThemeSpec) -> ThemeColor {
-        let hex = tool == .marker ? markerColorHex : penColorHex
-        let fallback = tool == .marker ? theme.accent : theme.ink
-        return hex.flatMap(ThemeColor.init(hex:)) ?? fallback
+        penSettings.colorHex.flatMap(ThemeColor.init(hex:)) ?? theme.ink
     }
 
     public func setCurrentColor(_ color: ThemeColor) {
-        if tool == .marker {
-            markerColorHex = color.hexString
-        } else {
-            penColorHex = color.hexString
-        }
+        var updated = penSettings
+        updated.colorHex = color.hexString
+        penSettings = updated
     }
 
+    /// The nominal thickness of the instrument in hand.
     public var currentWidth: Double {
-        get { tool == .marker ? markerWidth : penWidth }
+        get { penSettings.thickness }
         set {
-            if tool == .marker {
-                markerWidth = newValue
-            } else {
-                penWidth = newValue
-            }
+            var updated = penSettings
+            updated.thickness = newValue
+            penSettings = updated
         }
     }
 
@@ -198,20 +230,38 @@ public final class ToolState {
     public func pkTool(theme: ThemeSpec) -> PKTool {
         switch tool {
         case .pen:
-            let color = penColorHex.flatMap(ThemeColor.init(hex:)) ?? theme.ink
-            return PKInkingTool(penInk.pkInkType, color: color.uiColor, width: penWidth)
-        case .marker:
-            let base = (markerColorHex.flatMap(ThemeColor.init(hex:)) ?? theme.accent).uiColor
-            let color = base.withAlphaComponent(markerOpacity)
-            return PKInkingTool(.marker, color: color, width: markerWidth)
+            let preset = pen
+            let settings = settings(for: preset)
+            let base = settings.colorHex.flatMap(ThemeColor.init(hex:)) ?? theme.ink
+            let color = base.uiColor.withAlphaComponent(settings.concentration)
+            return PKInkingTool(preset.ink.pkInkType, color: color, width: settings.effectiveWidth)
         case .eraser:
             switch eraserMode {
             case .pixel: return PKEraserTool(.bitmap, width: eraserWidth)
             case .stroke: return PKEraserTool(.vector)
+            // Tape lives above the ink as page elements, so the canvas itself must
+            // not erase anything in this mode — the tape layer handles the taps.
+            case .tapeOnly: return PKInkingTool(.pen, color: .clear, width: 1)
             }
-        case .hand:
-            // Inert — drawing is disabled in hand mode; the value is unused.
+        case .tape, .text, .hand:
+            // Inert — drawing is disabled in these modes; the value is unused.
             return PKInkingTool(.pen, color: .clear, width: 1)
+        }
+    }
+}
+
+extension PenPreset.Ink {
+    /// The PencilKit ink family behind this pen. Kept here so the model layer
+    /// stays free of PencilKit.
+    public var pkInkType: PKInk.InkType {
+        switch self {
+        case .pen: .pen
+        case .pencil: .pencil
+        case .marker: .marker
+        case .fountainPen: .fountainPen
+        case .monoline: .monoline
+        case .watercolor: .watercolor
+        case .crayon: .crayon
         }
     }
 }

@@ -3,39 +3,30 @@ import NotesDesignSystem
 import NotesModels
 import SwiftUI
 
-/// Per-page settings: paper template (incl. dotted/dashed rules), margin line,
-/// and page color. Applies live so the page updates behind the sheet. Used from
-/// the editor's More menu and the page manager.
+/// Per-page settings: paper template, rule spacing, line and paper colors, the
+/// margin rule, and the page's own size and direction. Applies live so the page
+/// updates behind the sheet. Used from the editor's More menu.
 struct PageSettingsSheet: View {
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
 
     let page: PageRecord
-    /// (template, margin, paperColorHex) — `paperColorHex == nil` means auto.
-    let onApply: (PageTemplate, PageMargin, String?) -> Void
+    let onApply: (PageStyle) -> Void
 
-    @State private var template: PageTemplate
-    @State private var marginPosition: PageMargin.Position
-    @State private var paperColorHex: String?
+    @State private var style: PageStyle
 
-    init(page: PageRecord, onApply: @escaping (PageTemplate, PageMargin, String?) -> Void) {
+    init(page: PageRecord, onApply: @escaping (PageStyle) -> Void) {
         self.page = page
         self.onApply = onApply
-        _template = State(initialValue: page.template)
-        _marginPosition = State(initialValue: page.margin.position)
-        _paperColorHex = State(initialValue: page.paperColorHex)
-    }
-
-    private var currentMargin: PageMargin {
-        PageMargin(position: marginPosition, colorHex: page.margin.colorHex, offset: page.margin.offset)
+        _style = State(initialValue: page.style)
     }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("Preview") {
-                    PageTemplateView(template: template, margin: currentMargin, paperColorHex: paperColorHex)
-                        .aspectRatio(PageGeometry.size.width / PageGeometry.size.height, contentMode: .fit)
+                    PageTemplateView(style: style)
+                        .aspectRatio(PageTemplateView.aspectRatio(of: style), contentMode: .fit)
                         .frame(maxHeight: 260)
                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                         .overlay(
@@ -46,17 +37,41 @@ struct PageSettingsSheet: View {
                         .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
                 }
 
-                Section("Paper") {
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 10) {
-                        ForEach(PageTemplate.allCases) { option in
-                            templateChip(option)
+                ForEach(PageTemplate.Family.allCases) { family in
+                    Section(family.displayName) {
+                        LazyVGrid(
+                            columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 4),
+                            spacing: 10
+                        ) {
+                            ForEach(family.templates) { option in
+                                templateChip(option)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+
+                if style.template.honorsLineSpacing {
+                    Section("Spacing") {
+                        Stepper(
+                            value: $style.lineSpacingSteps,
+                            in: PageLineSpacing.range
+                        ) {
+                            Text("Line spacing — \(style.lineSpacingSteps)")
                         }
                     }
-                    .padding(.vertical, 4)
+                }
+
+                Section("Line color") {
+                    LineColorRow(selection: $style.lineColorHex)
+                }
+
+                Section("Paper color") {
+                    PaperSwatchRow(selection: $style.paperColorHex)
                 }
 
                 Section("Margin line") {
-                    Picker("Margin", selection: $marginPosition) {
+                    Picker("Margin", selection: marginPositionBinding) {
                         ForEach(PageMargin.Position.allCases) { pos in
                             Text(pos.displayName).tag(pos)
                         }
@@ -64,8 +79,18 @@ struct PageSettingsSheet: View {
                     .pickerStyle(.segmented)
                 }
 
-                Section("Page color") {
-                    PaperSwatchRow(selection: $paperColorHex)
+                Section("Paper size") {
+                    Picker("Direction", selection: $style.orientation) {
+                        ForEach(PageOrientation.allCases) { Text($0.displayName).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    Picker("Size", selection: $style.pageSize) {
+                        ForEach(PageSize.notebookChoices) { Text($0.displayName).tag($0) }
+                    }
+                    Text("Changing the size of a page that already has ink keeps the "
+                         + "strokes where they are; they may sit differently on the new paper.")
+                        .font(.caption)
+                        .foregroundStyle(theme.inkSecondary.color)
                 }
             }
             .navigationTitle("Page")
@@ -75,23 +100,27 @@ struct PageSettingsSheet: View {
                     Button("Done") { dismiss() }
                 }
             }
-            .onChange(of: template) { _, _ in apply() }
-            .onChange(of: marginPosition) { _, _ in apply() }
-            .onChange(of: paperColorHex) { _, _ in apply() }
+            .onChange(of: style) { _, updated in onApply(updated) }
         }
     }
 
-    private func apply() {
-        onApply(template, currentMargin, paperColorHex)
+    private var marginPositionBinding: Binding<PageMargin.Position> {
+        Binding(
+            get: { style.margin.position },
+            set: { style.margin.position = $0 }
+        )
     }
 
     private func templateChip(_ option: PageTemplate) -> some View {
-        let selected = option == template
+        var preview = style
+        preview.template = option
+        preview.margin = PageMargin(position: .none)
+        let selected = option == style.template
         return Button {
-            template = option
+            style.template = option
         } label: {
             VStack(spacing: 6) {
-                PageTemplateView(template: option, margin: nil, paperColorHex: paperColorHex)
+                PageTemplateView(style: preview)
                     .aspectRatio(0.78, contentMode: .fit)
                     .frame(height: 62)
                     .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
@@ -103,10 +132,9 @@ struct PageSettingsSheet: View {
                 Text(option.displayName)
                     .font(.caption2)
                     .foregroundStyle(selected ? theme.accent.color : theme.inkSecondary.color)
+                    .lineLimit(1)
             }
         }
         .buttonStyle(.plain)
     }
 }
-// PaperSwatchRow lives in NotesDesignSystem so both the editor and the library
-// (New Notebook) can share it without violating the NotesEditor import rule.

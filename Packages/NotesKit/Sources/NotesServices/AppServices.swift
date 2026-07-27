@@ -22,6 +22,8 @@ public final class AppServices {
     /// Mirrors the local library up to the ClassMate backend so the ClassMate
     /// "ClassNotes" tab shows the user's real notebooks.
     public let sync: SyncService
+    /// Saved NOVA conversations, per notebook.
+    public let novaChats: NovaChatStore
 
     public init(modelContainer: ModelContainer, documentsRootURL: URL? = nil) {
         self.modelContainer = modelContainer
@@ -37,6 +39,7 @@ public final class AppServices {
         self.auth = auth
         self.sync = sync
         self.themeService = ThemeService(context: context, entitlements: entitlements)
+        self.novaChats = NovaChatStore(context: context)
         self.repository = NotebookRepository(
             context: context, store: store, entitlements: entitlements, sync: sync
         )

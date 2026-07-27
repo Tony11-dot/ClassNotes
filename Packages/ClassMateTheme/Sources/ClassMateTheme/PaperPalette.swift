@@ -41,6 +41,42 @@ public enum PaperPalette {
         PaperSwatch(id: "navy",        name: "Navy",         hex: "#182338"),
     ]
 
+    /// Bright white — the stock a quick note and every imported page uses.
+    public static let white = PaperSwatch(id: "white", name: "White", hex: "#FFFFFF")
+
+    /// The default ink/line color offered next to "Auto": true black.
+    public static let black = ThemeColor(hex: "#000000") ?? ThemeColor(red: 0, green: 0, blue: 0)
+
+    /// Rule / grid colors offered by the line-color picker, before the theme's own
+    /// accent and the custom color wheel. Ordered neutral → classic → bright.
+    public static let lineColors: [PaperSwatch] = [
+        PaperSwatch(id: "lineBlack",  name: "Black",  hex: "#000000"),
+        PaperSwatch(id: "lineGray",   name: "Gray",   hex: "#9A9AA0"),
+        PaperSwatch(id: "lineSlate",  name: "Slate",  hex: "#5B6472"),
+        PaperSwatch(id: "lineBlue",   name: "Blue",   hex: "#A9CBEE"),
+        PaperSwatch(id: "lineNavy",   name: "Navy",   hex: "#31527E"),
+        PaperSwatch(id: "lineRed",    name: "Red",    hex: "#D0342C"),
+        PaperSwatch(id: "lineGreen",  name: "Green",  hex: "#5A8F63"),
+        PaperSwatch(id: "linePurple", name: "Purple", hex: "#9B8CD6"),
+        PaperSwatch(id: "lineWhite",  name: "White",  hex: "#FFFFFF")
+    ]
+
+    /// Cover colors offered by the notebook cover picker: the ClassMate accents
+    /// plus real bookbinding stocks (kraft, khaki, leather, denim) that make the
+    /// "simple" covers look like actual notebooks.
+    public static let coverStocks: [PaperSwatch] = [
+        PaperSwatch(id: "coverKhaki",   name: "Khaki",   hex: "#B5A183"),
+        PaperSwatch(id: "coverKraft",   name: "Kraft",   hex: "#C09A6B"),
+        PaperSwatch(id: "coverLeather", name: "Leather", hex: "#7A4A32"),
+        PaperSwatch(id: "coverDenim",   name: "Denim",   hex: "#4A6484"),
+        PaperSwatch(id: "coverSlate",   name: "Slate",   hex: "#4C535C"),
+        PaperSwatch(id: "coverIvory",   name: "Ivory",   hex: "#EDE4D3"),
+        PaperSwatch(id: "coverBlush",   name: "Blush",   hex: "#E7B7B4"),
+        PaperSwatch(id: "coverSage",    name: "Sage",    hex: "#9DB39B"),
+        PaperSwatch(id: "coverPlum",    name: "Plum",    hex: "#6C5670"),
+        PaperSwatch(id: "coverInk",     name: "Ink",     hex: "#242A33")
+    ]
+
     /// True when the swatch is a dark stock, so callers can flip ink/line colors
     /// to a light contrast on those pages.
     public static func isDark(_ hex: String?) -> Bool {

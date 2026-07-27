@@ -5,186 +5,403 @@ import NotesServices
 import SwiftUI
 import UniformTypeIdentifiers
 
-// The settings panels that pop out of the tool rail: pen, marker, eraser, and
-// page settings. Split out of ToolRailView to keep each file focused.
+// The panels that pop out of the tool rail: one per instrument, plus tape, text
+// boxes, beautification and page settings. Split out of ToolRailView to keep
+// each file focused.
 
-// MARK: - Shared swatch grid
+// MARK: - Shared controls
 
-struct SwatchGrid: View {
+/// A labelled slider with a value readout on the right — the shape every control
+/// in these panels uses, so the panels read as one system.
+struct PanelSlider: View {
     @Environment(\.theme) private var theme
-    let colors: [String]
-    let selected: String
-    let onSelect: (ThemeColor) -> Void
+
+    let title: String
+    let readout: String
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    var step: Double?
+    /// Shows −/+ steppers beside the readout (the "Thickness" row).
+    var showsSteppers = false
+    var hint: String?
 
     var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 30, maximum: 34), spacing: 8)], spacing: 8) {
-            ForEach(colors, id: \.self) { hex in
-                let swatch = ThemeColor(hex: hex) ?? theme.ink
-                Button {
-                    onSelect(swatch)
-                } label: {
-                    Circle()
-                        .fill(swatch.color)
-                        .frame(width: 30, height: 30)
-                        .overlay {
-                            Circle().strokeBorder(theme.separator.color, lineWidth: 0.5)
-                            if selected == hex {
-                                Circle().strokeBorder(theme.accent.color, lineWidth: 2.5)
-                            }
-                        }
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Color \(hex)")
-            }
-        }
-        .frame(width: 224)
-    }
-}
-
-// MARK: - Pen panel (ink type, color, thickness, beautification)
-
-struct PenPanel: View {
-    @Environment(\.theme) private var theme
-    @Environment(AppServices.self) private var services
-    @Bindable var toolState: ToolState
-    let onBeautify: () -> Void
-    @State private var showFontImporter = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Pen").font(.headline).foregroundStyle(theme.ink.color)
-
-            Picker("Ink", selection: $toolState.penInk) {
-                ForEach(ToolState.PenInk.allCases) { Text($0.displayName).tag($0) }
-            }
-            .pickerStyle(.segmented)
-
-            SwatchGrid(colors: toolState.inkPalette(theme: theme).map(\.hexString),
-                       selected: toolState.currentColor(theme: theme).hexString) {
-                toolState.setCurrentColor($0)
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Thickness — \(Int(toolState.penWidth.rounded())) pt")
-                    .font(.subheadline).foregroundStyle(theme.inkSecondary.color)
-                Slider(value: $toolState.penWidth, in: 1...12)
-            }
-
-            Divider()
-
-            Toggle(isOn: $toolState.beautifyEnabled) {
-                Label("Beautify handwriting", systemImage: "wand.and.stars")
-                    .font(.subheadline).foregroundStyle(theme.ink.color)
-            }
-            if toolState.beautifyEnabled {
-                FontRow(selected: $toolState.beautifyFontID, custom: services.fontStore.fonts)
-                Button {
-                    showFontImporter = true
-                } label: {
-                    Label("Add font (OTF / TTF)", systemImage: "plus")
-                        .font(.caption.weight(.semibold))
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text(title)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(theme.ink.color)
+                if let hint {
+                    Image(systemName: "questionmark.circle")
+                        .font(.caption)
                         .foregroundStyle(theme.accent.color)
+                        .help(hint)
+                        .accessibilityLabel(hint)
                 }
-                .buttonStyle(.plain)
-                Button {
-                    onBeautify()
-                } label: {
-                    Label("Beautify this page", systemImage: "text.badge.checkmark")
-                        .font(.subheadline.weight(.semibold))
-                        .frame(maxWidth: .infinity, minHeight: 38)
+                Spacer()
+                if showsSteppers {
+                    stepper(-1)
                 }
-                .buttonStyle(.glassProminent)
-                Text("Cleans up your handwriting with NOVA and re-typesets it in the chosen font, right where you wrote it.")
-                    .font(.caption).foregroundStyle(theme.inkSecondary.color)
+                Text(readout)
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(theme.inkSecondary.color)
+                if showsSteppers {
+                    stepper(1)
+                }
+            }
+            if let step {
+                Slider(value: $value, in: range, step: step)
+            } else {
+                Slider(value: $value, in: range)
             }
         }
-        .padding(18)
-        .frame(width: 260)
-        .background(theme.surfaceRaised.color)
-        .fileImporter(
-            isPresented: $showFontImporter,
-            allowedContentTypes: [UTType(filenameExtension: "otf") ?? .font, .font],
-            allowsMultipleSelection: true
-        ) { result in
-            guard case .success(let urls) = result else { return }
-            var last: String?
-            for url in urls {
-                if let font = services.fontStore.importFont(from: url) { last = font.id }
+    }
+
+    private func stepper(_ direction: Double) -> some View {
+        Button {
+            let delta = (step ?? (range.upperBound - range.lowerBound) / 40) * direction
+            value = min(max(value + delta, range.lowerBound), range.upperBound)
+        } label: {
+            Image(systemName: direction > 0 ? "plus.circle" : "minus.circle")
+                .font(.system(size: 17))
+                .foregroundStyle(theme.accent.color)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(direction > 0 ? "Increase \(title)" : "Decrease \(title)")
+    }
+}
+
+/// The stability slider's bounds as doubles — spelled out here so the range
+/// operator stays on one line and the call sites read cleanly.
+let penStabilityRange: ClosedRange<Double> =
+    Double(PenSettings.stabilityRange.lowerBound)...Double(PenSettings.stabilityRange.upperBound)
+
+/// The page line-spacing slider's bounds as doubles.
+let pageSpacingRange: ClosedRange<Double> =
+    Double(PageLineSpacing.range.lowerBound)...Double(PageLineSpacing.range.upperBound)
+
+/// The header every panel shares: an optional leading action, a title, and an
+/// optional trailing action.
+struct PanelHeader: View {
+    @Environment(\.theme) private var theme
+
+    let title: String
+    var leading: (label: String, action: () -> Void)?
+    var trailing: (label: String, action: () -> Void)?
+
+    var body: some View {
+        VStack(spacing: 10) {
+            HStack {
+                if let leading {
+                    Button(leading.label, action: leading.action)
+                        .font(.subheadline)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(theme.accent.color)
+                } else {
+                    Spacer().frame(width: 44)
+                }
+                Spacer()
+                Text(title)
+                    .font(.headline)
+                    .foregroundStyle(theme.ink.color)
+                Spacer()
+                if let trailing {
+                    Button(trailing.label, action: trailing.action)
+                        .font(.subheadline)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(theme.accent.color)
+                } else {
+                    Spacer().frame(width: 44)
+                }
             }
-            // Auto-select the freshly imported face so it's ready to use.
-            if let last { toolState.beautifyFontID = last }
+            Divider().overlay(theme.separator.color)
         }
     }
 }
 
-struct FontRow: View {
-    @Environment(\.theme) private var theme
-    @Binding var selected: String
-    /// User-uploaded faces, shown after the curated pack.
-    var custom: [HandwritingFont] = []
+// MARK: - Pen settings
 
-    private var allFonts: [HandwritingFont] { FontLibrary.all + custom }
+/// One instrument's settings: a live preview of the stroke, then the tuning that
+/// actually reshapes it — stability, tip, pressure sensitivity, thickness,
+/// concentration — and its colour.
+struct PenSettingsPanel: View {
+    @Environment(\.theme) private var theme
+
+    let toolState: ToolState
+    let preset: PenPreset
+
+    @State private var showAdvanced = false
+
+    private var settings: PenSettings { toolState.settings(for: preset) }
+
+    private var color: ThemeColor {
+        settings.colorHex.flatMap(ThemeColor.init(hex:)) ?? theme.ink
+    }
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(allFonts) { font in
-                    Button {
-                        selected = font.id
-                    } label: {
-                        Text("Aa")
-                            .font(.custom(font.fontName, size: 20))
-                            .foregroundStyle(theme.ink.color)
-                            .frame(width: 52, height: 44)
-                            .background(theme.surface.color,
-                                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .strokeBorder(selected == font.id ? theme.accent.color : theme.separator.color,
-                                                  lineWidth: selected == font.id ? 2 : 0.5)
-                            )
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                PanelHeader(
+                    title: preset.displayName,
+                    leading: ("Reset", { toolState.resetPen(preset) }),
+                    trailing: (showAdvanced ? "Basic" : "Advanced", { showAdvanced.toggle() })
+                )
+
+                StrokePreview(
+                    color: color, width: settings.effectiveWidth,
+                    opacity: settings.concentration, stability: settings.stability
+                )
+
+                PanelSlider(
+                    title: "Stability",
+                    readout: "\(settings.stability)",
+                    value: binding(\.stability),
+                    range: penStabilityRange,
+                    step: 1,
+                    hint: "Smooths the line as you write. Higher settles a shaky hand."
+                )
+
+                PanelSlider(
+                    title: "Tip",
+                    readout: "\(Int((settings.tip * 100).rounded()))%",
+                    value: binding(\.tip),
+                    range: 0.05...1
+                )
+
+                PanelSlider(
+                    title: "Sensitivity",
+                    readout: "\(Int((settings.sensitivity * 100).rounded()))%",
+                    value: binding(\.sensitivity),
+                    range: 0...1,
+                    hint: "How much pressure changes the stroke width."
+                )
+
+                PanelSlider(
+                    title: "Thickness",
+                    readout: String(format: "%.1f", settings.thickness),
+                    value: binding(\.thickness),
+                    range: preset.widthRange,
+                    step: 0.2,
+                    showsSteppers: true
+                )
+
+                PanelSlider(
+                    title: "Concentration",
+                    readout: "\(Int((settings.concentration * 100).rounded()))%",
+                    value: binding(\.concentration),
+                    range: 0.05...1
+                )
+
+                Divider().overlay(theme.separator.color)
+
+                Text("Color").font(.subheadline.weight(.medium)).foregroundStyle(theme.ink.color)
+                ColorSwatchRow(
+                    swatches: toolState.inkPalette(theme: theme).map(\.hexString),
+                    selection: colorBinding
+                )
+
+                if showAdvanced {
+                    Divider().overlay(theme.separator.color)
+                    Toggle(isOn: Binding(
+                        get: { toolState.scribbleToErase },
+                        set: { toolState.scribbleToErase = $0 }
+                    )) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Scribble to erase")
+                                .font(.subheadline).foregroundStyle(theme.ink.color)
+                            Text("Scrub back and forth over something to rub it out.")
+                                .font(.caption).foregroundStyle(theme.inkSecondary.color)
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(font.displayName)
+                    Toggle(isOn: Binding(
+                        get: { toolState.snapShapes },
+                        set: { toolState.snapShapes = $0 }
+                    )) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Snap shapes")
+                                .font(.subheadline).foregroundStyle(theme.ink.color)
+                            Text("Hold at the end of a stroke to straighten it into a shape.")
+                                .font(.caption).foregroundStyle(theme.inkSecondary.color)
+                        }
+                    }
                 }
             }
-            .padding(.vertical, 2)
+            .padding(18)
         }
-        .frame(width: 224)
-    }
-}
-
-// MARK: - Marker panel
-
-struct MarkerPanel: View {
-    @Environment(\.theme) private var theme
-    @Bindable var toolState: ToolState
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Marker").font(.headline).foregroundStyle(theme.ink.color)
-            SwatchGrid(colors: toolState.inkPalette(theme: theme).map(\.hexString),
-                       selected: toolState.currentColor(theme: theme).hexString) {
-                toolState.setCurrentColor($0)
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Thickness — \(Int(toolState.markerWidth.rounded())) pt")
-                    .font(.subheadline).foregroundStyle(theme.inkSecondary.color)
-                Slider(value: $toolState.markerWidth, in: 6...30)
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Opacity — \(Int((toolState.markerOpacity * 100).rounded()))%")
-                    .font(.subheadline).foregroundStyle(theme.inkSecondary.color)
-                Slider(value: $toolState.markerOpacity, in: 0.1...0.9)
-            }
-        }
-        .padding(18)
-        .frame(width: 260)
+        .frame(width: 288)
+        .frame(maxHeight: 620)
         .background(theme.surfaceRaised.color)
     }
+
+    private var colorBinding: Binding<String?> {
+        Binding(
+            get: { settings.colorHex ?? theme.ink.hexString },
+            set: { hex in
+                var updated = settings
+                updated.colorHex = hex ?? theme.ink.hexString
+                toolState.setSettings(updated, for: preset)
+            }
+        )
+    }
+
+    /// Writes one numeric field back into the instrument's tuning.
+    private func binding(_ keyPath: WritableKeyPath<PenSettings, Double>) -> Binding<Double> {
+        Binding(
+            get: { settings[keyPath: keyPath] },
+            set: { value in
+                var updated = settings
+                updated[keyPath: keyPath] = value
+                toolState.setSettings(updated, for: preset)
+            }
+        )
+    }
+
+    private func binding(_ keyPath: WritableKeyPath<PenSettings, Int>) -> Binding<Double> {
+        Binding(
+            get: { Double(settings[keyPath: keyPath]) },
+            set: { value in
+                var updated = settings
+                updated[keyPath: keyPath] = Int(value.rounded())
+                toolState.setSettings(updated, for: preset)
+            }
+        )
+    }
 }
 
-// MARK: - Eraser panel
+// MARK: - Tape
+
+/// The sticky-tape panel: how the strip is laid down, how thick it is, its
+/// pattern and colour, and the two study shortcuts — lift every strip at once, or
+/// put them all back.
+struct TapePanel: View {
+    @Environment(\.theme) private var theme
+
+    @Bindable var toolState: ToolState
+    /// `true` lifts every strip on the page (reveal), `false` covers them again.
+    let onVisibility: (Bool) -> Void
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                PanelHeader(
+                    title: "Tape Type",
+                    leading: ("Reset", {
+                        toolState.tapeShape = .draw
+                        toolState.tapePattern = .stripes
+                        toolState.tapeThickness = TapeGeometry.defaultThickness
+                        toolState.tapeColorHex = nil
+                    })
+                )
+
+                HStack(spacing: 18) {
+                    ForEach(TapeShape.allCases) { shape in
+                        shapeButton(shape)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+
+                PanelSlider(
+                    title: "Thickness",
+                    readout: String(format: "%.0f", toolState.tapeThickness),
+                    value: $toolState.tapeThickness,
+                    range: TapeGeometry.minThickness...TapeGeometry.maxThickness,
+                    step: 1,
+                    showsSteppers: true
+                )
+                .disabled(toolState.tapeShape == .rectangle)
+                .opacity(toolState.tapeShape == .rectangle ? 0.45 : 1)
+
+                Text("Pattern").font(.subheadline.weight(.medium)).foregroundStyle(theme.ink.color)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(TapePattern.allCases) { pattern in
+                            Button { toolState.tapePattern = pattern } label: {
+                                TapePatternSwatch(
+                                    pattern: pattern,
+                                    color: toolState.tapeColor(theme: theme),
+                                    isSelected: toolState.tapePattern == pattern
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+
+                Divider().overlay(theme.separator.color)
+
+                Text("Color").font(.subheadline.weight(.medium)).foregroundStyle(theme.ink.color)
+                ColorSwatchRow(
+                    swatches: theme.coverPalette.prefix(9).map(\.hexString),
+                    selection: $toolState.tapeColorHex,
+                    includesAuto: true,
+                    showsOpacity: true
+                )
+
+                Divider().overlay(theme.separator.color)
+
+                visibilityRow("All Hidden", systemImage: "eye.slash") { onVisibility(true) }
+                visibilityRow("All Display", systemImage: "eye") { onVisibility(false) }
+
+                Label {
+                    Text("Tap a strip to reveal what's under it, tap again to cover it. "
+                         + "Long-press a strip to delete it, or set the eraser to “Tape only”.")
+                        .font(.caption)
+                        .foregroundStyle(theme.inkSecondary.color)
+                } icon: {
+                    Image(systemName: "questionmark.circle")
+                        .foregroundStyle(theme.inkSecondary.color)
+                }
+            }
+            .padding(18)
+        }
+        .frame(width: 288)
+        .frame(maxHeight: 620)
+        .background(theme.surfaceRaised.color)
+    }
+
+    private func shapeButton(_ shape: TapeShape) -> some View {
+        let isOn = toolState.tapeShape == shape
+        return Button { toolState.tapeShape = shape } label: {
+            VStack(spacing: 6) {
+                Image(systemName: shape.symbolName)
+                    .font(.system(size: 19))
+                    .foregroundStyle(isOn ? theme.accent.color : theme.ink.color)
+                    .frame(width: 52, height: 52)
+                    .background(
+                        isOn ? theme.accentMuted.color : theme.surface.color,
+                        in: Circle()
+                    )
+                    .overlay(Circle().strokeBorder(
+                        isOn ? theme.accent.color : theme.separator.color,
+                        lineWidth: isOn ? 1.5 : 0.5
+                    ))
+                Text(shape.displayName)
+                    .font(.caption2)
+                    .foregroundStyle(isOn ? theme.accent.color : theme.inkSecondary.color)
+                    .lineLimit(1)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func visibilityRow(
+        _ title: String, systemImage: String, action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack {
+                Text(title).font(.subheadline).foregroundStyle(theme.ink.color)
+                Spacer()
+                Image(systemName: systemImage).foregroundStyle(theme.ink.color)
+            }
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Eraser
 
 struct EraserPanel: View {
     @Environment(\.theme) private var theme
@@ -192,125 +409,42 @@ struct EraserPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Eraser").font(.headline).foregroundStyle(theme.ink.color)
+            PanelHeader(title: "Eraser")
             Picker("Mode", selection: $toolState.eraserMode) {
                 ForEach(ToolState.EraserMode.allCases) { Text($0.displayName).tag($0) }
             }
             .pickerStyle(.segmented)
-            if toolState.eraserMode == .pixel {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Size — \(Int(toolState.eraserWidth.rounded())) pt")
-                        .font(.subheadline).foregroundStyle(theme.inkSecondary.color)
-                    Slider(value: $toolState.eraserWidth, in: 6...60)
-                }
-            } else {
+
+            switch toolState.eraserMode {
+            case .pixel:
+                PanelSlider(
+                    title: "Size",
+                    readout: "\(Int(toolState.eraserWidth.rounded())) pt",
+                    value: $toolState.eraserWidth,
+                    range: 6...60,
+                    step: 1
+                )
+            case .stroke:
                 Text("Removes a whole stroke on contact. Undo brings it back.")
                     .font(.subheadline).foregroundStyle(theme.inkSecondary.color)
+            case .tapeOnly:
+                Text("Only lifts tape. Tap a strip to peel it off; the ink underneath is untouched.")
+                    .font(.subheadline).foregroundStyle(theme.inkSecondary.color)
+            }
+
+            Divider().overlay(theme.separator.color)
+
+            Toggle(isOn: $toolState.scribbleToErase) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Scribble to erase").font(.subheadline).foregroundStyle(theme.ink.color)
+                    Text("With any pen, scrub back and forth over something to rub it out.")
+                        .font(.caption).foregroundStyle(theme.inkSecondary.color)
+                }
             }
         }
         .padding(18)
-        .frame(width: 240)
+        .frame(width: 272)
         .background(theme.surfaceRaised.color)
     }
 }
 
-// MARK: - Page settings panel (paper + margin)
-
-struct PageSettingsPanel: View {
-    @Environment(\.theme) private var theme
-    let model: NotebookEditorModel
-
-    private var pageID: UUID? { model.focusedPageID ?? model.pages.first?.id }
-    private var current: PageRecord? { model.page(pageID) }
-    /// Margin color choices come from the theme (no raw hex), plus "Auto".
-    private var marginColors: [ThemeColor] { Array(theme.coverPalette.prefix(5)) }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Page").font(.headline).foregroundStyle(theme.ink.color)
-
-            Text("Paper").font(.subheadline).foregroundStyle(theme.inkSecondary.color)
-            HStack(spacing: 8) {
-                ForEach(PageTemplate.allCases) { template in
-                    paperButton(template)
-                }
-            }
-
-            Divider()
-
-            Text("Margin line").font(.subheadline).foregroundStyle(theme.inkSecondary.color)
-            Picker("Margin", selection: marginPositionBinding) {
-                ForEach(PageMargin.Position.allCases) { Text($0.displayName).tag($0) }
-            }
-            .pickerStyle(.segmented)
-
-            if current?.margin.position != PageMargin.Position.none {
-                marginColorRow
-            }
-        }
-        .padding(18)
-        .frame(width: 260)
-        .background(theme.surfaceRaised.color)
-    }
-
-    private func paperButton(_ template: PageTemplate) -> some View {
-        let isOn = current?.template == template
-        return Button {
-            if let pageID { Task { await model.updatePageSettings(pageID: pageID, template: template) } }
-        } label: {
-            Image(systemName: template.symbolName)
-                .font(.system(size: 18))
-                .frame(width: 44, height: 44)
-                .foregroundStyle(isOn ? theme.accent.color : theme.ink.color)
-                .background(theme.surface.color, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(isOn ? theme.accent.color : theme.separator.color, lineWidth: isOn ? 2 : 0.5))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(template.displayName)
-    }
-
-    private var marginPositionBinding: Binding<PageMargin.Position> {
-        Binding(
-            get: { current?.margin.position ?? .leading },
-            set: { pos in
-                guard let pageID else { return }
-                var margin = current?.margin ?? .default
-                margin.position = pos
-                Task { await model.updatePageSettings(pageID: pageID, margin: margin) }
-            }
-        )
-    }
-
-    private var marginColorRow: some View {
-        HStack(spacing: 8) {
-            marginSwatch(nil)                       // Auto (paper-derived)
-            ForEach(marginColors, id: \.hexString) { color in
-                marginSwatch(color.hexString)
-            }
-        }
-    }
-
-    private func marginSwatch(_ hex: String?) -> some View {
-        let isOn = (current?.margin.colorHex ?? nil) == hex
-        let fill: Color = hex.flatMap { ThemeColor(hex: $0)?.color } ?? theme.separator.color
-        return Button {
-            guard let pageID else { return }
-            var margin = current?.margin ?? .default
-            margin.colorHex = hex
-            Task { await model.updatePageSettings(pageID: pageID, margin: margin) }
-        } label: {
-            ZStack {
-                Circle().fill(fill).frame(width: 28, height: 28)
-                if hex == nil {
-                    Image(systemName: "a.circle").font(.system(size: 13)).foregroundStyle(theme.ink.color)
-                }
-            }
-            .overlay {
-                Circle().strokeBorder(isOn ? theme.accent.color : theme.separator.color, lineWidth: isOn ? 2.5 : 0.5)
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(hex == nil ? "Auto margin color" : "Margin color")
-    }
-}

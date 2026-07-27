@@ -7,18 +7,20 @@ import PencilKit
 import SwiftUI
 import UIKit
 
-/// Owns a notebook's manifest during editing: page list + the media / voice /
-/// text elements layered over the ink. All mutations persist atomically through
-/// `DocumentStore`.
+/// Owns a notebook's manifest during editing: page list plus the media / voice /
+/// text / tape elements layered over the ink. All mutations persist atomically
+/// through `DocumentStore`.
 @MainActor
 @Observable
 public final class NotebookEditorModel {
-    public private(set) var manifest: NotebookManifest?
+    /// `internal(set)` because the insertion half of this model lives in its own
+    /// file; nothing outside the editor may rewrite the manifest.
+    public internal(set) var manifest: NotebookManifest?
     /// The page most recently drawn on / tapped — the target for insertions.
     public var focusedPageID: UUID?
 
-    private let notebookID: UUID
-    private let store: DocumentStore
+    let notebookID: UUID
+    let store: DocumentStore
 
     public init(notebookID: UUID, store: DocumentStore) {
         self.notebookID = notebookID
@@ -41,16 +43,52 @@ public final class NotebookEditorModel {
         return manifest?.pages.first { $0.id == id }
     }
 
+    /// The page an insertion lands on, and its logical size.
+    public var focusedPage: PageRecord? {
+        page(focusedPageID) ?? manifest?.pages.first
+    }
+
+    public var focusedPageSize: CGSize {
+        focusedPage?.logicalSize ?? PageGeometry.size
+    }
+
     // MARK: - Page settings & management
 
     public func updatePageSettings(
         pageID: UUID, template: PageTemplate? = nil, margin: PageMargin? = nil,
-        paperColorHex: String? = nil, clearPaperColor: Bool = false
+        paperColorHex: String? = nil, clearPaperColor: Bool = false,
+        lineColorHex: String? = nil, clearLineColor: Bool = false,
+        lineSpacingSteps: Int? = nil,
+        pageSize: PageSize? = nil, orientation: PageOrientation? = nil
     ) async {
         manifest = try? await store.updatePage(
             notebook: notebookID, page: pageID, template: template, margin: margin,
-            paperColorHex: paperColorHex, clearPaperColor: clearPaperColor
+            paperColorHex: paperColorHex, clearPaperColor: clearPaperColor,
+            lineColorHex: lineColorHex, clearLineColor: clearLineColor,
+            lineSpacingSteps: lineSpacingSteps,
+            pageSize: pageSize, orientation: orientation
         )
+    }
+
+    /// Applies a whole style to one page — what the page-settings sheet edits.
+    public func updatePageSettings(pageID: UUID, style: PageStyle) async {
+        await updatePageSettings(
+            pageID: pageID,
+            template: style.template,
+            margin: style.margin,
+            paperColorHex: style.paperColorHex,
+            clearPaperColor: style.paperColorHex == nil,
+            lineColorHex: style.lineColorHex,
+            clearLineColor: style.lineColorHex == nil,
+            lineSpacingSteps: style.lineSpacingSteps,
+            pageSize: style.pageSize,
+            orientation: style.orientation
+        )
+    }
+
+    /// Copies one page's paper, rules and geometry onto every page.
+    public func applyStyleToAllPages(from pageID: UUID) async {
+        manifest = try? await store.applyStyle(of: pageID, toAllPagesOf: notebookID)
     }
 
     public func deletePage(_ pageID: UUID) async {
@@ -66,14 +104,15 @@ public final class NotebookEditorModel {
         manifest = try? await store.movePage(notebook: notebookID, from: from, to: to)
     }
 
-    /// Inserts a page at `index`, inheriting `source`'s paper + margin (or the
-    /// notebook default). Used by the page manager and infinite scroll.
+    /// Inserts a page at `index`, inheriting `source`'s whole style (or the first
+    /// page's). Used by the page manager and infinite scroll.
     @discardableResult
     public func insertPage(at index: Int, inheriting source: UUID?) async -> UUID? {
-        let template = page(source)?.template ?? manifest?.pages.first?.template ?? .blank
-        let margin = page(source)?.margin ?? .default
+        let style = page(source)?.style
+            ?? manifest?.pages.first?.style
+            ?? PageStyle(template: .blank)
         guard let result = try? await store.insertPage(
-            notebook: notebookID, at: index, template: template, margin: margin
+            notebook: notebookID, at: index, style: style
         ) else { return nil }
         manifest = result.manifest
         return result.page.id
@@ -94,12 +133,30 @@ public final class NotebookEditorModel {
 
     // MARK: - Handwriting beautification
 
-    /// OCRs the page's handwriting → returns the recognized text. The editor
-    /// then cleans it with NOVA and calls `placeBeautifiedText` so the typeset
-    /// text lands where the ink was and the ink is wiped — a true transform, not
-    /// a floating textbox.
+    /// OCRs the page's handwriting → returns the recognized text. Used by the
+    /// explicit "handwriting → text" command; real-time beautification goes
+    /// through `LiveBeautifier` and `apply(plan:)`.
     public func recognizedHandwriting(pageID: UUID, drawing: PKDrawing) async -> String {
         await recognizeText(pageID: pageID, drawing: drawing)
+    }
+
+    /// Commits one beautification pass: new typeset runs are added, runs the
+    /// student continued are rewritten, all in a single manifest write.
+    func apply(plan: BeautifyPlan, to pageID: UUID) async {
+        guard !plan.isEmpty, var current = manifest,
+              let index = current.pages.firstIndex(where: { $0.id == pageID }) else { return }
+        var elements = current.pages[index].elements
+        for updated in plan.updates {
+            if let existing = elements.firstIndex(where: { $0.id == updated.id }) {
+                elements[existing] = updated
+            } else {
+                elements.append(updated)
+            }
+        }
+        elements.append(contentsOf: plan.inserts)
+        current.pages[index].elements = elements
+        manifest = current
+        _ = try? await store.setElements(elements, notebook: notebookID, page: pageID)
     }
 
     /// Drops beautified text onto the page at `origin` (the ink's top-left), so
@@ -108,93 +165,30 @@ public final class NotebookEditorModel {
         _ text: String, at origin: CGPoint, fontName: String, colorHex: String, pageID: UUID
     ) async {
         guard !text.isEmpty else { return }
-        let width = min(PageGeometry.size.width - origin.x - 32, 560)
-        let height = min(720, max(60, Double(text.count) / 42 * 26 + 44))
-        let x = max(24, min(origin.x, PageGeometry.size.width - width - 24))
-        let y = max(24, min(origin.y, PageGeometry.size.height - 60))
+        let pageSize = page(pageID)?.logicalSize ?? PageGeometry.size
+        let width = min(pageSize.width - origin.x - 32, pageSize.width * 0.73)
+        let height = min(pageSize.height * 0.7, max(60, Double(text.count) / 42 * 26 + 44))
+        let x = max(24, min(origin.x, pageSize.width - width - 24))
+        let y = max(24, min(origin.y, pageSize.height - 60))
         await append(PageElement(
             kind: .text, x: x, y: y, width: width, height: height,
             text: text, fontName: fontName, textColorHex: colorHex
         ), to: pageID)
     }
 
-    private var targetPageID: UUID? { focusedPageID ?? manifest?.pages.first?.id }
+    var targetPageID: UUID? { focusedPageID ?? manifest?.pages.first?.id }
 
     /// A target page that actually exists in the current manifest. Used before
     /// writing a media blob so a stale/missing target never leaves an orphaned
     /// payload on disk with no element referencing it.
-    private var existingTargetPageID: UUID? {
+    var existingTargetPageID: UUID? {
         guard let id = targetPageID, manifest?.pages.contains(where: { $0.id == id }) == true else { return nil }
         return id
     }
 
-    // MARK: - Insertions
+    // MARK: - Element plumbing
 
-    private func center(width: Double, height: Double) -> (Double, Double) {
-        let x = (PageGeometry.size.width - width) / 2
-        let y = (PageGeometry.size.height - height) / 2
-        return (max(0, x), max(0, y))
-    }
-
-    public func insertImage(_ data: Data, fileExtension: String) async {
-        guard let pageID = existingTargetPageID,
-              let filename = try? await store.saveMedia(data, notebook: notebookID, fileExtension: fileExtension) else { return }
-        let size = Self.fittedImageSize(data)
-        let (x, y) = center(width: size.width, height: size.height)
-        await append(PageElement(
-            kind: .image, x: x, y: y, width: size.width, height: size.height,
-            payloadFilename: filename
-        ), to: pageID)
-    }
-
-    /// Imports a PDF: appends one annotatable page per PDF page (each with the
-    /// rendered page as its background). Returns the first imported page id.
-    @discardableResult
-    public func importPDF(_ data: Data) async -> UUID? {
-        let insertAt = focusedPageID.flatMap { id in
-            manifest?.pages.firstIndex(where: { $0.id == id }).map { $0 + 1 }
-        }
-        guard let result = try? await store.importPDF(data: data, notebook: notebookID, at: insertAt) else {
-            return nil
-        }
-        manifest = result.manifest
-        if let id = result.firstPageID { focusedPageID = id }
-        return result.firstPageID
-    }
-
-    public func insertFile(_ data: Data, displayName: String, fileExtension: String) async {
-        guard let pageID = existingTargetPageID,
-              let filename = try? await store.saveMedia(data, notebook: notebookID, fileExtension: fileExtension) else { return }
-        let (x, y) = center(width: 260, height: 68)
-        await append(PageElement(
-            kind: .file, x: x, y: y, width: 260, height: 68,
-            payloadFilename: filename, displayName: displayName
-        ), to: pageID)
-    }
-
-    public func insertVoice(fileURL: URL, duration: TimeInterval) async {
-        guard let pageID = existingTargetPageID,
-              let data = try? Data(contentsOf: fileURL),
-              let filename = try? await store.saveMedia(data, notebook: notebookID, fileExtension: "m4a") else { return }
-        let (x, y) = center(width: 240, height: 52)
-        await append(PageElement(
-            kind: .audio, x: x, y: y, width: 240, height: 52,
-            payloadFilename: filename, durationSeconds: duration
-        ), to: pageID)
-    }
-
-    public func insertText(_ text: String, fontName: String, colorHex: String) async {
-        guard let pageID = targetPageID, !text.isEmpty else { return }
-        let width = 460.0
-        let height = min(600, max(80, Double(text.count) / 40 * 26 + 60))
-        let (x, y) = center(width: width, height: height)
-        await append(PageElement(
-            kind: .text, x: x, y: y, width: width, height: height,
-            text: text, fontName: fontName, textColorHex: colorHex
-        ), to: pageID)
-    }
-
-    private func append(_ element: PageElement, to pageID: UUID) async {
+    func append(_ element: PageElement, to pageID: UUID) async {
         guard var current = manifest,
               let index = current.pages.firstIndex(where: { $0.id == pageID }) else { return }
         current.pages[index].elements.append(element)
@@ -223,20 +217,23 @@ public final class NotebookEditorModel {
 
     /// Renders a page's ink to an image and recognizes the text — used by both
     /// "recognize handwriting" and circle-to-explain.
-    public func recognizeText(pageID: UUID, drawing: PKDrawing) async -> String {
+    public func recognizeText(
+        pageID: UUID, drawing: PKDrawing, language: String = BeautifyLanguage.default.code
+    ) async -> String {
         // Render just the inked region (padded) at high scale — Vision recognizes
         // handwriting far better from a tight, high-resolution crop than from a
         // mostly-empty full page rendered at 2×.
+        let pageSize = page(pageID)?.logicalSize ?? PageGeometry.size
         let inkBounds = drawing.bounds
         let region: CGRect
         if !inkBounds.isNull, !inkBounds.isEmpty {
             region = inkBounds.insetBy(dx: -24, dy: -24)
-                .intersection(CGRect(origin: .zero, size: PageGeometry.size))
+                .intersection(CGRect(origin: .zero, size: pageSize))
         } else {
-            region = CGRect(origin: .zero, size: PageGeometry.size)
+            region = CGRect(origin: .zero, size: pageSize)
         }
         let image = drawing.image(from: region, scale: 3)
-        return (try? await OCRService().recognizeText(in: image)) ?? ""
+        return (try? await OCRService().recognizeText(in: image, languages: [language])) ?? ""
     }
 
     /// OCR any image directly (e.g. the magic pen's cropped region).
@@ -248,9 +245,12 @@ public final class NotebookEditorModel {
         store.mediaURL(notebook: notebookID, filename: filename)
     }
 
-    private static func fittedImageSize(_ data: Data) -> CGSize {
-        guard let image = UIImage(data: data) else { return CGSize(width: 300, height: 300) }
-        let maxDimension: CGFloat = 380
+    static func fittedImageSize(_ data: Data, in pageSize: CGSize) -> CGSize {
+        let fallback = min(pageSize.width, pageSize.height) * 0.4
+        guard let image = UIImage(data: data), image.size.height > 0 else {
+            return CGSize(width: fallback, height: fallback)
+        }
+        let maxDimension = min(pageSize.width * 0.62, 420)
         let aspect = image.size.width / max(1, image.size.height)
         if aspect >= 1 {
             return CGSize(width: maxDimension, height: maxDimension / aspect)

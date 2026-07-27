@@ -55,13 +55,22 @@ public struct SupportScreen: View {
                 Section("FAQ") {
                     faq("How do I create a notebook?",
                         """
-                        On iPad, tap + in the library. Pick a cover and a \
-                        first-page template, then write with your Apple Pencil.
+                        On iPad, tap + in the library. Take a quick note, build a \
+                        full notebook, open a whiteboard, or bring in a photo, a \
+                        file or a scan — then write with your Apple Pencil.
                         """)
                     faq("Can I edit on iPhone?",
-                        "iPhone is a read-only viewer — browse, read and share. Create and edit on iPad.")
+                        """
+                        iPhone is a read-only viewer — browse, read, zoom in, play \
+                        voice notes, open files and share. Create and edit on iPad.
+                        """)
                     faq("How does NOVA work?",
-                        "Circle or highlight anything on a page and NOVA explains it — or ask her to tidy up your handwriting. She's built in and works while you're signed in; nothing to set up.")
+                        """
+                        Circle or highlight anything on a page and NOVA explains \
+                        it — or ask her to tidy up your handwriting. Chats are \
+                        saved with the notebook. She's built in and works while \
+                        you're signed in; nothing to set up.
+                        """)
                     faq("Where are my notes stored?",
                         "On your device, as self-contained notebook files. iCloud sync is coming.")
                 }

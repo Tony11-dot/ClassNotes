@@ -58,14 +58,76 @@ public struct NotebookSyncBody: Encodable, Sendable {
     }
 }
 
+/// One playable / openable thing on a page, uploaded alongside the rendered
+/// image so the ClassMate ClassNotes tab can listen to voice notes and open files
+/// and links — not just look at a flat picture of the page.
+///
+/// `kind` is `audio`, `file` or `link`. Audio and files travel as data URLs; links
+/// carry their address in `url`.
+public struct NotebookPageAttachment: Encodable, Sendable {
+    /// Payloads above this size are skipped: the request has to stay inside the
+    /// backend's JSON body limit, and a page render is already in there.
+    public static let maximumPayloadBytes = 6 * 1024 * 1024
+
+    public let kind: String
+    public let name: String
+    public let durationSeconds: Double?
+    public let dataUrl: String?
+    public let url: String?
+
+    public init(
+        kind: String,
+        name: String,
+        durationSeconds: Double? = nil,
+        dataUrl: String? = nil,
+        url: String? = nil
+    ) {
+        self.kind = kind
+        self.name = name
+        self.durationSeconds = durationSeconds
+        self.dataUrl = dataUrl
+        self.url = url
+    }
+
+    /// A conservative MIME type for a file extension, so ClassMate can hand the
+    /// payload to the right viewer.
+    public static func mimeType(forExtension ext: String) -> String {
+        switch ext.lowercased() {
+        case "pdf": "application/pdf"
+        case "png": "image/png"
+        case "jpg", "jpeg": "image/jpeg"
+        case "heic": "image/heic"
+        case "gif": "image/gif"
+        case "txt", "md": "text/plain"
+        case "csv": "text/csv"
+        case "json": "application/json"
+        case "m4a", "aac": "audio/m4a"
+        case "mp3": "audio/mpeg"
+        case "wav": "audio/wav"
+        case "mp4", "mov": "video/mp4"
+        case "doc", "docx": "application/msword"
+        case "ppt", "pptx": "application/vnd.ms-powerpoint"
+        case "xls", "xlsx": "application/vnd.ms-excel"
+        case "zip": "application/zip"
+        default: "application/octet-stream"
+        }
+    }
+}
+
 /// One rendered page image for content sync. `dataUrl` is a
-/// `data:image/png;base64,…` string.
+/// `data:image/png;base64,…` string; `attachments` are the page's voice notes,
+/// files and links.
 public struct NotebookPageImage: Encodable, Sendable {
     public let pageIndex: Int
     public let dataUrl: String
-    public init(pageIndex: Int, dataUrl: String) {
+    public let attachments: [NotebookPageAttachment]
+
+    public init(
+        pageIndex: Int, dataUrl: String, attachments: [NotebookPageAttachment] = []
+    ) {
         self.pageIndex = pageIndex
         self.dataUrl = dataUrl
+        self.attachments = attachments
     }
 }
 

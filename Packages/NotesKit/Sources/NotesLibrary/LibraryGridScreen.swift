@@ -18,7 +18,7 @@ public struct LibraryGridScreen<Destination: View>: View {
     private let destination: (Notebook) -> Destination
 
     @State private var opened: Notebook?
-    @State private var showCreate = false
+    @State private var addChoice: AddContentChoice?
     @State private var showSettings = false
     @State private var renameTarget: Notebook?
     @State private var renameText = ""
@@ -58,7 +58,9 @@ public struct LibraryGridScreen<Destination: View>: View {
             }
             .overlay(alignment: .bottom) { floatingToolbar }
         }
-        .sheet(isPresented: $showCreate) { CreateNotebookSheet(shelfID: selectedShelf) }
+        .addContentFlows(choice: $addChoice, shelfID: selectedShelf) { notebook in
+            opened = notebook
+        }
         .sheet(isPresented: $showSettings) { SettingsScreen() }
         .sheet(isPresented: $showNewShelf) { NewShelfSheet() }
         .sheet(isPresented: $showAddBooks) {
@@ -164,9 +166,23 @@ public struct LibraryGridScreen<Destination: View>: View {
             VStack(alignment: .leading, spacing: 8) {
                 NotebookCoverView(
                     title: notebook.title,
-                    coverColor: ThemeColor(hex: notebook.coverColorHex) ?? theme.accent
+                    coverColor: ThemeColor(hex: notebook.coverColorHex) ?? theme.accent,
+                    design: notebook.coverDesign,
+                    showsTitle: notebook.showsCover
                 )
                 .shadow(color: .black.opacity(0.18), radius: 14, y: 8)
+                HStack(spacing: 5) {
+                    // A board / import reads as itself, not as "just a notebook".
+                    if notebook.kind != .notebook {
+                        Image(systemName: notebook.kind.symbolName)
+                            .font(.caption2)
+                            .foregroundStyle(theme.accent.color)
+                    }
+                    Text(notebook.showsCover ? notebook.title : "Untitled cover off")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(theme.ink.color)
+                        .lineLimit(1)
+                }
                 Text(notebook.updatedAt, format: .dateTime.day().month().year())
                     .font(.caption)
                     .foregroundStyle(theme.inkSecondary.color)
@@ -216,7 +232,7 @@ public struct LibraryGridScreen<Destination: View>: View {
                             .foregroundStyle(theme.contrastingInk(on: theme.accent).color)
                     }
                     Button {
-                        showCreate = true
+                        addChoice = .notebook
                     } label: {
                         Label("New notebook", systemImage: "plus")
                             .font(.subheadline.weight(.semibold))
@@ -231,7 +247,7 @@ public struct LibraryGridScreen<Destination: View>: View {
             EmptyStateView(
                 systemImage: "book.closed",
                 title: "No notebooks yet",
-                message: "Tap + to create your first notebook. Covers, paper and ink all follow your theme."
+                message: "Tap + for a quick note, a full notebook, a whiteboard, or to bring in a photo, file or scan."
             )
         }
     }
@@ -239,9 +255,7 @@ public struct LibraryGridScreen<Destination: View>: View {
     private var floatingToolbar: some View {
         GlassEffectContainer {
             HStack(spacing: 4) {
-                DSGlassIconButton("New notebook", systemImage: "plus") {
-                    showCreate = true
-                }
+                AddContentMenu { choice in addChoice = choice }
                 DSGlassIconButton("New shelf", systemImage: "tray.and.arrow.down") {
                     showNewShelf = true
                 }

@@ -71,6 +71,167 @@ struct DesignSystemRenderTests {
         .environment(\.theme, spec)
         #expect(render(empty, size: CGSize(width: 320, height: 240)) != nil)
     }
+
+    // MARK: - Milestone 2 surfaces
+
+    @Test("Every cover design renders under every preset", arguments: ThemePreset.allCases)
+    func coverDesigns(preset: ThemePreset) {
+        let spec = preset.spec
+        for design in CoverDesign.allCases {
+            let cover = NotebookCoverView(
+                title: "Biology", coverColor: spec.coverPalette[0], design: design
+            )
+            .environment(\.theme, spec)
+            #expect(
+                render(cover, size: CGSize(width: 150, height: 200)) != nil,
+                "\(preset.rawValue)/\(design.rawValue) failed to render"
+            )
+        }
+    }
+
+    @Test("Cover art is deterministic, so covers never shimmer between redraws")
+    func coverDeterminism() throws {
+        let spec = ThemePreset.matcha.spec
+        for design in [CoverDesign.confetti, .marble, .terrazzo, .stars, .kraft, .composition] {
+            let view = NotebookCoverView(title: "X", coverColor: spec.coverPalette[1], design: design)
+                .environment(\.theme, spec)
+            let first = try #require(render(view, size: CGSize(width: 120, height: 160))?.pngData())
+            let second = try #require(render(view, size: CGSize(width: 120, height: 160))?.pngData())
+            #expect(first == second, "\(design.rawValue) is not deterministic")
+        }
+    }
+
+    @Test("Every template renders at every paper size and direction", arguments: ThemePreset.allCases)
+    func templatesAtEverySize(preset: ThemePreset) {
+        let spec = preset.spec
+        for template in PageTemplate.allCases {
+            for size in [PageSize.a4, .classic, .whiteboard] {
+                for orientation in PageOrientation.allCases {
+                    let style = PageStyle(
+                        template: template, pageSize: size, orientation: orientation
+                    )
+                    let view = PageTemplateView(style: style)
+                        .environment(\.theme, spec)
+                        .environment(\.paperTone, PaperTone.neutral)
+                    #expect(
+                        render(view) != nil,
+                        "\(preset.rawValue)/\(template.rawValue)/\(size.rawValue)/\(orientation.rawValue) failed"
+                    )
+                }
+            }
+        }
+    }
+
+    @Test("A chosen line colour and spacing render on every template", arguments: ThemePreset.allCases)
+    func lineColorAndSpacing(preset: ThemePreset) {
+        let spec = preset.spec
+        for steps in PageLineSpacing.range {
+            let style = PageStyle(
+                template: .ruled, paperColorHex: PaperPalette.white.color.hexString,
+                lineColorHex: PaperPalette.lineColors[0].color.hexString, lineSpacingSteps: steps
+            )
+            let view = PageTemplateView(style: style)
+                .environment(\.theme, spec)
+                .environment(\.paperTone, PaperTone.neutral)
+            #expect(render(view) != nil, "\(preset.rawValue) spacing \(steps) failed to render")
+        }
+    }
+
+    @Test("Tape renders in every pattern, shape and lift state", arguments: ThemePreset.allCases)
+    func tape(preset: ThemePreset) {
+        let spec = preset.spec
+        let path = (0...12).map { CGPoint(x: Double($0) * 12, y: 20 + Double($0 % 3) * 4) }
+        for pattern in TapePattern.allCases {
+            for shape in TapeShape.allCases {
+                for lifted in [true, false] {
+                    let view = TapeView(
+                        shape: shape, pattern: pattern, color: spec.accentMuted,
+                        points: path, thickness: 30, isLifted: lifted
+                    )
+                    .environment(\.theme, spec)
+                    #expect(
+                        render(view, size: CGSize(width: 160, height: 60)) != nil,
+                        "\(preset.rawValue)/\(pattern.rawValue)/\(shape.rawValue) failed"
+                    )
+                }
+            }
+        }
+    }
+
+    @Test("The pen tray and stroke preview render under every preset", arguments: ThemePreset.allCases)
+    func penTray(preset: ThemePreset) {
+        let spec = preset.spec
+        for pen in PenLibrary.all {
+            let glyph = PenGlyphView(preset: pen, color: spec.ink, isSelected: pen.id == "flow")
+                .environment(\.theme, spec)
+            #expect(
+                render(glyph, size: CGSize(width: 46, height: 20)) != nil,
+                "\(preset.rawValue)/\(pen.id) failed to render"
+            )
+            let preview = StrokePreview(
+                color: spec.ink, width: pen.defaults.effectiveWidth,
+                opacity: pen.defaults.concentration, stability: pen.defaults.stability
+            )
+            .environment(\.theme, spec)
+            #expect(render(preview, size: CGSize(width: 240, height: 92)) != nil)
+        }
+    }
+
+    @Test("Page content — text, tape, links and chips — renders under every preset",
+          arguments: ThemePreset.allCases)
+    func pageContent(preset: ThemePreset) {
+        let spec = preset.spec
+        let elements: [PageElement] = [
+            PageElement(
+                kind: .text, x: 20, y: 20, width: 200, height: 40,
+                text: "hi my name is tony", fontName: "Georgia", fontSize: 23, isBold: true
+            ),
+            PageElement(
+                kind: .link, x: 20, y: 80, width: 200, height: 50,
+                displayName: "Revision guide", urlString: "https://example.com"
+            ),
+            PageElement(
+                kind: .file, x: 20, y: 140, width: 200, height: 50, displayName: "worksheet.pdf"
+            ),
+            PageElement(
+                kind: .tape, x: 20, y: 200, width: 200, height: 40,
+                tapeShape: .rectangle, tapePattern: .stripes,
+                colorHex: spec.accentMuted.hexString, strokeWidth: 30
+            )
+        ]
+        let view = PageContentView(
+            elements: elements,
+            displaySize: CGSize(width: 260, height: 320),
+            logicalSize: CGSize(width: 260, height: 320),
+            mediaURL: { URL(fileURLWithPath: "/dev/null/\($0)") }
+        )
+        .environment(\.theme, spec)
+        #expect(render(view, size: CGSize(width: 260, height: 320)) != nil)
+    }
+
+    @Test("The colour wheel renders under every preset", arguments: ThemePreset.allCases)
+    func colorWheel(preset: ThemePreset) {
+        let spec = preset.spec
+        let view = ColorWheelPicker(color: .constant(spec.accent), showsOpacity: true)
+            .environment(\.theme, spec)
+        #expect(render(view, size: CGSize(width: 250, height: 420)) != nil)
+    }
+
+    @Test("HSB conversion round-trips every palette colour")
+    func hsbRoundTrip() {
+        for preset in ThemePreset.allCases {
+            for color in preset.spec.coverPalette + [preset.spec.ink, preset.spec.paper] {
+                let hsb = color.hsb
+                let rebuilt = ThemeColor(
+                    hue: hsb.hue, saturation: hsb.saturation, brightness: hsb.brightness
+                )
+                let tolerance = 0.01
+                #expect(abs(rebuilt.red - color.red) < tolerance, "\(color.hexString) red drifted")
+                #expect(abs(rebuilt.green - color.green) < tolerance, "\(color.hexString) green drifted")
+                #expect(abs(rebuilt.blue - color.blue) < tolerance, "\(color.hexString) blue drifted")
+            }
+        }
+    }
 }
 
 extension UIImage {

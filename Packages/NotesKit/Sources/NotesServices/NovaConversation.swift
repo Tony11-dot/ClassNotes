@@ -1,4 +1,5 @@
 import Foundation
+import NotesModels
 import Observation
 
 /// Drives a NOVA chat: holds the transcript, streams the assistant reply token
@@ -74,6 +75,38 @@ public final class NovaConversation {
         streaming = false
         errorText = nil
         messages = [Self.systemPrompt]
+    }
+
+    // MARK: - Persistence bridge (saved chats)
+
+    /// The transcript in the shape `NovaChatStore` persists. Empty assistant
+    /// placeholders (a stream that failed) are dropped.
+    public var storedTurns: [NovaChatTurn] {
+        visibleMessages.compactMap { message in
+            let text = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return nil }
+            return NovaChatTurn(
+                id: message.id,
+                role: message.role == .user ? .user : .assistant,
+                content: message.content,
+                hasAttachment: message.imageData != nil
+            )
+        }
+    }
+
+    /// Reloads a saved chat. Attached images aren't kept (they were page crops, not
+    /// conversation state), so a restored turn carries its text alone.
+    public func restore(turns: [NovaChatTurn]) {
+        streamTask?.cancel()
+        streaming = false
+        errorText = nil
+        messages = [Self.systemPrompt] + turns.map { turn in
+            AIMessage(
+                id: turn.id,
+                role: turn.role == .user ? .user : .assistant,
+                content: turn.content
+            )
+        }
     }
 
     private func beginAssistantReply() {

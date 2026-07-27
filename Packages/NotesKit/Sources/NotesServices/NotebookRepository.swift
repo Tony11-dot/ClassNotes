@@ -65,21 +65,144 @@ public final class NotebookRepository {
         paperColorHex: String? = nil,
         shelfID: UUID? = nil
     ) async throws -> Notebook {
+        try await create(
+            title: title,
+            coverColor: coverColor,
+            style: PageStyle(
+                template: template, margin: margin, paperColorHex: paperColorHex
+            ),
+            shelfID: shelfID
+        )
+    }
+
+    /// The one path every creation flow goes through: quick note, the full New
+    /// Notebook sheet, a whiteboard, and the image / file / scan imports. `kind`
+    /// decides how the editor later presents it; `style` is the paper every page
+    /// is cut to.
+    @discardableResult
+    public func create(
+        title: String,
+        coverColor: ThemeColor,
+        style: PageStyle,
+        kind: NotebookKind = .notebook,
+        coverDesign: CoverDesign = .default,
+        showsCover: Bool = true,
+        pageCount: Int = 1,
+        shelfID: UUID? = nil
+    ) async throws -> Notebook {
         let notebook = Notebook(
-            title: title.isEmpty ? "Untitled" : title,
+            title: title.isEmpty ? Self.defaultTitle(for: kind) : title,
             coverColorHex: coverColor.hexString,
-            defaultTemplate: template
+            defaultTemplate: style.template,
+            shelfID: shelfID,
+            kind: kind,
+            coverDesign: coverDesign,
+            showsCover: showsCover,
+            pageSize: style.pageSize,
+            orientation: style.orientation,
+            paperColorHex: style.paperColorHex,
+            lineColorHex: style.lineColorHex,
+            lineSpacingSteps: style.lineSpacingSteps
         )
-        // File it straight into the active shelf, if any.
-        notebook.shelfID = shelfID
-        try await store.createDocument(
-            id: notebook.id, firstPageTemplate: template,
-            margin: margin, paperColorHex: paperColorHex
-        )
+        try await store.createDocument(id: notebook.id, style: style, pageCount: pageCount)
         context.insert(notebook)
         try context.save()
         sync?.pushNotebook(snapshot(notebook))
         return notebook
+    }
+
+    /// A quick note: cover on, plain white A4 paper, two pages, ready instantly.
+    @discardableResult
+    public func createQuickNote(
+        coverColor: ThemeColor, shelfID: UUID? = nil
+    ) async throws -> Notebook {
+        try await create(
+            title: "",
+            coverColor: coverColor,
+            style: .quickNote,
+            kind: .notebook,
+            coverDesign: .default,
+            pageCount: 2,
+            shelfID: shelfID
+        )
+    }
+
+    /// Imports pages (a PDF, photos, or a scan) into a brand-new document.
+    /// Returns the notebook, or nil when nothing could be read.
+    @discardableResult
+    public func createFromImport(
+        title: String,
+        coverColor: ThemeColor,
+        kind: NotebookKind,
+        coverDesign: CoverDesign = .default,
+        pdf: Data? = nil,
+        images: [Data] = [],
+        shelfID: UUID? = nil
+    ) async throws -> Notebook? {
+        let style = PageStyle.imported(size: .a4, orientation: .portrait)
+        let notebook = try await create(
+            title: title,
+            coverColor: coverColor,
+            style: style,
+            kind: kind,
+            coverDesign: coverDesign,
+            shelfID: shelfID
+        )
+        // Every document starts with one page; the import goes in front of it and
+        // that placeholder is then removed, so the notebook is purely the import.
+        let placeholder = try? await store.manifest(for: notebook.id).pages.first?.id
+        let imported: Bool
+        if let pdf {
+            imported = (try? await store.importPDF(
+                data: pdf, notebook: notebook.id, at: 0, style: style
+            ))?.firstPageID != nil
+        } else {
+            imported = (try? await store.importImages(
+                images, notebook: notebook.id, at: 0, style: style
+            ))?.firstPageID != nil
+        }
+        guard imported else {
+            // Nothing readable — don't leave an empty stub in the library.
+            try? await delete(notebook)
+            return nil
+        }
+        if let placeholder = placeholder ?? nil {
+            _ = try? await store.deletePage(notebook: notebook.id, page: placeholder)
+        }
+        sync?.pushNotebook(snapshot(notebook))
+        return notebook
+    }
+
+    /// Drops a file onto a notebook's first page as an openable chip — used when a
+    /// non-page file (a spreadsheet, an archive) is imported from the library.
+    public func attachFile(
+        _ data: Data, displayName: String, fileExtension: String, to notebookID: UUID
+    ) async {
+        guard let manifest = try? await store.manifest(for: notebookID),
+              let page = manifest.pages.first,
+              let filename = try? await store.saveMedia(
+                  data, notebook: notebookID, fileExtension: fileExtension
+              ) else { return }
+        let size = page.logicalSize
+        let element = PageElement(
+            kind: .file,
+            x: max(0, (size.width - 280) / 2), y: max(0, (size.height - 72) / 2),
+            width: 280, height: 72,
+            payloadFilename: filename, displayName: displayName
+        )
+        _ = try? await store.setElements(
+            page.elements + [element], notebook: notebookID, page: page.id
+        )
+    }
+
+    private static func defaultTitle(for kind: NotebookKind) -> String {
+        switch kind {
+        case .notebook: "Untitled"
+        case .whiteboard: "Whiteboard"
+        case .image: "Image"
+        case .document: "Document"
+        case .scan: "Scan"
+        }
     }
 
     public func rename(_ notebook: Notebook, to title: String) throws {

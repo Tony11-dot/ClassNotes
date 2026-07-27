@@ -1,21 +1,45 @@
 import CoreGraphics
 import Foundation
 
-/// Non-ink content placed on a page: an image/file, a voice note, or a block of
-/// text (e.g. handwriting recognized into a chosen font). Positioned in the
-/// fixed logical page space (`PageGeometry`). Binary payloads live beside the
-/// manifest in the document package; this record just references them.
+/// A point in logical page space, Codable so freeform tape paths survive in the
+/// manifest.
+public struct PagePoint: Codable, Sendable, Equatable, Hashable {
+    public var x: Double
+    public var y: Double
+
+    public init(x: Double, y: Double) {
+        self.x = x
+        self.y = y
+    }
+
+    public init(_ point: CGPoint) {
+        self.x = point.x
+        self.y = point.y
+    }
+
+    public var cgPoint: CGPoint { CGPoint(x: x, y: y) }
+}
+
+/// Non-ink content placed on a page: an image/file/link, a voice note, a block of
+/// text (a typeset text box, or handwriting beautified into a chosen font), or a
+/// strip of sticky tape that masks whatever is underneath. Positioned in the
+/// page's logical space (`PageRecord.logicalSize`). Binary payloads live beside
+/// the manifest in the document package; this record just references them.
 public struct PageElement: Codable, Sendable, Equatable, Identifiable {
     public enum Kind: String, Codable, Sendable {
         case image
         case file
         case audio
         case text
+        /// Sticky tape: covers the content under it until tapped.
+        case tape
+        /// A tappable web link.
+        case link
     }
 
     public var id: UUID
     public var kind: Kind
-    /// Frame in logical page points (768×1024 space).
+    /// Frame in the page's logical points.
     public var x: Double
     public var y: Double
     public var width: Double
@@ -31,6 +55,29 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
     public var text: String?
     public var fontName: String?
     public var textColorHex: String?
+    /// For text: the type size in logical page points (nil = the legacy 20 pt).
+    public var fontSize: Double?
+    /// For text: draw with a heavier weight (beautification's "Dynamic Bold").
+    public var isBold: Bool
+    /// For link: the destination.
+    public var urlString: String?
+
+    // MARK: Tape
+
+    /// For tape: how the strip was laid down (freeform / straight / rectangle).
+    public var tapeShape: TapeShape?
+    /// For tape: the printed pattern.
+    public var tapePattern: TapePattern?
+    /// For tape: the strip's colour (`nil` = the theme's muted accent).
+    public var colorHex: String?
+    /// For tape: the freeform / line path in logical page points, relative to the
+    /// page (not the element frame). Empty for rectangles.
+    public var points: [PagePoint]
+    /// For tape: the strip's thickness in logical points.
+    public var strokeWidth: Double?
+    /// For tape: `true` = the strip is lifted, so what's underneath shows through
+    /// and only the outline remains. Tapping toggles it.
+    public var isHidden: Bool
 
     public init(
         id: UUID = UUID(),
@@ -45,7 +92,16 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
         durationSeconds: Double? = nil,
         text: String? = nil,
         fontName: String? = nil,
-        textColorHex: String? = nil
+        textColorHex: String? = nil,
+        fontSize: Double? = nil,
+        isBold: Bool = false,
+        urlString: String? = nil,
+        tapeShape: TapeShape? = nil,
+        tapePattern: TapePattern? = nil,
+        colorHex: String? = nil,
+        points: [PagePoint] = [],
+        strokeWidth: Double? = nil,
+        isHidden: Bool = false
     ) {
         self.id = id
         self.kind = kind
@@ -60,9 +116,58 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
         self.text = text
         self.fontName = fontName
         self.textColorHex = textColorHex
+        self.fontSize = fontSize
+        self.isBold = isBold
+        self.urlString = urlString
+        self.tapeShape = tapeShape
+        self.tapePattern = tapePattern
+        self.colorHex = colorHex
+        self.points = points
+        self.strokeWidth = strokeWidth
+        self.isHidden = isHidden
     }
 
     public var frame: CGRect {
         CGRect(x: x, y: y, width: width, height: height)
+    }
+
+    /// Text elements render at this size; older elements had a fixed 20 pt.
+    public static let legacyTextSize: Double = 20
+
+    public var resolvedFontSize: Double { fontSize ?? Self.legacyTextSize }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, kind, x, y, width, height, rotation
+        case payloadFilename, displayName, durationSeconds
+        case text, fontName, textColorHex, fontSize, isBold, urlString
+        case tapeShape, tapePattern, colorHex, points, strokeWidth, isHidden
+    }
+
+    /// Custom decode so v2–v5 elements (which had none of the tape / text-size /
+    /// link fields) load without loss.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        kind = try c.decode(Kind.self, forKey: .kind)
+        x = try c.decode(Double.self, forKey: .x)
+        y = try c.decode(Double.self, forKey: .y)
+        width = try c.decode(Double.self, forKey: .width)
+        height = try c.decode(Double.self, forKey: .height)
+        rotation = try c.decodeIfPresent(Double.self, forKey: .rotation) ?? 0
+        payloadFilename = try c.decodeIfPresent(String.self, forKey: .payloadFilename)
+        displayName = try c.decodeIfPresent(String.self, forKey: .displayName)
+        durationSeconds = try c.decodeIfPresent(Double.self, forKey: .durationSeconds)
+        text = try c.decodeIfPresent(String.self, forKey: .text)
+        fontName = try c.decodeIfPresent(String.self, forKey: .fontName)
+        textColorHex = try c.decodeIfPresent(String.self, forKey: .textColorHex)
+        fontSize = try c.decodeIfPresent(Double.self, forKey: .fontSize)
+        isBold = try c.decodeIfPresent(Bool.self, forKey: .isBold) ?? false
+        urlString = try c.decodeIfPresent(String.self, forKey: .urlString)
+        tapeShape = try c.decodeIfPresent(TapeShape.self, forKey: .tapeShape)
+        tapePattern = try c.decodeIfPresent(TapePattern.self, forKey: .tapePattern)
+        colorHex = try c.decodeIfPresent(String.self, forKey: .colorHex)
+        points = try c.decodeIfPresent([PagePoint].self, forKey: .points) ?? []
+        strokeWidth = try c.decodeIfPresent(Double.self, forKey: .strokeWidth)
+        isHidden = try c.decodeIfPresent(Bool.self, forKey: .isHidden) ?? false
     }
 }
