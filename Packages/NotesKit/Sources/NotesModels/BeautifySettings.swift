@@ -84,6 +84,7 @@ public struct BeautifyLanguage: Identifiable, Sendable, Equatable, Codable {
         BeautifyLanguage(code: "it-IT", displayName: "Italian"),
         BeautifyLanguage(code: "pt-BR", displayName: "Portuguese (Brazil)"),
         BeautifyLanguage(code: "ar-SA", displayName: "Arabic"),
+        BeautifyLanguage(code: "he-IL", displayName: "Hebrew"),
         BeautifyLanguage(code: "zh-Hans", displayName: "Chinese (Simplified)"),
         BeautifyLanguage(code: "ja-JP", displayName: "Japanese"),
         BeautifyLanguage(code: "ko-KR", displayName: "Korean"),

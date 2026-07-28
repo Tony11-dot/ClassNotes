@@ -37,6 +37,11 @@ public struct OCRService: Sendable {
             request.recognitionLevel = .accurate
             request.usesLanguageCorrection = true
             request.recognitionLanguages = languages
+            // The chosen language is a HINT, not a restriction. Pinning
+            // recognition to one language means a student writing Arabic with the
+            // panel left on English gets nothing back at all — and "nothing back"
+            // is indistinguishable from "beautification is broken".
+            request.automaticallyDetectsLanguage = true
             let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
