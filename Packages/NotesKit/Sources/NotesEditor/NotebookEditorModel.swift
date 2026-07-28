@@ -29,10 +29,21 @@ public final class NotebookEditorModel {
 
     public var pages: [PageRecord] { manifest?.pages ?? [] }
 
-    public func load() async {
-        manifest = try? await store.manifest(for: notebookID)
+    /// Loads the manifest. `coverStyle` is passed for a notebook that should have
+    /// a cover page: a notebook written before manifest v7 gets its cover added
+    /// here, once, and everything after that is an ordinary page list.
+    public func load(coverStyle: PageStyle? = nil) async {
+        if let coverStyle {
+            manifest = try? await store.ensureCoverPage(notebook: notebookID, style: coverStyle)
+        }
+        if manifest == nil {
+            manifest = try? await store.manifest(for: notebookID)
+        }
         if focusedPageID == nil { focusedPageID = manifest?.pages.first?.id }
     }
+
+    /// The cover page, when this notebook has one.
+    public var coverPage: PageRecord? { manifest?.coverPage }
 
     public func addPage(template: PageTemplate) async {
         manifest = try? await store.addPage(to: notebookID, template: template)

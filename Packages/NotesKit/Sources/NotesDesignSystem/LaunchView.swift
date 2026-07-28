@@ -27,6 +27,9 @@ public struct LaunchView: View {
     @State private var markIn = false
     @State private var showWord = false
     @State private var faded = false
+    /// The scene reports completion AND a timeout arms behind it, so the hand-off
+    /// has to be idempotent — routing twice would rebuild the whole app tree.
+    @State private var finished = false
 
     // Small, crisp lockup (smaller = less raster upscaling = sharper wordmark),
     // in the artwork's proportions (mark : wordmark-cap-height : gap).
@@ -38,7 +41,22 @@ public struct LaunchView: View {
     }
 
     public var body: some View {
-        if let videoURL = LaunchMedia.videoURL {
+        if let scene = LaunchScene.animation {
+            // The designed scene itself. Everything below is a fallback for when
+            // it isn't bundled.
+            ZStack {
+                theme.surface.color.ignoresSafeArea()
+                LaunchSceneView(animation: scene, onFinished: finishOnce)
+                    .padding(.horizontal, 24)
+            }
+            .task {
+                CMFonts.registerIfNeeded()
+                // A safety net: if playback never reports completion (launched
+                // into the background, animations disabled), hand off anyway.
+                try? await Task.sleep(for: .seconds(LaunchScene.duration + 1.2))
+                finishOnce()
+            }
+        } else if let videoURL = LaunchMedia.videoURL {
             // Your bundled launch clip plays once, then hands off. Falls back to
             // the native animation below if no video has been added yet.
             ZStack {
@@ -50,6 +68,13 @@ public struct LaunchView: View {
         } else {
             nativeBody
         }
+    }
+
+    /// Hands off exactly once, whichever signal gets there first.
+    private func finishOnce() {
+        guard !finished else { return }
+        finished = true
+        onFinished()
     }
 
     private var nativeBody: some View {

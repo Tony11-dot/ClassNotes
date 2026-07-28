@@ -66,8 +66,26 @@ Universal app, Swift 6 (strict concurrency), SwiftUI-first, Liquid Glass design 
   depend on it. Editor-only code still lives behind the `App/Routing` import rule.
 - Brand parity: reuse ClassMate's single blue CM mark + wordmark as TEMPLATE
   images tinted to the theme accent (BrandMark/BrandWordmark), and bundle Cabinet
-  Grotesk in NotesDesignSystem (registered at launch via `CMFonts`). Do not add a
-  Lottie dependency — the launch animation is native (`LaunchView`).
+  Grotesk in NotesDesignSystem (registered at launch via `CMFonts`).
+- The launch animation is the DESIGNED Lottie scene itself —
+  `NotesDesignSystem/Resources/LaunchScene.json`, played by `LaunchSceneView`.
+  Replacing that file replaces the launch. `lottie-ios` is the app's one
+  third-party dependency, added deliberately: the launch used to be a SwiftUI
+  rebuild of the artwork, which drifted from the artwork every time it changed.
+  `LaunchView` still falls back to a bundled video and then to the native
+  animation if the scene is missing. The scene plays as authored — its CN mark is
+  a raster layer, so it keeps ClassNotes navy rather than following the accent;
+  the field around it is still `theme.surface`.
+- The cover is PAGE ONE of the document (`PageRecord.isCover`, manifest v7), drawn
+  on with every tool like any other page. Its "paper" is the notebook's artwork
+  (`CoverPaper` → `CoverPaperView`, via `PagePaperView`), never a template. Only a
+  paged notebook with the cover switch on has one; `DocumentStore.ensureCoverPage`
+  gives a pre-v7 notebook its cover exactly once, so a cover the user DELETES stays
+  deleted. Leaving the editor renders the cover (artwork + ink) to `cover.png`
+  beside the pages BEFORE touching the row — the library tile reloads off
+  `updatedAt`, and the same render is pushed to ClassMate as
+  `NotebookSyncBody.coverImage`, so the shelf, the iPhone viewer and the ClassNotes
+  tab all show the cover as it was actually drawn.
 - Page content beyond ink is `PageElement` (image/file/audio/text/link/tape)
   stored in the manifest (v6; every older version loads loss-free) with payloads
   under the package's `media/`. Tape is an element above the ink: tapping toggles
@@ -78,6 +96,21 @@ Universal app, Swift 6 (strict concurrency), SwiftUI-first, Liquid Glass design 
   once it's finished. Pure math lives in `NotesModels.InkGeometry`
   (`StrokeSmoothing`, `ScribbleDetector`, `LineGrouper`, `BeautifyLayout`) so it's
   testable without a canvas — keep it there.
+- Hold-to-snap shapes read the hold from the stroke's TIMING, as "how long since
+  the pencil was last more than `holdRadius` from where it came to rest" — never as
+  the span of points inside a trailing window. `PKStrokePath` is a fitted spline,
+  so a pencil held still emits ONE control point covering the whole dwell; a window
+  scan measures a zero-length hold and refuses every snap, which is how the feature
+  shipped doing nothing. Fitting reads `interpolatedPoints`, not control points (a
+  quick line is four of them), and a closed path's corners are counted as a RING or
+  a square loses the corner it started on and snaps to a triangle.
+- Real-time beautification's recognizer is INJECTED (`LiveBeautifier.LineRecognizer`)
+  so the whole pass — grouping, planning, wiping, merging — is testable without
+  Vision. A refused `apply` (the pencil is down) re-arms instead of dropping the
+  pass, and `canvasViewDidEndUsingTool` re-schedules on the LIFT: resting the tip
+  on the page after a word used to lose the pass for good. A pass that reads
+  nothing sets `lastPassFoundNothing`, which the editor shows — silence is
+  indistinguishable from "the switch does nothing".
 - Real-time beautification is `LiveBeautifier`: a settle timer, per-LINE Vision
   recognition on a tight upscaled crop, then `plan(...)` (pure) deciding inserts
   vs. appends to a line already typeset. Only line-shaped ink is touched

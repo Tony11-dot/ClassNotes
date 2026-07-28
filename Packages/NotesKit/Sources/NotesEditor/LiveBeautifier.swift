@@ -52,19 +52,34 @@ struct BeautifyPlan: Equatable {
 @MainActor
 @Observable
 final class LiveBeautifier {
+    /// Reads one rendered line of ink back as text. Injected so the whole pass —
+    /// grouping, planning, wiping, merging — can be driven in tests without Vision,
+    /// which is why the plumbing went unverified while it was hardwired.
+    typealias LineRecognizer = @Sendable (UIImage, String) async -> String
+
     /// True while a pass is recognizing, so the editor can show a hairline hint.
     private(set) var isWorking = false
+    /// Set when a pass ran but read nothing back, so the editor can say so instead
+    /// of leaving the user staring at unchanged ink wondering if it's even on.
+    private(set) var lastPassFoundNothing = false
 
     /// Typeset runs per page, used to append to a line already beautified.
     private var runs: [UUID: [BeautifiedRun]] = [:]
     private var settleTask: Task<Void, Never>?
-    private let ocr = OCRService()
+    private let recognizeLine: LineRecognizer
 
     /// Line geometry that reads as handwriting rather than a diagram or a doodle.
     static let minimumLineHeight: CGFloat = 7
     static let maximumLineHeight: CGFloat = 130
 
-    init() {}
+    init(recognizer: @escaping LineRecognizer = LiveBeautifier.visionRecognizer) {
+        self.recognizeLine = recognizer
+    }
+
+    /// The shipping recognizer: on-device Vision, one tight crop per line.
+    static let visionRecognizer: LineRecognizer = { image, language in
+        (try? await OCRService().recognizeText(in: image, languages: [language])) ?? ""
+    }
 
     /// Forget a page's runs — after the ink is cleared, or the page is closed.
     func reset(pageID: UUID? = nil) {
@@ -121,15 +136,20 @@ final class LiveBeautifier {
         settings: BeautifySettings,
         fontName: String,
         pageSize: CGSize,
-        drawing: @MainActor () -> PKDrawing?,
-        apply: @MainActor (BeautifyPlan, PKDrawing) async -> Bool
+        drawing: @escaping @MainActor () -> PKDrawing?,
+        apply: @escaping @MainActor (BeautifyPlan, PKDrawing) async -> Bool,
+        retriesLeft: Int = 2
     ) async {
         guard let current = drawing(), !current.strokes.isEmpty else { return }
         isWorking = true
         defer { isWorking = false }
 
         let lines = await recognize(current, settings: settings, pageSize: pageSize)
-        guard !lines.isEmpty else { return }
+        guard !lines.isEmpty else {
+            lastPassFoundNothing = true
+            return
+        }
+        lastPassFoundNothing = false
 
         let plan = Self.plan(
             lines: lines,
@@ -139,7 +159,10 @@ final class LiveBeautifier {
             colorHex: nil,
             pageSize: pageSize
         )
-        guard !plan.isEmpty else { return }
+        guard !plan.isEmpty else {
+            lastPassFoundNothing = true
+            return
+        }
 
         // The canvas may have changed while Vision was working — only wipe the
         // strokes we actually read, and leave anything drawn since untouched.
@@ -152,6 +175,23 @@ final class LiveBeautifier {
         // run list alone, or the next pass would append to text that isn't there.
         if await apply(plan, PKDrawing(strokes: remaining)) {
             runs[pageID] = plan.runs
+            return
+        }
+
+        // Refused. The work is finished and correct — it just arrived while the
+        // pencil was down. Ask again shortly rather than dropping it: a refusal
+        // used to end the pass for good, so writing a line and then resting the
+        // tip on the page meant the line was never beautified at all.
+        guard retriesLeft > 0 else { return }
+        settleTask?.cancel()
+        settleTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(0.35))
+            guard !Task.isCancelled, let self else { return }
+            await self.run(
+                pageID: pageID, settings: settings, fontName: fontName,
+                pageSize: pageSize, drawing: drawing, apply: apply,
+                retriesLeft: retriesLeft - 1
+            )
         }
     }
 
@@ -179,7 +219,7 @@ final class LiveBeautifier {
             let image = Self.recognitionImage(
                 of: lineDrawing, region: region, scale: Self.renderScale(for: bounds)
             )
-            let text = (try? await ocr.recognizeText(in: image, languages: [settings.language])) ?? ""
+            let text = await recognizeLine(image, settings.language)
             let cleaned = text
                 .replacingOccurrences(of: "\n", with: " ")
                 .trimmingCharacters(in: .whitespacesAndNewlines)

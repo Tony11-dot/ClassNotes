@@ -98,22 +98,42 @@ public actor DocumentStore {
         )
     }
 
-    /// Creates a package with `pageCount` identical pages in `style`. A quick note
-    /// asks for two; everything else starts at one.
+    /// Creates a package with `pageCount` identical pages in `style`, optionally
+    /// preceded by the cover as page one. A quick note asks for two pages;
+    /// everything else starts at one.
     @discardableResult
     public func createDocument(
         id: UUID,
         style: PageStyle,
-        pageCount: Int = 1
+        pageCount: Int = 1,
+        includesCover: Bool = false
     ) throws -> NotebookManifest {
         try FileManager.default.createDirectory(
             at: pagesDirectory(for: id),
             withIntermediateDirectories: true
         )
-        let pages = (0..<max(1, pageCount)).map { _ in style.makePage() }
+        var pages = (0..<max(1, pageCount)).map { _ in style.makePage() }
+        if includesCover { pages.insert(style.makeCoverPage(), at: 0) }
         let manifest = NotebookManifest(pages: pages)
         try writeManifest(manifest, for: id)
         return manifest
+    }
+
+    /// Gives a notebook written before v7 its cover page, exactly once: the cover
+    /// goes in front of page one and the manifest is stamped current, so a cover
+    /// the user later deletes stays deleted instead of growing back on every open.
+    ///
+    /// Returns the manifest either way, so the caller can just use the result.
+    @discardableResult
+    public func ensureCoverPage(notebook id: UUID, style: PageStyle) throws -> NotebookManifest {
+        var current = try manifest(for: id)
+        guard current.version < NotebookManifest.currentVersion else { return current }
+        if !current.hasCoverPage {
+            current.pages.insert(style.makeCoverPage(), at: 0)
+        }
+        current.version = NotebookManifest.currentVersion
+        try writeManifest(current, for: id)
+        return current
     }
 
     public func deleteDocument(id: UUID) throws {
@@ -139,7 +159,10 @@ public actor DocumentStore {
         }
 
         let orphans = orphanPageIDs(for: id, knownPages: manifest?.pages ?? [])
-        var recovered = manifest ?? NotebookManifest(pages: [])
+        // A manifest rebuilt from the blobs on disk can't know whether the
+        // notebook had a cover page, so it's stamped pre-v7 and `ensureCoverPage`
+        // decides — better than silently claiming "this notebook has no cover".
+        var recovered = manifest ?? NotebookManifest(version: 6, pages: [])
         if !orphans.isEmpty {
             recovered.pages += orphans.map { orphan in
                 PageRecord(id: orphan.id, template: .blank, createdAt: orphan.createdAt)
@@ -213,6 +236,26 @@ public actor DocumentStore {
             withIntermediateDirectories: true
         )
         try data.write(to: pageURL(notebook: notebook, page: page), options: .atomic)
+    }
+
+    // MARK: - Cover render
+
+    /// The rendered cover — artwork plus whatever was drawn on the cover page —
+    /// kept as a PNG beside the pages so every list, grid and viewer can show the
+    /// real cover without loading PencilKit, and the sync layer can push it.
+    public nonisolated func coverImageURL(for id: UUID) -> URL {
+        documentURL(for: id).appendingPathComponent("cover.png")
+    }
+
+    public func saveCoverImage(_ data: Data, for id: UUID) throws {
+        try FileManager.default.createDirectory(
+            at: documentURL(for: id), withIntermediateDirectories: true
+        )
+        try data.write(to: coverImageURL(for: id), options: .atomic)
+    }
+
+    public func coverImageData(for id: UUID) -> Data? {
+        try? Data(contentsOf: coverImageURL(for: id))
     }
 
     // MARK: - Media payloads + page elements

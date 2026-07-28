@@ -76,6 +76,10 @@ public final class SyncService {
         Task {
             // Page count lives in the on-disk manifest, not the SwiftData row.
             let pages = (try? await store.manifest(for: snapshot.id).pages.count) ?? 1
+            // The cover the user actually drew, so ClassMate's tile matches the
+            // iPad's. Absent until the editor has rendered one.
+            let cover = await store.coverImageData(for: snapshot.id)
+                .map { "data:image/png;base64,\($0.base64EncodedString())" }
             let body = NotebookSyncBody(
                 title: snapshot.title,
                 coverColorHex: snapshot.coverColorHex,
@@ -83,7 +87,8 @@ public final class SyncService {
                 shelfId: snapshot.shelfID?.uuidString,
                 pageCount: max(pages, 1),
                 createdAt: snapshot.createdAt,
-                updatedAt: snapshot.updatedAt
+                updatedAt: snapshot.updatedAt,
+                coverImage: cover
             )
             try? await client.putNotebook(id: snapshot.id.uuidString, body: body, token: token)
         }

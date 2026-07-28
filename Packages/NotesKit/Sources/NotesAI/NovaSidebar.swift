@@ -236,6 +236,17 @@ public struct NovaSidebar: View {
                                 Label("Delete", systemImage: "trash")
                             }
                         }
+                        // Press and hold reaches the same actions as the swipe:
+                        // the row lifts, the list behind it blurs, and the
+                        // actions drop out under it.
+                        .contextMenu {
+                            Button(role: .destructive) {
+                                if saved.id == chat?.id { startNewChat() }
+                                store.delete(saved)
+                            } label: {
+                                Label("Delete chat", systemImage: "trash")
+                            }
+                        }
                     }
                 }
                 .listStyle(.plain)

@@ -11,9 +11,12 @@ public struct NotebookManifest: Codable, Sendable, Equatable {
     /// page color). v5 adds `PageRecord.backgroundPayloadFilename` (an imported
     /// PDF page rendered as the page background, drawn on with all tools).
     /// v6 adds page size + orientation, the line color and the line spacing, so a
-    /// notebook can be A4 landscape with blue rules. Older manifests decode fine —
-    /// every added field is optional / defaulted.
-    public static let currentVersion = 6
+    /// notebook can be A4 landscape with blue rules. v7 adds `PageRecord.isCover`:
+    /// the notebook's cover is page one and is drawn on like any other page.
+    /// Older manifests decode fine — every added field is optional / defaulted,
+    /// and `DocumentStore.ensureCoverPage` is what gives a pre-v7 notebook its
+    /// cover page, exactly once.
+    public static let currentVersion = 7
 
     public var version: Int
     public var pages: [PageRecord]
@@ -22,6 +25,10 @@ public struct NotebookManifest: Codable, Sendable, Equatable {
         self.version = version
         self.pages = pages
     }
+
+    /// The cover page, if this notebook has one.
+    public var coverPage: PageRecord? { pages.first { $0.isCover } }
+    public var hasCoverPage: Bool { coverPage != nil }
 }
 
 public struct PageRecord: Codable, Sendable, Equatable, Identifiable {
@@ -44,6 +51,10 @@ public struct PageRecord: Codable, Sendable, Equatable, Identifiable {
     public var lineColorHex: String?
     /// Line-spacing step, `PageLineSpacing.range`.
     public var lineSpacingSteps: Int
+    /// The notebook's cover, as page one. Its "paper" is the cover artwork
+    /// (`CoverPaper`, from the notebook's design + color + title) instead of a
+    /// paper template, and it takes ink exactly like every other page.
+    public var isCover: Bool
 
     public init(
         id: UUID = UUID(),
@@ -56,7 +67,8 @@ public struct PageRecord: Codable, Sendable, Equatable, Identifiable {
         pageSize: PageSize = .classic,
         orientation: PageOrientation = .portrait,
         lineColorHex: String? = nil,
-        lineSpacingSteps: Int = PageLineSpacing.default
+        lineSpacingSteps: Int = PageLineSpacing.default,
+        isCover: Bool = false
     ) {
         self.id = id
         self.template = template
@@ -69,6 +81,7 @@ public struct PageRecord: Codable, Sendable, Equatable, Identifiable {
         self.orientation = orientation
         self.lineColorHex = lineColorHex
         self.lineSpacingSteps = lineSpacingSteps
+        self.isCover = isCover
     }
 
     /// The ink coordinate space for this page.
@@ -87,6 +100,7 @@ public struct PageRecord: Codable, Sendable, Equatable, Identifiable {
     private enum CodingKeys: String, CodingKey {
         case id, template, createdAt, elements, margin, paperColorHex
         case backgroundPayloadFilename, pageSize, orientation, lineColorHex, lineSpacingSteps
+        case isCover
     }
 
     // Custom decode so older manifests (missing later keys) load without loss —
@@ -111,6 +125,7 @@ public struct PageRecord: Codable, Sendable, Equatable, Identifiable {
         lineSpacingSteps = try container.decodeIfPresent(
             Int.self, forKey: .lineSpacingSteps
         ) ?? PageLineSpacing.default
+        isCover = try container.decodeIfPresent(Bool.self, forKey: .isCover) ?? false
     }
 }
 
@@ -152,6 +167,19 @@ public struct PageStyle: Codable, Sendable, Equatable {
             backgroundPayloadFilename: backgroundPayloadFilename,
             pageSize: pageSize, orientation: orientation,
             lineColorHex: lineColorHex, lineSpacingSteps: lineSpacingSteps
+        )
+    }
+
+    /// The notebook's cover as page one. It keeps the notebook's geometry so the
+    /// page scroll stays even, and prints nothing under the ink — the cover
+    /// artwork itself is the paper.
+    public func makeCoverPage() -> PageRecord {
+        PageRecord(
+            template: .blank,
+            margin: PageMargin(position: .none),
+            pageSize: pageSize,
+            orientation: orientation,
+            isCover: true
         )
     }
 

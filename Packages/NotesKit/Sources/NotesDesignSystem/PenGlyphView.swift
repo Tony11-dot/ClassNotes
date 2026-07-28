@@ -4,10 +4,25 @@ import SwiftUI
 
 /// A little illustration of one writing instrument for the pen tray.
 ///
-/// Every preset has its OWN silhouette — barrel profile, tail and nib — not just
-/// its own colour: the tray has to tell you which pen is in your hand without
-/// opening anything. The art is drawn from `PenGlyphProfile`, a data table keyed by
-/// preset id, so adding an instrument stays a data change.
+/// Every preset has its OWN instrument — silhouette, material, furniture and nib —
+/// not just its own colour: the tray has to tell you which pen is in your hand
+/// without opening anything, at a glance, at about 60×24 points.
+///
+/// Each glyph is built in four passes, which is what makes it read as an object
+/// rather than a coloured rectangle with a triangle stuck on the end:
+///
+/// 1. **Silhouette** — a real barrel profile with curves. Pen bodies dome at the
+///    back and narrow into a shoulder; a brush handle tapers the *other* way; a
+///    pencil is faceted and cut flat.
+/// 2. **Volume** — one shared cylindrical shading pass (highlight high, core
+///    shadow low, a bounce at the very bottom) so every barrel looks round.
+/// 3. **Furniture** — the parts that name the instrument: a clip, a clicker, a
+///    crimped ferrule, hex facets, a paper wrap, a grip.
+/// 4. **Nib** — the business end, in the ink's own colour, so one look gives you
+///    both *which instrument* and *what's loaded*.
+///
+/// The art is data-driven through `PenGlyphProfile`, keyed by preset id, so adding
+/// an instrument stays a data change.
 public struct PenGlyphView: View {
     @Environment(\.theme) private var theme
 
@@ -24,34 +39,26 @@ public struct PenGlyphView: View {
 
     private var profile: PenGlyphProfile { PenGlyphProfile.of(preset) }
 
-    /// Wood and wax instruments are body-coloured; manufactured ones are pale so
-    /// the ink band reads against them.
-    private var barrelFill: LinearGradient {
-        let base: Color = switch profile.barrel {
-        case .wood, .wax: color.color.opacity(theme.isDark ? 0.55 : 0.4)
-        case .translucent: color.color.opacity(0.28)
-        case .round, .hex, .squat: theme.isDark ? theme.surfaceRaised.color : Color.white
-        }
-        return LinearGradient(
-            colors: [base, base.opacity(0.82)],
-            startPoint: .top, endPoint: .bottom
-        )
-    }
-
     public var body: some View {
         GeometryReader { geo in
             let width = geo.size.width
             let height = geo.size.height
             let tipWidth = width * profile.tipFraction
+            let barrelWidth = width - tipWidth
             let barrelHeight = height * profile.barrelHeightFraction
+            // The nib is sized against the BARREL, not the glyph. Sizing it
+            // against the glyph gave the thinnest instruments the biggest nibs —
+            // the fineliner came out as a sliver of a body behind a nib twice its
+            // width, which is the opposite of what a fineliner looks like.
+            let tipHeight = min(height, barrelHeight * profile.tipHeightScale)
 
-            ZStack(alignment: .leading) {
-                barrel(width: width - tipWidth, height: barrelHeight)
-                    .frame(height: height, alignment: .center)
-
-                nib(width: tipWidth, height: height)
-                    .offset(x: width - tipWidth)
+            HStack(spacing: 0) {
+                barrel(width: barrelWidth, height: barrelHeight)
+                    .frame(width: barrelWidth, height: barrelHeight)
+                nib(width: tipWidth, height: tipHeight)
+                    .frame(width: tipWidth, height: tipHeight)
             }
+            .frame(width: width, height: height)
             .shadow(color: .black.opacity(isSelected ? 0.22 : 0.08),
                     radius: isSelected ? 4 : 2, x: isSelected ? -2 : 0, y: 1)
         }
@@ -60,71 +67,237 @@ public struct PenGlyphView: View {
 
     // MARK: - Barrel
 
-    @ViewBuilder
     private func barrel(width: CGFloat, height: CGFloat) -> some View {
-        let shape = BarrelShape(style: profile.barrel, cornerScale: height)
-        shape
-            .fill(barrelFill)
-            .overlay(alignment: .leading) { tail(width: width, height: height) }
-            .overlay(alignment: .trailing) { collar(width: width, height: height) }
-            .overlay(shape.stroke(theme.separator.color, lineWidth: 0.5))
+        let shape = BarrelShape(body: profile.body)
+        return shape
+            .fill(material(height: height))
+            // Volume: the same cylinder light on every instrument, so a tray of
+            // nine of them reads as one set under one lamp.
+            .overlay { shape.fill(PenGlyphView.cylinderShading) }
+            .overlay { furniture(width: width, height: height).clipShape(shape) }
+            // Furniture that legitimately breaks the silhouette (a clip standing
+            // proud of the barrel, a clicker behind it) is drawn unclipped.
+            .overlay { proudFurniture(width: width, height: height) }
+            .overlay { shape.stroke(theme.separator.color.opacity(0.7), lineWidth: 0.5) }
             .frame(width: width, height: height)
     }
 
-    /// The back end: a clicker, an eraser, a wrapped stub or nothing.
-    @ViewBuilder
-    private func tail(width: CGFloat, height: CGFloat) -> some View {
-        switch profile.tail {
-        case .plain:
-            EmptyView()
-        case .clicker:
-            Capsule()
-                .fill(color.color)
-                .frame(width: width * 0.1, height: height * 0.5)
-                .offset(x: -width * 0.05)
-        case .eraser:
-            // Pink eraser + ferrule, the pencil's giveaway.
-            HStack(spacing: 0) {
-                UnevenRoundedRectangle(
-                    topLeadingRadius: height * 0.3, bottomLeadingRadius: height * 0.3,
-                    style: .continuous
-                )
-                .fill(Color(red: 0.94, green: 0.55, blue: 0.58))
-                .frame(width: width * 0.14)
-                Rectangle()
-                    .fill(Color(white: 0.72))
-                    .frame(width: width * 0.05)
-            }
-            .frame(height: height)
-        case .wrap:
-            // Crayon's paper sleeve: two bands around a wax stub.
-            HStack(spacing: height * 0.12) {
-                Rectangle().fill(Color.white.opacity(0.75)).frame(width: width * 0.055)
-                Rectangle().fill(Color.white.opacity(0.75)).frame(width: width * 0.055)
-            }
-            .frame(height: height * 0.86)
-            .padding(.leading, width * 0.14)
+    /// One cylindrical light, reused by every barrel.
+    static let cylinderShading = LinearGradient(
+        stops: [
+            .init(color: .white.opacity(0.38), location: 0.05),
+            .init(color: .white.opacity(0.14), location: 0.26),
+            .init(color: .clear, location: 0.50),
+            .init(color: .black.opacity(0.14), location: 0.80),
+            // A little bounce light along the very bottom edge stops the barrel
+            // reading as a shape fading into the background.
+            .init(color: .black.opacity(0.05), location: 1.0)
+        ],
+        startPoint: .top, endPoint: .bottom
+    )
+
+    /// What the barrel is made of. Manufactured bodies stay pale so the ink band
+    /// reads against them; wax, wood and translucent bodies carry the colour.
+    private func material(height: CGFloat) -> LinearGradient {
+        let base: Color
+        switch profile.material {
+        case .plasticPale:
+            base = theme.isDark ? theme.surfaceRaised.color : Color(white: 0.97)
+        case .plasticInk:
+            base = color.color.opacity(theme.isDark ? 0.72 : 0.86)
+        case .resin:
+            // Deep glossy resin: the ink colour, darkened, so a fountain pen reads
+            // as a heavier object than a biro.
+            base = color.color.opacity(0.9)
+        case .wood:
+            base = Color(red: 0.85, green: 0.68, blue: 0.42)
+        case .wax:
+            base = color.color
+        case .translucent:
+            base = color.color.opacity(0.3)
         }
+        return LinearGradient(
+            colors: [base, base.opacity(0.86)],
+            startPoint: .top, endPoint: .bottom
+        )
     }
 
-    /// The band where the barrel meets the nib — the ink colour, so a glance says
-    /// what's loaded as well as which pen it is.
+    // MARK: - Furniture (clipped to the barrel)
+
     @ViewBuilder
-    private func collar(width: CGFloat, height: CGFloat) -> some View {
-        switch profile.collar {
-        case .none:
-            EmptyView()
-        case .band:
-            Rectangle()
-                .fill(color.color)
-                .frame(width: width * 0.12)
-        case .metal:
-            LinearGradient(
-                colors: [Color(white: 0.86), Color(white: 0.62)],
-                startPoint: .top, endPoint: .bottom
-            )
-            .frame(width: width * 0.2)
+    private func furniture(width: CGFloat, height: CGFloat) -> some View {
+        ZStack(alignment: .leading) {
+            switch profile.body {
+            case .tapered:
+                // Flow pen: an ink band at the shoulder and a fine grip section.
+                inkBand(width: width, height: height, at: 0.74, thickness: 0.11)
+                gripRibs(width: width, height: height, from: 0.60, count: 3)
+
+            case .slim:
+                // Fineliner: one narrow colour ring near the collar, nothing else —
+                // the whole point of it is that it's spare.
+                inkBand(width: width, height: height, at: 0.82, thickness: 0.07)
+
+            case .clicker:
+                inkBand(width: width, height: height, at: 0.70, thickness: 0.13)
+                gripRibs(width: width, height: height, from: 0.52, count: 4)
+
+            case .fountain:
+                // A wide machined band where the section screws into the barrel.
+                metalBand(width: width, height: height, at: 0.70, thickness: 0.16)
+                metalBand(width: width, height: height, at: 0.88, thickness: 0.05)
+
+            case .hex:
+                hexFacets(width: width, height: height)
+                // Ferrule: ridged metal holding the eraser on.
+                metalBand(width: width, height: height, at: 0.10, thickness: 0.13)
+
+            case .wax:
+                // The crayon's paper sleeve: a label field between two rules.
+                Rectangle()
+                    .fill(Color.white.opacity(0.86))
+                    .frame(width: width * 0.52, height: height * 0.9)
+                    .offset(x: width * 0.20)
+                    .overlay(alignment: .leading) {
+                        VStack(spacing: height * 0.16) {
+                            Rectangle().fill(color.color.opacity(0.55))
+                                .frame(width: width * 0.34, height: max(0.6, height * 0.055))
+                            Rectangle().fill(color.color.opacity(0.35))
+                                .frame(width: width * 0.24, height: max(0.6, height * 0.055))
+                        }
+                        .offset(x: width * 0.29)
+                    }
+
+            case .handle:
+                // Brush: a crimped ferrule with two crimp lines.
+                metalBand(width: width, height: height, at: 0.80, thickness: 0.20)
+                Rectangle().fill(.black.opacity(0.16))
+                    .frame(width: max(0.5, width * 0.012), height: height)
+                    .offset(x: width * 0.85)
+                Rectangle().fill(.black.opacity(0.16))
+                    .frame(width: max(0.5, width * 0.012), height: height)
+                    .offset(x: width * 0.90)
+
+            case .marker:
+                // Marker: the cap seam and a colour cuff at the cone.
+                Rectangle().fill(.black.opacity(0.12))
+                    .frame(width: max(0.5, width * 0.02), height: height)
+                    .offset(x: width * 0.46)
+                inkBand(width: width, height: height, at: 0.80, thickness: 0.15)
+
+            case .highlighter:
+                // Translucent body: the ink level is visible inside it, which is
+                // the one detail that makes a highlighter unmistakable.
+                Capsule()
+                    .fill(color.color.opacity(0.62))
+                    .frame(width: width * 0.56, height: height * 0.44)
+                    .offset(x: width * 0.16)
+                Rectangle().fill(.black.opacity(0.1))
+                    .frame(width: max(0.5, width * 0.02), height: height)
+                    .offset(x: width * 0.80)
+            }
         }
+        .frame(width: width, height: height, alignment: .leading)
+    }
+
+    /// Furniture that sits proud of the barrel outline.
+    @ViewBuilder
+    private func proudFurniture(width: CGFloat, height: CGFloat) -> some View {
+        ZStack(alignment: .leading) {
+            switch profile.body {
+            case .tapered, .slim, .fountain:
+                clip(width: width, height: height)
+            case .clicker:
+                clip(width: width, height: height)
+                // The plunger, standing out behind the barrel.
+                UnevenRoundedRectangle(
+                    topLeadingRadius: height * 0.18, bottomLeadingRadius: height * 0.18,
+                    style: .continuous
+                )
+                .fill(color.color)
+                .frame(width: width * 0.10, height: height * 0.44)
+                .offset(x: -width * 0.07)
+            case .hex:
+                // Pink eraser behind the ferrule.
+                UnevenRoundedRectangle(
+                    topLeadingRadius: height * 0.34, bottomLeadingRadius: height * 0.34,
+                    style: .continuous
+                )
+                .fill(
+                    LinearGradient(
+                        colors: [Color(red: 0.96, green: 0.62, blue: 0.64),
+                                 Color(red: 0.87, green: 0.48, blue: 0.52)],
+                        startPoint: .top, endPoint: .bottom
+                    )
+                )
+                .frame(width: width * 0.13, height: height * 0.92)
+                .offset(x: -width * 0.10)
+            case .wax, .handle, .marker, .highlighter:
+                EmptyView()
+            }
+        }
+        .frame(width: width, height: height, alignment: .leading)
+    }
+
+    /// The pocket clip: a thin blade lying along the top of the barrel with a
+    /// rolled-over end, standing slightly proud of it.
+    private func clip(width: CGFloat, height: CGFloat) -> some View {
+        HStack(spacing: 0) {
+            Circle()
+                .fill(theme.inkSecondary.color.opacity(0.75))
+                .frame(width: height * 0.16, height: height * 0.16)
+            Capsule()
+                .fill(theme.inkSecondary.color.opacity(0.6))
+                .frame(width: width * 0.30, height: height * 0.1)
+        }
+        .frame(width: width, height: height, alignment: .topLeading)
+        .offset(x: width * 0.14, y: -height * 0.06)
+    }
+
+    /// A ring of the ink's own colour.
+    private func inkBand(
+        width: CGFloat, height: CGFloat, at position: CGFloat, thickness: CGFloat
+    ) -> some View {
+        Rectangle()
+            .fill(color.color)
+            .frame(width: width * thickness, height: height)
+            .offset(x: width * position)
+    }
+
+    /// A machined metal ring — ferrules, collars, cap bands.
+    private func metalBand(
+        width: CGFloat, height: CGFloat, at position: CGFloat, thickness: CGFloat
+    ) -> some View {
+        LinearGradient(
+            colors: [Color(white: 0.92), Color(white: 0.74), Color(white: 0.55)],
+            startPoint: .top, endPoint: .bottom
+        )
+        .frame(width: width * thickness, height: height)
+        .offset(x: width * position)
+    }
+
+    /// The moulded grip: a few soft ribs where the fingers go.
+    private func gripRibs(
+        width: CGFloat, height: CGFloat, from position: CGFloat, count: Int
+    ) -> some View {
+        HStack(spacing: width * 0.022) {
+            ForEach(0..<count, id: \.self) { _ in
+                Capsule()
+                    .fill(.black.opacity(0.14))
+                    .frame(width: max(0.6, width * 0.016), height: height * 0.66)
+            }
+        }
+        .frame(width: width, height: height, alignment: .leading)
+        .offset(x: width * position)
+    }
+
+    /// The pencil's facets: two lines running the length of the wood.
+    private func hexFacets(width: CGFloat, height: CGFloat) -> some View {
+        VStack(spacing: height * 0.30) {
+            Rectangle().fill(.black.opacity(0.10)).frame(height: max(0.5, height * 0.035))
+            Rectangle().fill(.black.opacity(0.07)).frame(height: max(0.5, height * 0.035))
+        }
+        .frame(width: width, height: height, alignment: .center)
     }
 
     // MARK: - Nib
@@ -132,331 +305,73 @@ public struct PenGlyphView: View {
     @ViewBuilder
     private func nib(width: CGFloat, height: CGFloat) -> some View {
         switch profile.tip {
-        case .cone:
-            ConeTipShape().fill(color.color).frame(width: width, height: height)
-        case .needle:
-            // A long thin needle: the fineliner reads as the precise one.
-            NeedleTipShape().fill(color.color).frame(width: width, height: height)
-        case .nib:
-            NibShape()
-                .fill(color.color)
-                .overlay(NibShape().strokeBorder(theme.separator.color, lineWidth: 0.4))
-                .frame(width: width, height: height)
-        case .chisel:
-            ChiselShape().fill(color.color).frame(width: width, height: height)
-        case .wideChisel:
-            ChiselShape()
-                .fill(color.withAlpha(max(0.45, color.alpha)).color)
-                .frame(width: width, height: height)
-        case .wood:
-            WoodTipShape().fill(color.color).frame(width: width, height: height)
-        case .waxStub:
-            WaxTipShape().fill(color.color).frame(width: width, height: height)
-        case .bristle:
-            BrushTipShape().fill(color.color).frame(width: width, height: height)
-        }
-    }
-}
-
-/// How one instrument is drawn. Each shipped pen gets a distinct combination, so
-/// no two glyphs in the tray look alike.
-public struct PenGlyphProfile: Sendable, Equatable {
-    public enum Barrel: Sendable { case round, hex, squat, wood, wax, translucent }
-    public enum Tail: Sendable { case plain, clicker, eraser, wrap }
-    public enum Collar: Sendable { case none, band, metal }
-    public enum Tip: Sendable {
-        case cone, needle, nib, chisel, wideChisel, wood, waxStub, bristle
-    }
-
-    public let barrel: Barrel
-    public let tail: Tail
-    public let collar: Collar
-    public let tip: Tip
-    /// How much of the glyph's width the nib takes.
-    public let tipFraction: CGFloat
-    /// How thick the barrel is relative to the glyph — a fineliner is a sliver, a
-    /// highlighter fills the row.
-    public let barrelHeightFraction: CGFloat
-
-    /// The profile for a preset. Unknown ids (a future pen, a custom one) fall back
-    /// to something sensible for their ink family rather than nothing at all.
-    public static func of(_ preset: PenPreset) -> PenGlyphProfile {
-        if let known = table[preset.id] { return known }
-        return fallback(for: preset)
-    }
-
-    private static let table: [String: PenGlyphProfile] = [
-        // Slim, capped, plain: the everyday pen.
-        "flow": PenGlyphProfile(
-            barrel: .round, tail: .plain, collar: .band, tip: .cone,
-            tipFraction: 0.26, barrelHeightFraction: 0.62
-        ),
-        // Clicker at the back, fatter body.
-        "ballpoint": PenGlyphProfile(
-            barrel: .round, tail: .clicker, collar: .band, tip: .cone,
-            tipFraction: 0.22, barrelHeightFraction: 0.78
-        ),
-        // A sliver of a barrel and a long needle.
-        "fineliner": PenGlyphProfile(
-            barrel: .round, tail: .plain, collar: .none, tip: .needle,
-            tipFraction: 0.34, barrelHeightFraction: 0.44
-        ),
-        // Wide body, metal collar, split nib.
-        "fountain": PenGlyphProfile(
-            barrel: .round, tail: .plain, collar: .metal, tip: .nib,
-            tipFraction: 0.3, barrelHeightFraction: 0.9
-        ),
-        // Hexagonal wood with a pink eraser — unmistakable.
-        "pencil": PenGlyphProfile(
-            barrel: .hex, tail: .eraser, collar: .none, tip: .wood,
-            tipFraction: 0.24, barrelHeightFraction: 0.72
-        ),
-        // Fat wax stub in a paper sleeve.
-        "crayon": PenGlyphProfile(
-            barrel: .wax, tail: .wrap, collar: .none, tip: .waxStub,
-            tipFraction: 0.2, barrelHeightFraction: 1
-        ),
-        // Slim handle, metal ferrule, soft bristles.
-        "brush": PenGlyphProfile(
-            barrel: .wood, tail: .plain, collar: .metal, tip: .bristle,
-            tipFraction: 0.36, barrelHeightFraction: 0.56
-        ),
-        // Squat marker body with a chisel.
-        "marker": PenGlyphProfile(
-            barrel: .squat, tail: .plain, collar: .band, tip: .chisel,
-            tipFraction: 0.28, barrelHeightFraction: 0.94
-        ),
-        // Translucent barrel (you can see the ink level) and the widest chisel.
-        "highlighter": PenGlyphProfile(
-            barrel: .translucent, tail: .plain, collar: .none, tip: .wideChisel,
-            tipFraction: 0.32, barrelHeightFraction: 1
-        )
-    ]
-
-    private static func fallback(for preset: PenPreset) -> PenGlyphProfile {
-        switch preset.ink {
-        case .fountainPen:
-            PenGlyphProfile(barrel: .round, tail: .plain, collar: .metal, tip: .nib,
-                            tipFraction: 0.3, barrelHeightFraction: 0.9)
-        case .marker:
-            PenGlyphProfile(
-                barrel: preset.isHighlighter ? .translucent : .squat,
-                tail: .plain, collar: preset.isHighlighter ? .none : .band,
-                tip: preset.isHighlighter ? .wideChisel : .chisel,
-                tipFraction: 0.3, barrelHeightFraction: 0.94
-            )
-        case .pencil:
-            PenGlyphProfile(barrel: .hex, tail: .eraser, collar: .none, tip: .wood,
-                            tipFraction: 0.24, barrelHeightFraction: 0.72)
-        case .crayon:
-            PenGlyphProfile(barrel: .wax, tail: .wrap, collar: .none, tip: .waxStub,
-                            tipFraction: 0.2, barrelHeightFraction: 1)
-        case .watercolor:
-            PenGlyphProfile(barrel: .wood, tail: .plain, collar: .metal, tip: .bristle,
-                            tipFraction: 0.36, barrelHeightFraction: 0.56)
-        case .pen, .monoline:
-            PenGlyphProfile(barrel: .round, tail: .plain, collar: .band, tip: .cone,
-                            tipFraction: 0.26, barrelHeightFraction: 0.66)
-        }
-    }
-}
-
-/// The barrel outline for a profile: rounded, faceted (hex), squat, wooden or a
-/// waxy stub.
-private struct BarrelShape: Shape {
-    let style: PenGlyphProfile.Barrel
-    let cornerScale: CGFloat
-
-    func path(in rect: CGRect) -> Path {
-        switch style {
-        case .round, .translucent:
-            return roundedPath(in: rect, radius: min(cornerScale * 0.3, rect.height / 2))
-        case .squat:
-            return roundedPath(in: rect, radius: min(cornerScale * 0.18, rect.height / 2))
-        case .wood, .wax:
-            return roundedPath(in: rect, radius: cornerScale * 0.06)
-        case .hex:
-            // A hexagonal pencil: flat top and bottom with clipped back corners.
-            var path = Path()
-            let notch = rect.height * 0.26
-            path.move(to: CGPoint(x: rect.minX + notch, y: rect.minY))
-            path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
-            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-            path.addLine(to: CGPoint(x: rect.minX + notch, y: rect.maxY))
-            path.addLine(to: CGPoint(x: rect.minX, y: rect.midY))
-            path.closeSubpath()
-            return path
-        }
-    }
-
-    /// Rounded at the back, square where the nib joins.
-    private func roundedPath(in rect: CGRect, radius: CGFloat) -> Path {
-        Path(
-            UnevenRoundedRectangle(
-                topLeadingRadius: radius,
-                bottomLeadingRadius: radius,
-                bottomTrailingRadius: 1,
-                topTrailingRadius: 1,
-                style: .continuous
-            )
-            .path(in: rect).cgPath
-        )
-    }
-}
-
-/// A pointed cone — ballpoints and monoline pens.
-private struct ConeTipShape: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
-        path.closeSubpath()
-        return path
-    }
-}
-
-/// A short cone that runs out into a long thin needle — the fineliner.
-private struct NeedleTipShape: Shape {
-    func path(in rect: CGRect) -> Path {
-        let shoulder = rect.minX + rect.width * 0.42
-        let thin = rect.height * 0.14
-        var path = Path()
-        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-        path.addLine(to: CGPoint(x: shoulder, y: rect.midY - thin))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.midY - thin * 0.35))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.midY + thin * 0.35))
-        path.addLine(to: CGPoint(x: shoulder, y: rect.midY + thin))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
-        path.closeSubpath()
-        return path
-    }
-}
-
-/// A split nib — fountain pens.
-private struct NibShape: InsettableShape {
-    var inset: CGFloat = 0
-
-    func path(in rect: CGRect) -> Path {
-        let rect = rect.insetBy(dx: inset, dy: inset)
-        var path = Path()
-        path.move(to: CGPoint(x: rect.minX, y: rect.minY + rect.height * 0.16))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - rect.height * 0.16))
-        path.addQuadCurve(
-            to: CGPoint(x: rect.minX, y: rect.minY + rect.height * 0.16),
-            control: CGPoint(x: rect.minX - rect.width * 0.2, y: rect.midY)
-        )
-        path.closeSubpath()
-        return path
-    }
-
-    func inset(by amount: CGFloat) -> NibShape {
-        NibShape(inset: inset + amount)
-    }
-}
-
-/// An angled chisel — markers and highlighters.
-private struct ChiselShape: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + rect.height * 0.22))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - rect.height * 0.06))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
-        path.closeSubpath()
-        return path
-    }
-}
-
-/// A sharpened wooden point with graphite showing — the pencil.
-private struct WoodTipShape: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX - rect.width * 0.28, y: rect.midY - rect.height * 0.1))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
-        path.addLine(to: CGPoint(x: rect.maxX - rect.width * 0.28, y: rect.midY + rect.height * 0.1))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
-        path.closeSubpath()
-        return path
-    }
-}
-
-/// A blunt, rounded-off wax end — the crayon.
-private struct WaxTipShape: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        let flat = rect.height * 0.3
-        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX - rect.width * 0.2, y: rect.midY - flat))
-        path.addQuadCurve(
-            to: CGPoint(x: rect.maxX - rect.width * 0.2, y: rect.midY + flat),
-            control: CGPoint(x: rect.maxX + rect.width * 0.35, y: rect.midY)
-        )
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
-        path.closeSubpath()
-        return path
-    }
-}
-
-/// A soft rounded bristle head — the watercolour brush.
-private struct BrushTipShape: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: CGPoint(x: rect.minX, y: rect.minY + rect.height * 0.12))
-        path.addQuadCurve(
-            to: CGPoint(x: rect.maxX, y: rect.midY),
-            control: CGPoint(x: rect.midX, y: rect.minY - rect.height * 0.1)
-        )
-        path.addQuadCurve(
-            to: CGPoint(x: rect.minX, y: rect.maxY - rect.height * 0.12),
-            control: CGPoint(x: rect.midX, y: rect.maxY + rect.height * 0.1)
-        )
-        path.closeSubpath()
-        return path
-    }
-}
-
-/// The stroke preview at the top of a pen's settings panel: an S-curve drawn with
-/// the pen's actual colour, width and opacity, so tuning is visible immediately.
-public struct StrokePreview: View {
-    @Environment(\.theme) private var theme
-
-    let color: ThemeColor
-    let width: Double
-    let opacity: Double
-    /// Higher stability draws a cleaner curve — the preview shows the difference.
-    let stability: Int
-
-    public init(color: ThemeColor, width: Double, opacity: Double, stability: Int) {
-        self.color = color
-        self.width = width
-        self.opacity = opacity
-        self.stability = stability
-    }
-
-    public var body: some View {
-        Canvas { context, size in
-            let wobble = CGFloat(PenSettings.stabilityRange.upperBound - stability) * 0.7
-            var path = Path()
-            let steps = 60
-            for step in 0...steps {
-                let t = CGFloat(step) / CGFloat(steps)
-                let x = 14 + t * (size.width - 28)
-                let base = size.height / 2 - sin(t * .pi * 2) * (size.height * 0.28)
-                let jitter = sin(t * 34) * wobble
-                let point = CGPoint(x: x, y: base + jitter)
-                if step == 0 { path.move(to: point) } else { path.addLine(to: point) }
+        case .ball:
+            // A cone with the ball itself standing at its point — overlapping the
+            // apex, so it reads as one tip rather than a bead floating off the end.
+            ZStack(alignment: .trailing) {
+                ConeTipShape().fill(color.color)
+                Circle()
+                    .fill(color.color)
+                    .frame(width: height * 0.36, height: height * 0.36)
             }
-            context.stroke(
-                path,
-                with: .color(color.color.opacity(opacity)),
-                style: StrokeStyle(lineWidth: max(1, width * 1.6), lineCap: .round, lineJoin: .round)
-            )
+        case .needle:
+            // The fineliner's giveaway: a metal cone running out into a long,
+            // parallel needle.
+            ZStack {
+                NeedleTipShape().fill(color.color)
+                NeedleCollarShape()
+                    .fill(LinearGradient(
+                        colors: [Color(white: 0.9), Color(white: 0.6)],
+                        startPoint: .top, endPoint: .bottom
+                    ))
+            }
+        case .nib:
+            // A split nib: shoulders, a breather hole, and the slit down to the tip.
+            ZStack {
+                NibShape().fill(color.color)
+                NibShape().strokeBorder(theme.separator.color.opacity(0.8), lineWidth: 0.4)
+                Circle()
+                    .fill(theme.paper.color.opacity(0.85))
+                    .frame(width: height * 0.13, height: height * 0.13)
+                    .offset(x: -width * 0.16)
+                Rectangle()
+                    .fill(theme.paper.color.opacity(0.7))
+                    .frame(width: width * 0.42, height: max(0.5, height * 0.045))
+                    .offset(x: width * 0.06)
+            }
+        case .chisel:
+            ChiselShape().fill(color.color)
+        case .wideChisel:
+            ChiselShape().fill(color.withAlpha(max(0.45, color.alpha)).color)
+        case .wood:
+            // Sharpened wood with the graphite cone standing out of it.
+            ZStack {
+                WoodTipShape().fill(
+                    LinearGradient(
+                        colors: [Color(red: 0.93, green: 0.82, blue: 0.62),
+                                 Color(red: 0.80, green: 0.64, blue: 0.42)],
+                        startPoint: .top, endPoint: .bottom
+                    )
+                )
+                GraphiteTipShape().fill(color.color)
+            }
+        case .waxStub:
+            WaxTipShape().fill(color.color)
+        case .bristle:
+            // Bristles: a soft belly narrowing to a point. The lighter core is the
+            // sheen down the middle of the hair, not a stain on one side.
+            ZStack {
+                BrushTipShape().fill(
+                    LinearGradient(
+                        colors: [color.color.opacity(0.82), color.color],
+                        startPoint: .leading, endPoint: .trailing
+                    )
+                )
+                BrushTipShape()
+                    .fill(.white.opacity(0.20))
+                    .scaleEffect(x: 0.96, y: 0.4, anchor: .center)
+                BrushTipShape().stroke(.black.opacity(0.10), lineWidth: 0.5)
+            }
         }
-        .frame(height: 92)
-        .background(theme.surface.color, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .accessibilityHidden(true)
     }
 }

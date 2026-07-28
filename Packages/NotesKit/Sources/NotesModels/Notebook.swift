@@ -94,6 +94,21 @@ public final class Notebook {
         set { orientationRaw = newValue.rawValue }
     }
 
+    /// Whether this document has a cover PAGE — page one, drawn on like any
+    /// other. Only paged notebooks with the cover switch on: a whiteboard is one
+    /// board, and an import is exactly the pages that were imported.
+    public var usesCoverPage: Bool { kind == .notebook && showsCover }
+
+    /// What the cover artwork is drawn from, wherever it's drawn.
+    public var coverPaper: CoverPaper {
+        CoverPaper(
+            title: title,
+            coverColorHex: coverColorHex,
+            design: coverDesign,
+            showsTitle: showsCover
+        )
+    }
+
     /// The page style new pages in this notebook are cut to.
     public var pageStyle: PageStyle {
         PageStyle(

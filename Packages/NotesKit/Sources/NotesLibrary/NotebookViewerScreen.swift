@@ -34,7 +34,7 @@ public struct NotebookViewerScreen: View {
                 ScrollView {
                     LazyVStack(spacing: 20) {
                         ForEach(Array(manifest.pages.enumerated()), id: \.element.id) { index, page in
-                            pageView(page, number: index + 1)
+                            pageView(page, label: pageLabel(at: index))
                         }
                     }
                     .padding(.vertical, 20)
@@ -52,6 +52,7 @@ public struct NotebookViewerScreen: View {
         .fullScreenCover(item: $zoomedPage) { page in
             ZoomablePageView(
                 page: page,
+                cover: coverPaper,
                 ink: inkImages[page.id],
                 background: backgrounds[page.id],
                 mediaURL: { services.documentStore.mediaURL(notebook: notebook.id, filename: $0) }
@@ -59,10 +60,23 @@ public struct NotebookViewerScreen: View {
         }
     }
 
-    private func pageView(_ page: PageRecord, number: Int) -> some View {
+    /// The cover is page one of the document but it isn't "page 1" — it's the
+    /// cover, and numbering starts after it.
+    private func pageLabel(at index: Int) -> String {
+        guard let manifest else { return "\(index + 1)" }
+        if manifest.pages[index].isCover { return "Cover" }
+        return "\(manifest.pages.prefix(index + 1).filter { !$0.isCover }.count)"
+    }
+
+    /// The notebook's cover artwork, when it has a cover page.
+    private var coverPaper: CoverPaper? {
+        notebook.usesCoverPage ? notebook.coverPaper : nil
+    }
+
+    private func pageView(_ page: PageRecord, label: String) -> some View {
         GeometryReader { geo in
             ZStack {
-                PageTemplateView(style: page.style)
+                PagePaperView(page: page, cover: coverPaper)
                 if let background = backgrounds[page.id] {
                     Image(uiImage: background).resizable().scaledToFit()
                 }
@@ -96,23 +110,23 @@ public struct NotebookViewerScreen: View {
             }
             .buttonStyle(.plain)
             .padding(8)
-            .accessibilityLabel("Zoom into page \(number)")
+            .accessibilityLabel("Zoom into page \(label)")
         }
         .contextMenu {
             Button { zoomedPage = page } label: {
                 Label("Zoom in", systemImage: "plus.magnifyingglass")
             }
             ShareLink(
-                item: exportImage(page, number: number),
+                item: exportImage(page),
                 preview: SharePreview(
-                    "\(notebook.title) — page \(number)",
-                    image: exportImage(page, number: number)
+                    "\(notebook.title) — \(label)",
+                    image: exportImage(page)
                 )
             ) {
                 Label("Share page", systemImage: "square.and.arrow.up")
             }
         }
-        .accessibilityLabel("Page \(number)")
+        .accessibilityLabel("Page \(label)")
     }
 
     private func load() async {
@@ -139,9 +153,9 @@ public struct NotebookViewerScreen: View {
     }
 
     /// Full composite (paper + template + ink) for sharing.
-    private func exportImage(_ page: PageRecord, number: Int) -> Image {
+    private func exportImage(_ page: PageRecord) -> Image {
         let composite = ZStack {
-            PageTemplateView(style: page.style)
+            PagePaperView(page: page, cover: coverPaper)
             if let background = backgrounds[page.id] {
                 Image(uiImage: background).resizable().scaledToFit()
             }
@@ -175,6 +189,7 @@ private struct ZoomablePageView: View {
     @Environment(\.dismiss) private var dismiss
 
     let page: PageRecord
+    let cover: CoverPaper?
     let ink: UIImage?
     let background: UIImage?
     let mediaURL: (String) -> URL
@@ -189,7 +204,7 @@ private struct ZoomablePageView: View {
             theme.surface.color.ignoresSafeArea()
             GeometryReader { geo in
                 ZStack {
-                    PageTemplateView(style: page.style)
+                    PagePaperView(page: page, cover: cover)
                     if let background {
                         Image(uiImage: background).resizable().scaledToFit()
                     }

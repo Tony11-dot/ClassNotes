@@ -104,7 +104,12 @@ public final class NotebookRepository {
             lineColorHex: style.lineColorHex,
             lineSpacingSteps: style.lineSpacingSteps
         )
-        try await store.createDocument(id: notebook.id, style: style, pageCount: pageCount)
+        // A paged notebook with the cover switch on gets its cover as page one,
+        // so it can be drawn on like every other page.
+        try await store.createDocument(
+            id: notebook.id, style: style, pageCount: pageCount,
+            includesCover: notebook.usesCoverPage
+        )
         context.insert(notebook)
         try context.save()
         sync?.pushNotebook(snapshot(notebook))
@@ -150,7 +155,9 @@ public final class NotebookRepository {
         )
         // Every document starts with one page; the import goes in front of it and
         // that placeholder is then removed, so the notebook is purely the import.
-        let placeholder = try? await store.manifest(for: notebook.id).pages.first?.id
+        // (Never a cover page — imports don't have one, but be explicit.)
+        let placeholder = try? await store.manifest(for: notebook.id)
+            .pages.first(where: { !$0.isCover })?.id
         let imported: Bool
         if let pdf {
             imported = (try? await store.importPDF(
@@ -178,8 +185,10 @@ public final class NotebookRepository {
     public func attachFile(
         _ data: Data, displayName: String, fileExtension: String, to notebookID: UUID
     ) async {
+        // The first real page, never the cover — a dropped file belongs inside the
+        // notebook, not stuck to the front of it.
         guard let manifest = try? await store.manifest(for: notebookID),
-              let page = manifest.pages.first,
+              let page = manifest.pages.first(where: { !$0.isCover }) ?? manifest.pages.first,
               let filename = try? await store.saveMedia(
                   data, notebook: notebookID, fileExtension: fileExtension
               ) else { return }

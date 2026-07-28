@@ -1,79 +1,162 @@
 import ClassMateTheme
 import NotesModels
 import SwiftUI
+import UIKit
 
 /// A themed notebook cover: the chosen cover color, one of the `CoverDesign`
 /// artworks drawn procedurally on top, a subtle spine, and a legible title.
 /// Content layer — opaque by design, and asset-free so it stays crisp from a
 /// 60 pt picker chip to a full-screen preview.
+///
+/// The cover is page one of the document, so anything drawn on it belongs on this
+/// tile too: pass `render` (the PNG the editor writes beside the pages) and the
+/// tile shows the real, drawn-on cover instead of re-deriving the artwork.
 public struct NotebookCoverView: View {
-    @Environment(\.theme) private var theme
-
     let title: String
     let coverColor: ThemeColor
     let design: CoverDesign
     /// Hidden for the "Cover: off" notebooks, where the library shows page one.
     let showsTitle: Bool
+    /// The rendered cover page (artwork + ink), when one has been saved.
+    let render: UIImage?
 
     public init(
         title: String,
         coverColor: ThemeColor,
         design: CoverDesign = .default,
-        showsTitle: Bool = true
+        showsTitle: Bool = true,
+        render: UIImage? = nil
     ) {
         self.title = title
         self.coverColor = coverColor
         self.design = design
         self.showsTitle = showsTitle
+        self.render = render
+    }
+
+    public var body: some View {
+        Group {
+            if let render {
+                // The render already contains artwork, title and ink.
+                Image(uiImage: render)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } else {
+                CoverPaperView(
+                    cover: CoverPaper(
+                        title: title,
+                        coverColorHex: coverColor.hexString,
+                        design: design,
+                        showsTitle: showsTitle
+                    ),
+                    coverColorOverride: coverColor
+                )
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .aspectRatio(3.0 / 4.0, contentMode: .fit)
+        .accessibilityLabel("Notebook \(title), \(design.displayName) cover")
+    }
+}
+
+/// The cover artwork as a SURFACE that fills whatever it's given: the library
+/// tile clips it to a 3:4 card, and the editor uses it as page one's paper, where
+/// it fills the page and takes ink on top. Opaque, like all paper.
+public struct CoverPaperView: View {
+    @Environment(\.theme) private var theme
+
+    let cover: CoverPaper
+    /// Used by the cover picker, which previews palette entries that aren't the
+    /// notebook's saved hex.
+    let coverColorOverride: ThemeColor?
+
+    public init(cover: CoverPaper, coverColorOverride: ThemeColor? = nil) {
+        self.cover = cover
+        self.coverColorOverride = coverColorOverride
+    }
+
+    private var coverColor: ThemeColor {
+        coverColorOverride ?? ThemeColor(hex: cover.coverColorHex) ?? theme.accent
     }
 
     public var body: some View {
         let ink = theme.contrastingInk(on: coverColor)
-        RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .fill(coverColor.color.gradient)
-            .overlay { CoverArtView(design: design, coverColor: coverColor) }
-            .overlay(alignment: .leading) { spine }
-            .overlay(alignment: design.hasTitlePlate ? .center : .bottomLeading) {
-                if showsTitle { titleView(ink: ink) }
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .aspectRatio(3.0 / 4.0, contentMode: .fit)
-            .accessibilityLabel("Notebook \(title), \(design.displayName) cover")
+        GeometryReader { geo in
+            // Everything is sized from the surface's own width, so one drawing
+            // reads correctly as a 60 pt picker chip, a 200 pt library tile and a
+            // full A4 page in the editor.
+            let unit = max(geo.size.width, 1) / 200
+            Rectangle()
+                .fill(coverColor.color.gradient)
+                .overlay { CoverArtView(design: cover.design, coverColor: coverColor) }
+                .overlay(alignment: .leading) { spine(unit: unit) }
+                .overlay(alignment: cover.design.hasTitlePlate ? .center : .bottomLeading) {
+                    if cover.showsTitle { titleView(ink: ink, unit: unit) }
+                }
+        }
     }
 
-    private var spine: some View {
+    private var title: String { cover.title }
+    private var design: CoverDesign { cover.design }
+
+    private func spine(unit: CGFloat) -> some View {
         Rectangle()
             .fill(.black.opacity(0.14))
-            .frame(width: 10)
-            .clipShape(
-                UnevenRoundedRectangle(topLeadingRadius: 12, bottomLeadingRadius: 12)
-            )
+            .frame(width: 10 * unit)
     }
 
     @ViewBuilder
-    private func titleView(ink: ThemeColor) -> some View {
+    private func titleView(ink: ThemeColor, unit: CGFloat) -> some View {
+        let font = Font.dsSystem(size: 17 * unit, weight: .semibold)
         if design.hasTitlePlate {
             // Classic stationery: the title sits on a printed label.
             Text(title)
-                .font(.dsHeadline)
+                .font(font)
                 .foregroundStyle(theme.ink.color)
                 .lineLimit(2)
                 .multilineTextAlignment(.center)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
+                .padding(.horizontal, 14 * unit)
+                .padding(.vertical, 12 * unit)
                 .frame(maxWidth: .infinity)
                 .background(theme.paper.color.opacity(0.94))
-                .overlay(Rectangle().strokeBorder(theme.ink.withAlpha(0.15).color, lineWidth: 1))
-                .padding(.horizontal, 22)
-                .shadow(color: .black.opacity(0.12), radius: 4, y: 2)
+                .overlay(
+                    Rectangle()
+                        .strokeBorder(theme.ink.withAlpha(0.15).color, lineWidth: 1 * unit)
+                )
+                .padding(.horizontal, 22 * unit)
+                .shadow(color: .black.opacity(0.12), radius: 4 * unit, y: 2 * unit)
         } else {
             Text(title)
-                .font(.dsHeadline)
+                .font(font)
                 .foregroundStyle(ink.color)
                 .lineLimit(2)
                 .multilineTextAlignment(.leading)
-                .padding(.leading, 20)
-                .padding([.bottom, .trailing], 12)
+                .padding(.leading, 20 * unit)
+                .padding([.bottom, .trailing], 12 * unit)
+        }
+    }
+}
+
+/// What sits UNDER a page's ink: the notebook's cover artwork when the page is
+/// the cover, the printed paper template otherwise.
+///
+/// One view so the editor, the iPhone viewer, the page manager and every export
+/// composite agree on what a page looks like — the cover is a page, and it has to
+/// look like the cover everywhere it's drawn.
+public struct PagePaperView: View {
+    let page: PageRecord
+    let cover: CoverPaper?
+
+    public init(page: PageRecord, cover: CoverPaper?) {
+        self.page = page
+        self.cover = cover
+    }
+
+    public var body: some View {
+        if page.isCover, let cover {
+            CoverPaperView(cover: cover)
+        } else {
+            PageTemplateView(style: page.style)
         }
     }
 }

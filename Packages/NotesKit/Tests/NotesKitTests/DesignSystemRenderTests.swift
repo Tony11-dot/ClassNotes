@@ -177,6 +177,24 @@ struct DesignSystemRenderTests {
         }
     }
 
+    @Test("The designed launch scene ships and parses")
+    func launchSceneIsBundled() throws {
+        // The launch used to be a SwiftUI rebuild of the artwork, so it drifted
+        // from the artwork silently. Now the exported scene IS the launch — which
+        // only holds if the resource actually ships and Lottie can read it.
+        let animation = try #require(
+            LaunchScene.animation,
+            "Resources/LaunchScene.json is missing or malformed"
+        )
+        #expect(LaunchScene.isAvailable)
+        #expect(animation.duration > 1, "a launch that finishes instantly isn't the scene")
+        #expect(animation.duration < 6, "a launch nobody can skip must stay short")
+        #expect(animation.framerate == 60)
+        // Sized as designed, so the aspect the view fits into is the real one.
+        #expect(animation.size.width == 1280)
+        #expect(animation.size.height == 720)
+    }
+
     @Test("No two pens in the tray look alike")
     func penGlyphsAreDistinct() throws {
         // The tray has to say which pen is in your hand without opening its panel,

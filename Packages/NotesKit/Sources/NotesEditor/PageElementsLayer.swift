@@ -9,9 +9,10 @@ import UIKit
 /// links, voice notes, text boxes and sticky tape.
 ///
 /// Elements are stored in the page's logical space and scaled to the displayed
-/// size. Drag to move (live, 1:1); pinch to resize; long-press for a small action
-/// menu; tap a file or link to open it; tap a strip of tape to lift it; tap a text
-/// box in text/move mode to type in it.
+/// size. Drag to move (live, 1:1); pinch to resize; press and hold for the
+/// system context menu (the element lifts, the page blurs, the actions drop out
+/// below it); tap a file or link to open it; tap a strip of tape to lift it; tap a
+/// text box in text/move mode to type in it.
 struct PageElementsLayer: View {
     @Environment(\.theme) private var theme
     @Environment(\.openURL) private var openURL
@@ -35,7 +36,6 @@ struct PageElementsLayer: View {
     /// bubble tracks the finger instead of jumping on release.
     @State private var dragOffset: CGSize = .zero
     @State private var draggingID: UUID?
-    @State private var menuElementID: UUID?
     /// Strips already removed by the eraser gesture in flight, so one continuous
     /// scrub deletes each one exactly once.
     @State private var erasedElementIDs: Set<UUID> = []
@@ -57,14 +57,15 @@ struct PageElementsLayer: View {
                     )
                     .gesture(dragGesture(for: element), including: gestureMask(for: element))
                     .simultaneousGesture(resizeGesture(for: element), including: gestureMask(for: element))
-                    .simultaneousGesture(longPressGesture(for: element))
                     .onTapGesture { handleTap(element) }
                     // Erasing tape wins over lifting it, so a rubbed-out strip is
                     // gone rather than merely revealed.
                     .highPriorityGesture(eraseGesture(for: element), including: eraseMask(for: element))
-                    .popover(isPresented: menuBinding(for: element)) {
-                        actionMenu(for: element)
-                    }
+                    // Press and hold: the thing you pressed lifts off the page,
+                    // the page behind it blurs, and the actions drop out
+                    // underneath it. That's the system context menu — a popover
+                    // with a pointer was the wrong shape for "act on this".
+                    .contextMenu { actionMenu(for: element) }
             }
         }
         .frame(width: displaySize.width, height: displaySize.height)
@@ -98,13 +99,6 @@ struct PageElementsLayer: View {
             }
     }
 
-    private func menuBinding(for element: PageElement) -> Binding<Bool> {
-        Binding(
-            get: { menuElementID == element.id },
-            set: { if !$0 { menuElementID = nil } }
-        )
-    }
-
     // MARK: - Interactions
 
     private func handleTap(_ element: PageElement) {
@@ -128,71 +122,43 @@ struct PageElementsLayer: View {
         }
     }
 
-    private func longPressGesture(for element: PageElement) -> some Gesture {
-        LongPressGesture(minimumDuration: 0.35)
-            .onEnded { _ in
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                menuElementID = element.id
-            }
-    }
-
     @ViewBuilder
     private func actionMenu(for element: PageElement) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if element.kind == .file, element.payloadFilename != nil {
-                menuButton("Open", systemImage: "arrow.up.forward.app") {
-                    if let filename = element.payloadFilename {
-                        previewURL = model.mediaURL(filename: filename)
-                    }
-                    menuElementID = nil
+        if element.kind == .file, element.payloadFilename != nil {
+            Button {
+                if let filename = element.payloadFilename {
+                    previewURL = model.mediaURL(filename: filename)
                 }
-                Divider()
+            } label: {
+                Label("Open", systemImage: "arrow.up.forward.app")
             }
-            if element.kind == .link, let string = element.urlString, let url = URL(string: string) {
-                menuButton("Open link", systemImage: "safari") {
-                    openURL(url)
-                    menuElementID = nil
-                }
-                Divider()
+        }
+        if element.kind == .link, let string = element.urlString, let url = URL(string: string) {
+            Button { openURL(url) } label: { Label("Open link", systemImage: "safari") }
+        }
+        if element.kind == .text {
+            Button {
+                editingTextID = element.id
+                textFieldFocused = true
+            } label: {
+                Label("Edit text", systemImage: "pencil")
             }
-            if element.kind == .text {
-                menuButton("Edit text", systemImage: "pencil") {
-                    editingTextID = element.id
-                    textFieldFocused = true
-                    menuElementID = nil
-                }
-                Divider()
-            }
-            if element.kind == .tape {
-                menuButton(
+        }
+        if element.kind == .tape {
+            Button {
+                Task { await model.toggleTape(element.id, on: pageID) }
+            } label: {
+                Label(
                     element.isHidden ? "Cover again" : "Reveal",
                     systemImage: element.isHidden ? "eye.slash" : "eye"
-                ) {
-                    Task { await model.toggleTape(element.id, on: pageID) }
-                    menuElementID = nil
-                }
-                Divider()
-            }
-            menuButton("Delete", systemImage: "trash", role: .destructive) {
-                Task { await model.deleteElement(element.id, on: pageID) }
-                menuElementID = nil
+                )
             }
         }
-        .padding(.vertical, 4)
-        .frame(minWidth: 180)
-        .presentationCompactAdaptation(.popover)
-    }
-
-    private func menuButton(
-        _ title: String, systemImage: String, role: ButtonRole? = nil, action: @escaping () -> Void
-    ) -> some View {
-        Button(role: role, action: action) {
-            Label(title, systemImage: systemImage)
-                .font(.dsBody)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 16).padding(.vertical, 11)
+        Button(role: .destructive) {
+            Task { await model.deleteElement(element.id, on: pageID) }
+        } label: {
+            Label("Delete", systemImage: "trash")
         }
-        .tint(role == .destructive ? .red : theme.ink.color)
     }
 
     @ViewBuilder

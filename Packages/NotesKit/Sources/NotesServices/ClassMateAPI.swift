@@ -79,10 +79,16 @@ public struct NotebookSyncBody: Encodable, Sendable {
     public let pageCount: Int
     public let createdAt: Date
     public let updatedAt: Date
+    /// The rendered cover — the cover page's artwork with whatever the user drew
+    /// on it — as a PNG data URL, so ClassMate shows the SAME cover the iPad
+    /// shows. `nil` when nothing has been rendered yet (ClassMate then falls back
+    /// to drawing the cover from `coverColorHex`).
+    public let coverImage: String?
 
     public init(
         title: String, coverColorHex: String, template: String,
-        shelfId: String?, pageCount: Int, createdAt: Date, updatedAt: Date
+        shelfId: String?, pageCount: Int, createdAt: Date, updatedAt: Date,
+        coverImage: String? = nil
     ) {
         self.title = title
         self.coverColorHex = coverColorHex
@@ -91,6 +97,7 @@ public struct NotebookSyncBody: Encodable, Sendable {
         self.pageCount = pageCount
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.coverImage = coverImage
     }
 }
 

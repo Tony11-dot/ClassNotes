@@ -11,6 +11,9 @@ struct PageManagerView: View {
     @Environment(\.theme) private var theme
 
     let model: NotebookEditorModel
+    /// The notebook's cover artwork, so the cover page's thumbnail looks like the
+    /// cover rather than like blank paper.
+    let cover: CoverPaper?
     @Binding var isVisible: Bool
     let onSelect: (UUID) -> Void
 
@@ -23,7 +26,7 @@ struct PageManagerView: View {
             ScrollView {
                 LazyVGrid(columns: columns, spacing: 16) {
                     ForEach(Array(model.pages.enumerated()), id: \.element.id) { index, page in
-                        thumbnail(page, number: index + 1, index: index)
+                        thumbnail(page, number: pageNumber(at: index), index: index)
                     }
                     addButton
                 }
@@ -53,10 +56,21 @@ struct PageManagerView: View {
         .padding(.horizontal, 16).padding(.vertical, 12)
     }
 
+    /// The cover isn't page one — it's the cover. Numbering starts after it.
+    private func pageNumber(at index: Int) -> Int {
+        model.pages.prefix(index + 1).filter { !$0.isCover }.count
+    }
+
+    /// A page's paper at thumbnail size: cover artwork for the cover, the printed
+    /// template for everything else.
+    private func paper(_ page: PageRecord) -> some View {
+        PagePaperView(page: page, cover: cover)
+    }
+
     private func thumbnail(_ page: PageRecord, number: Int, index: Int) -> some View {
         let isCurrent = model.focusedPageID == page.id
         return VStack(spacing: 6) {
-            PageTemplateView(template: page.template, margin: page.margin, paperColorHex: page.paperColorHex)
+            paper(page)
                 .aspectRatio(PageGeometry.size.width / PageGeometry.size.height, contentMode: .fit)
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .overlay(
@@ -65,7 +79,7 @@ struct PageManagerView: View {
                                       lineWidth: isCurrent ? 2.5 : 0.5)
                 )
                 .shadow(color: .black.opacity(0.12), radius: 4, y: 2)
-            Text("\(number)")
+            Text(page.isCover ? "Cover" : "\(number)")
                 .font(.dsCaption.weight(isCurrent ? .bold : .regular))
                 .foregroundStyle(isCurrent ? theme.accent.color : theme.inkSecondary.color)
         }
@@ -83,7 +97,7 @@ struct PageManagerView: View {
         }
         .draggable(page.id.uuidString) {
             // Drag preview.
-            PageTemplateView(template: page.template, margin: page.margin, paperColorHex: page.paperColorHex)
+            paper(page)
                 .aspectRatio(PageGeometry.size.width / PageGeometry.size.height, contentMode: .fit)
                 .frame(width: 90)
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))

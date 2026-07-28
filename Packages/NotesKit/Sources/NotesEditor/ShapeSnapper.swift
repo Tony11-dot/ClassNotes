@@ -3,82 +3,110 @@ import Foundation
 import PencilKit
 
 /// Snaps a freehand stroke to a clean geometric shape when the user "holds" the
-/// pencil at the end of the stroke — the same gesture as Apple Notes. We detect
-/// the hold from the stroke's own timing (the tail dwells in one spot), then fit
-/// the path to a line, ellipse, rectangle, or triangle, preserving the ink.
+/// pencil at the end of the stroke — the same gesture as Apple Notes. The hold is
+/// read from the stroke's own timing, then the path is fitted to a line, angle,
+/// ellipse, rectangle, triangle or pentagon, preserving the ink.
 enum ShapeSnapper {
+    /// How long the pencil must rest at the end of a stroke for it to count as
+    /// "hold to snap".
+    static let minimumHold: TimeInterval = 0.4
+    /// How far the pencil may drift during that rest and still be holding still.
+    /// Generous, because a hand resting on glass is never actually still.
+    static let holdRadius: CGFloat = 11
+    /// How far the ink may wander off the straight line between its endpoints and
+    /// still be snapped to that line. A deliberate hold is a statement of intent,
+    /// so this is looser than a passive straightness test would be — but not so
+    /// loose that a drawn arc collapses into a chord.
+    static let straightTolerance: CGFloat = 0.15
 
     /// If `stroke` ends with a dwell and fits a primitive confidently, returns a
     /// replacement stroke; otherwise nil (leave the freehand stroke as drawn).
     static func snapped(_ stroke: PKStroke) -> PKStroke? {
-        let points = sample(stroke)
-        guard points.count >= 8 else { return nil }
-        guard endedWithHold(stroke) else { return nil }
-        // Drop the dwell tail so it doesn't distort the fit.
-        let shapePoints = trimmedTail(points)
-        guard shapePoints.count >= 6 else { return nil }
-        guard let path = fit(shapePoints) else { return nil }
+        guard holdDuration(of: stroke) >= minimumHold else { return nil }
+        let points = trimmedTail(densePoints(stroke))
+        guard points.count >= 6, let path = fit(points) else { return nil }
         return rebuild(stroke, along: path)
     }
 
     // MARK: - Hold detection
 
-    /// True when the last ~0.3s of the stroke stayed within a small radius —
-    /// i.e. the pencil paused at the end (the intent-to-snap signal).
-    private static func endedWithHold(_ stroke: PKStroke) -> Bool {
-        let pts = Array(stroke.path)
-        guard let last = pts.last else { return false }
-        let holdWindow: TimeInterval = 0.28
-        let holdRadius: CGFloat = 9
-        var dwellStart: PKStrokePoint?
-        for point in pts.reversed() {
-            if last.timeOffset - point.timeOffset > holdWindow { break }
-            if distance(point.location, last.location) > holdRadius { return false }
-            dwellStart = point
+    /// How long the pencil stayed put at the end of the stroke.
+    ///
+    /// Measured as the time since it was last farther than `holdRadius` from where
+    /// it came to rest — NOT as the time spanned by the points inside a fixed
+    /// trailing window.
+    ///
+    /// That distinction is the whole feature. `PKStrokePath` stores a FITTED
+    /// spline, not the raw touch stream: a pencil held still needs no new control
+    /// points, so PencilKit collapses a half-second dwell into a single point whose
+    /// `timeOffset` simply jumps. A window scan then sees one point, measures a
+    /// zero-length hold, and refuses every snap — which is exactly what shipped.
+    ///
+    /// Returns 0 for a stroke that never left `holdRadius` at all: that's a dot
+    /// being placed, not a shape being drawn.
+    static func holdDuration(of stroke: PKStroke) -> TimeInterval {
+        let points = Array(stroke.path)
+        guard let last = points.last else { return 0 }
+        for point in points.reversed() where distance(point.location, last.location) > holdRadius {
+            return max(0, last.timeOffset - point.timeOffset)
         }
-        guard let start = dwellStart else { return false }
-        return last.timeOffset - start.timeOffset >= holdWindow * 0.75
-    }
-
-    private static func trimmedTail(_ points: [CGPoint]) -> [CGPoint] {
-        guard let last = points.last else { return points }
-        var result = points
-        while result.count > 6, distance(result[result.count - 2], last) < 9 {
-            result.removeLast()
-        }
-        return result
+        return 0
     }
 
     // MARK: - Sampling
 
-    private static func sample(_ stroke: PKStroke) -> [CGPoint] {
-        stroke.path.map { $0.location }
+    /// The stroke's geometry, densely and evenly sampled.
+    ///
+    /// Fitting has to read the spline, not its control points: a quick straight
+    /// line can be four control points, and the old six-point floor threw those
+    /// strokes away before they were ever looked at.
+    static func densePoints(_ stroke: PKStroke) -> [CGPoint] {
+        let path = stroke.path
+        guard path.count > 1 else { return path.map(\.location) }
+        return path.interpolatedPoints(by: .distance(2)).map(\.location)
+    }
+
+    /// Drops the dwell from the end of the path so the pause doesn't drag the fit
+    /// toward the resting point, while keeping the true endpoint.
+    static func trimmedTail(_ points: [CGPoint]) -> [CGPoint] {
+        guard let last = points.last,
+              let cut = points.lastIndex(where: { distance($0, last) > holdRadius }),
+              cut < points.count - 1
+        else { return points }
+        return Array(points[0...cut]) + [last]
     }
 
     // MARK: - Fitting
 
-    private static func fit(_ points: [CGPoint]) -> [CGPoint]? {
-        let start = points.first!
-        let end = points.last!
+    static func fit(_ points: [CGPoint]) -> [CGPoint]? {
+        guard let start = points.first, let end = points.last else { return nil }
         let box = boundingBox(points)
-        let diag = hypot(box.width, box.height)
-        guard diag > 24 else { return nil }
+        let diagonal = hypot(box.width, box.height)
+        guard diagonal > 24 else { return nil }
 
-        let closed = distance(start, end) < diag * 0.28
-        let corners = cornerCount(points)
+        let closed = distance(start, end) < diagonal * 0.28
+        let corners = cornerCount(points, closed: closed)
 
         if !closed {
-            // Open stroke: snap to a straight line only if it's actually straight.
-            return isStraight(points) ? [start, end] : nil
+            if isStraight(points) { return [start, end] }
+            // One deliberate bend and nothing else: an angle, cleaned into two
+            // straight legs rather than left as a wobble.
+            if corners == 1, let bend = sharpestCorner(points) {
+                return densify([start, bend, end])
+            }
+            return nil
         }
 
         switch corners {
-        case ...1:
-            return ellipsePath(in: box)
-        case 3:
-            return trianglePath(points, in: box)
-        default:
-            return rectanglePath(in: box)
+        // A closed shape with no clear corners is a circle, and one with a couple
+        // is a lumpy circle — both read as "I meant an ellipse".
+        case ...2: return ellipsePath(in: box)
+        case 3: return trianglePath(points, in: box)
+        case 4: return rectanglePath(in: box)
+        case 5: return polygonPath(in: box, sides: 5)
+        // Six or more detected corners on a closed path is a scribbled round
+        // shape, not a hexagon anybody meant to draw.
+        default: return ellipsePath(in: box)
         }
     }
 
@@ -86,8 +114,8 @@ enum ShapeSnapper {
         let cx = box.midX, cy = box.midY
         let rx = box.width / 2, ry = box.height / 2
         let segments = 64
-        return (0...segments).map { i in
-            let t = Double(i) / Double(segments) * 2 * .pi
+        return (0...segments).map { index in
+            let t = Double(index) / Double(segments) * 2 * .pi
             return CGPoint(x: cx + rx * cos(t), y: cy + ry * sin(t))
         }
     }
@@ -115,17 +143,33 @@ enum ShapeSnapper {
         return densify(corners)
     }
 
+    /// A regular polygon inscribed in the box, first vertex pointing up — which is
+    /// how a pentagon gets drawn by hand.
+    private static func polygonPath(in box: CGRect, sides: Int) -> [CGPoint] {
+        guard sides >= 3 else { return rectanglePath(in: box) }
+        let cx = box.midX, cy = box.midY
+        let rx = box.width / 2, ry = box.height / 2
+        let corners = (0...sides).map { index -> CGPoint in
+            let angle = -CGFloat.pi / 2 + CGFloat(index) * 2 * .pi / CGFloat(sides)
+            return CGPoint(x: cx + rx * cos(angle), y: cy + ry * sin(angle))
+        }
+        return densify(corners)
+    }
+
     /// Adds intermediate points along each segment so the rebuilt stroke has a
     /// smooth, evenly sampled path.
     private static func densify(_ corners: [CGPoint], step: CGFloat = 6) -> [CGPoint] {
         var out: [CGPoint] = []
-        for i in 0..<(corners.count - 1) {
-            let a = corners[i], b = corners[i + 1]
-            let len = distance(a, b)
-            let n = max(1, Int(len / step))
-            for k in 0..<n {
-                let t = CGFloat(k) / CGFloat(n)
-                out.append(CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t))
+        for index in 0..<(corners.count - 1) {
+            let start = corners[index], end = corners[index + 1]
+            let length = distance(start, end)
+            let steps = max(1, Int(length / step))
+            for sample in 0..<steps {
+                let t = CGFloat(sample) / CGFloat(steps)
+                out.append(CGPoint(
+                    x: start.x + (end.x - start.x) * t,
+                    y: start.y + (end.y - start.y) * t
+                ))
             }
         }
         out.append(corners.last!)
@@ -134,39 +178,84 @@ enum ShapeSnapper {
 
     // MARK: - Geometry helpers
 
-    private static func isStraight(_ points: [CGPoint]) -> Bool {
-        let a = points.first!, b = points.last!
+    static func isStraight(_ points: [CGPoint]) -> Bool {
+        guard let a = points.first, let b = points.last else { return false }
         let len = distance(a, b)
         guard len > 1 else { return false }
         // Max perpendicular deviation from the a→b line, normalized by length.
         var maxDev: CGFloat = 0
-        for p in points {
-            let dev = perpendicularDistance(p, lineStart: a, lineEnd: b)
-            maxDev = max(maxDev, dev)
+        for point in points {
+            maxDev = max(maxDev, perpendicularDistance(point, lineStart: a, lineEnd: b))
         }
-        return maxDev / len < 0.12
+        return maxDev / len < straightTolerance
     }
 
-    /// Counts sharp direction changes (> ~50°) along the path — used to tell an
-    /// ellipse (few) from a rectangle (≈4) or triangle (≈3).
-    private static func cornerCount(_ points: [CGPoint]) -> Int {
-        let stride = max(1, points.count / 48)
-        var reduced: [CGPoint] = []
-        var i = 0
-        while i < points.count { reduced.append(points[i]); i += stride }
-        guard reduced.count >= 3 else { return 0 }
-        var count = 0
-        var lastCornerIndex = -3
+    /// The point that turns the path most sharply — the corner of a hand-drawn
+    /// angle. Endpoints are excluded so a hooked start never wins.
+    private static func sharpestCorner(_ points: [CGPoint]) -> CGPoint? {
+        let reduced = reduce(points)
+        guard reduced.count >= 3 else { return nil }
+        var best: (angle: CGFloat, point: CGPoint)?
         for j in 1..<(reduced.count - 1) {
             let v1 = CGVector(dx: reduced[j].x - reduced[j - 1].x, dy: reduced[j].y - reduced[j - 1].y)
             let v2 = CGVector(dx: reduced[j + 1].x - reduced[j].x, dy: reduced[j + 1].y - reduced[j].y)
             let angle = abs(angleBetween(v1, v2))
-            if angle > .pi * 0.28, j - lastCornerIndex >= 2 {
-                count += 1
-                lastCornerIndex = j
-            }
+            if best == nil || angle > best!.angle { best = (angle, reduced[j]) }
         }
-        return count
+        return best?.point
+    }
+
+    /// Counts sharp direction changes (> ~50°) along the path — used to tell an
+    /// ellipse (few) from a rectangle (≈4) or triangle (≈3).
+    ///
+    /// A closed path is read as a RING. An open one has no turn at its endpoints,
+    /// but a closed one turns where its ends meet exactly like it does anywhere
+    /// else, and skipping that join cost every hand-drawn square its fourth
+    /// corner — so squares were snapping to triangles.
+    static func cornerCount(_ points: [CGPoint], closed: Bool = false) -> Int {
+        var reduced = reduce(points)
+        guard reduced.count >= 3 else { return 0 }
+
+        if closed, reduced.count > 3 {
+            // Where the ends meet they're one corner sampled twice, not two.
+            let box = boundingBox(reduced)
+            let join = hypot(box.width, box.height) * 0.05
+            if distance(reduced[0], reduced[reduced.count - 1]) < join { reduced.removeLast() }
+        }
+
+        let n = reduced.count
+        guard n >= 3 else { return 0 }
+        let indices = closed ? Array(0..<n) : Array(1..<(n - 1))
+        var corners: [Int] = []
+        for j in indices {
+            let previous = reduced[(j - 1 + n) % n]
+            let next = reduced[(j + 1) % n]
+            let v1 = CGVector(dx: reduced[j].x - previous.x, dy: reduced[j].y - previous.y)
+            let v2 = CGVector(dx: next.x - reduced[j].x, dy: next.y - reduced[j].y)
+            guard abs(angleBetween(v1, v2)) > .pi * 0.28 else { continue }
+            // One corner spread over a couple of samples is still one corner.
+            if let last = corners.last, j - last < 2 { continue }
+            corners.append(j)
+        }
+        // Same rule across the ring's seam.
+        if closed, corners.count > 1, let first = corners.first, let last = corners.last,
+           (first + n) - last < 2 {
+            corners.removeLast()
+        }
+        return corners.count
+    }
+
+    /// Down-samples to at most ~48 points so corner detection reads the shape's
+    /// overall turns rather than the sampling noise between them.
+    private static func reduce(_ points: [CGPoint]) -> [CGPoint] {
+        let stride = max(1, points.count / 48)
+        var reduced: [CGPoint] = []
+        var i = 0
+        while i < points.count {
+            reduced.append(points[i])
+            i += stride
+        }
+        return reduced
     }
 
     private static func angleBetween(_ a: CGVector, _ b: CGVector) -> CGFloat {
@@ -184,8 +273,12 @@ enum ShapeSnapper {
     }
 
     private static func boundingBox(_ points: [CGPoint]) -> CGRect {
-        let xs = points.map(\.x), ys = points.map(\.y)
-        let minX = xs.min()!, maxX = xs.max()!, minY = ys.min()!, maxY = ys.max()!
+        guard let first = points.first else { return .zero }
+        var minX = first.x, maxX = first.x, minY = first.y, maxY = first.y
+        for point in points.dropFirst() {
+            minX = min(minX, point.x); maxX = max(maxX, point.x)
+            minY = min(minY, point.y); maxY = max(maxY, point.y)
+        }
         return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
     }
 

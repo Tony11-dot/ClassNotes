@@ -107,7 +107,11 @@ public struct EditorScreen: View {
 
             // Page manager slides in from the leading edge.
             if showPages, !isBoard {
-                PageManagerView(model: model, isVisible: $showPages) { id in
+                PageManagerView(
+                    model: model,
+                    cover: notebook.usesCoverPage ? notebook.coverPaper : nil,
+                    isVisible: $showPages
+                ) { id in
                     model.focusedPageID = id
                 }
                 .transition(.move(edge: .leading))
@@ -136,6 +140,7 @@ public struct EditorScreen: View {
         .overlay(alignment: .bottomTrailing) { novaBubble }
         .overlay(alignment: .trailing) { novaPanel }
         .overlay(alignment: .top) { noticeBanner }
+        .overlay(alignment: .top) { liveBeautifyIndicator }
         .overlay { beautifyingOverlay }
         .animation(.spring(duration: 0.3), value: showPages)
         .animation(.spring(duration: 0.3), value: showNova)
@@ -145,11 +150,19 @@ public struct EditorScreen: View {
         .toolbar { toolbarContent }
         .task {
             model = NotebookEditorModel(notebookID: notebook.id, store: services.documentStore)
-            await model.load()
+            // A notebook that should have a cover page gets one here if it was
+            // made before covers were pages — once, then never again.
+            await model.load(coverStyle: notebook.usesCoverPage ? notebook.pageStyle : nil)
         }
         .onDisappear {
-            services.repository.touch(notebook)
             beautifier.reset()
+            // The cover render has to be written BEFORE the row is touched: the
+            // library reloads its thumbnail off `updatedAt`, and `touch` is also
+            // what pushes the new cover up to ClassMate.
+            Task { @MainActor in
+                await saveCoverRender()
+                services.repository.touch(notebook)
+            }
             syncPageContent()
         }
         .photosPicker(isPresented: $showPhotoPicker, selection: $photoItem, matching: .images)
@@ -236,6 +249,40 @@ public struct EditorScreen: View {
                     self.editorNotice = nil
                 }
         }
+    }
+
+    /// What the live pass is doing, in one hairline pill.
+    ///
+    /// The real-time pass is silent by design — but silence is indistinguishable
+    /// from "the switch does nothing", which is how it read when a pass was being
+    /// dropped. Reading is now visible, and so is a pass that came back empty.
+    @ViewBuilder
+    var liveBeautifyIndicator: some View {
+        if toolState.beautify.isEnabled, !beautifying {
+            Group {
+                if beautifier.isWorking {
+                    beautifyPill("Reading your writing…", systemImage: "sparkles")
+                } else if beautifier.lastPassFoundNothing {
+                    beautifyPill(
+                        "Couldn't read that — try writing a little larger",
+                        systemImage: "questionmark.circle"
+                    )
+                }
+            }
+            .animation(.easeInOut(duration: 0.2), value: beautifier.isWorking)
+            .animation(.easeInOut(duration: 0.2), value: beautifier.lastPassFoundNothing)
+            .allowsHitTesting(false)
+        }
+    }
+
+    private func beautifyPill(_ title: String, systemImage: String) -> some View {
+        Label(title, systemImage: systemImage)
+            .font(.dsCaption.weight(.semibold))
+            .foregroundStyle(theme.inkSecondary.color)
+            .padding(.horizontal, 12).padding(.vertical, 7)
+            .dsGlass(in: Capsule())
+            .padding(.top, 8)
+            .transition(.opacity)
     }
 
     @ViewBuilder
@@ -425,13 +472,19 @@ extension EditorScreen {
 
     /// Renders one page (paper + margin + ink + elements) to an image in its own
     /// logical page space, so the magic pen can crop a region from it.
+    ///
+    /// `drawing` overrides the live canvas — needed for any page whose canvas the
+    /// lazy page list has already deallocated, which would otherwise render as
+    /// blank paper.
     @MainActor
-    func renderPageImage(_ page: PageRecord, scale: CGFloat = 2) -> UIImage {
+    func renderPageImage(
+        _ page: PageRecord, scale: CGFloat = 2, drawing: PKDrawing? = nil
+    ) -> UIImage {
         let logicalSize = page.logicalSize
         let pageRect = CGRect(origin: .zero, size: logicalSize)
-        let ink = tracker.drawing(for: page.id)?.image(from: pageRect, scale: scale)
+        let ink = (drawing ?? tracker.drawing(for: page.id))?.image(from: pageRect, scale: scale)
         let content = ZStack {
-            PageTemplateView(style: page.style)
+            pagePaper(page)
             if let bg = backgroundImage(for: page) { Image(uiImage: bg).resizable().scaledToFit() }
             if let ink { Image(uiImage: ink).resizable().scaledToFit() }
             PageElementsLayer(
@@ -456,15 +509,48 @@ extension EditorScreen {
     func syncPageContent() {
         let pages = model.pages
         guard !pages.isEmpty else { return }
-        let images: [NotebookPageImage] = pages.enumerated().compactMap { index, page in
-            guard let data = renderPageImage(page, scale: 1.5).pngData() else { return nil }
-            return NotebookPageImage(
-                pageIndex: index,
-                dataUrl: "data:image/png;base64,\(data.base64EncodedString())",
-                attachments: attachments(for: page)
-            )
+        Task { @MainActor in
+            var images: [NotebookPageImage] = []
+            for (index, page) in pages.enumerated() {
+                let ink = await inkForRender(page)
+                guard let data = renderPageImage(page, scale: 1.5, drawing: ink).pngData() else {
+                    continue
+                }
+                images.append(NotebookPageImage(
+                    pageIndex: index,
+                    dataUrl: "data:image/png;base64,\(data.base64EncodedString())",
+                    attachments: attachments(for: page)
+                ))
+            }
+            services.sync.pushPageImages(notebookID: notebook.id, images: images)
         }
-        services.sync.pushPageImages(notebookID: notebook.id, images: images)
+    }
+
+    /// A page's ink for rendering: the live canvas when the page is on screen,
+    /// otherwise what's saved on disk. The lazy page list deallocates canvases you
+    /// scrolled past (their ink is flushed on the way out), so without the disk
+    /// fallback every off-screen page would sync as empty paper.
+    @MainActor
+    func inkForRender(_ page: PageRecord) async -> PKDrawing? {
+        if let live = tracker.drawing(for: page.id) { return live }
+        guard let data = await services.documentStore.pageData(
+            notebook: notebook.id, page: page.id
+        ) else { return nil }
+        return try? PKDrawing(data: data)
+    }
+
+    /// Renders the cover page — artwork plus whatever the user drew on it — and
+    /// saves it beside the pages, so the library tile, the iPhone viewer and the
+    /// ClassMate ClassNotes tab all show the cover as it now looks.
+    @MainActor
+    func saveCoverRender() async {
+        guard let cover = model.coverPage else { return }
+        let ink = await inkForRender(cover)
+        // ~360 px wide: enough for a Retina library tile, small enough to travel
+        // inside the notebook sync body.
+        let scale = 360 / max(cover.logicalSize.width, 1)
+        guard let png = renderPageImage(cover, scale: scale, drawing: ink).pngData() else { return }
+        try? await services.documentStore.saveCoverImage(png, for: notebook.id)
     }
 
     /// The page's voice notes, files and links, packaged so ClassMate can play and

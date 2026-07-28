@@ -16,7 +16,7 @@ extension EditorScreen {
         if let page = model.pages.first {
             GeometryReader { geo in
                 ZStack {
-                    PageTemplateView(style: page.style)
+                    pagePaper(page)
                     canvasStack(page, displaySize: page.logicalSize, allowsZoom: true)
                 }
                 .frame(width: geo.size.width, height: geo.size.height)
@@ -41,7 +41,7 @@ extension EditorScreen {
                 GeometryReader { geo in
                     let size = focusPageSize(for: page, in: geo.size)
                     ZStack {
-                        PageTemplateView(style: page.style)
+                        pagePaper(page)
                         if let bg = backgroundImage(for: page) {
                             Image(uiImage: bg).resizable().scaledToFit()
                         }
@@ -160,10 +160,17 @@ extension EditorScreen {
         .allowsHitTesting(false)
     }
 
+    /// One page's paper. The cover is a page like any other; its paper is the
+    /// notebook's cover artwork instead of a printed template, so the pencil draws
+    /// straight onto the cover.
+    func pagePaper(_ page: PageRecord) -> some View {
+        PagePaperView(page: page, cover: notebook.usesCoverPage ? notebook.coverPaper : nil)
+    }
+
     func pageView(_ page: PageRecord) -> some View {
         GeometryReader { geo in
             ZStack {
-                PageTemplateView(style: page.style)
+                pagePaper(page)
                 if let bg = backgroundImage(for: page) {
                     Image(uiImage: bg).resizable().scaledToFit()
                 }

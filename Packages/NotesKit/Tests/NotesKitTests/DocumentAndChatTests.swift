@@ -411,10 +411,15 @@ struct LibraryCreationTests {
         #expect(notebook.coverDesign == .default)
 
         let manifest = try await harness.store.manifest(for: notebook.id)
-        #expect(manifest.pages.count == 2)
+        // The cover is page one now, so it's the cover plus the two note pages.
+        #expect(manifest.pages.count == 3)
+        #expect(manifest.pages.first?.isCover == true)
+        let paper = manifest.pages.filter { !$0.isCover }
+        #expect(paper.count == 2)
         #expect(manifest.pages.allSatisfy { $0.template == .blank })
         #expect(manifest.pages.allSatisfy { $0.margin.position == PageMargin.Position.none })
-        #expect(manifest.pages.allSatisfy { $0.paperColorHex == PaperPalette.white.color.hexString })
+        // The cover's paper is its artwork, so only the note pages carry a colour.
+        #expect(paper.allSatisfy { $0.paperColorHex == PaperPalette.white.color.hexString })
     }
 
     @Test("A whiteboard is one big landscape board with the cover switched off")

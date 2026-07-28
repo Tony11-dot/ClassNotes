@@ -164,13 +164,8 @@ public struct LibraryGridScreen<Destination: View>: View {
             opened = notebook
         } label: {
             VStack(alignment: .leading, spacing: 8) {
-                NotebookCoverView(
-                    title: notebook.title,
-                    coverColor: ThemeColor(hex: notebook.coverColorHex) ?? theme.accent,
-                    design: notebook.coverDesign,
-                    showsTitle: notebook.showsCover
-                )
-                .shadow(color: .black.opacity(0.18), radius: 14, y: 8)
+                NotebookCoverTile(notebook: notebook)
+                    .shadow(color: .black.opacity(0.18), radius: 14, y: 8)
                 HStack(spacing: 5) {
                     // A board / import reads as itself, not as "just a notebook".
                     if notebook.kind != .notebook {

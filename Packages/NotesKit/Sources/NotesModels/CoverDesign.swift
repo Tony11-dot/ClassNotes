@@ -126,6 +126,35 @@ public enum CoverDesign: String, CaseIterable, Sendable, Codable, Identifiable {
     }
 }
 
+/// Everything needed to draw a notebook's cover: its title, its cover color and
+/// its artwork. The cover is page one of the document (`PageRecord.isCover`), so
+/// this travels from the `Notebook` row down to whatever draws that page — the
+/// editor's canvas, the library thumbnail, the render pushed to ClassMate.
+///
+/// A value type rather than the `@Model` itself, so it crosses actors and can be
+/// built in tests without a container.
+public struct CoverPaper: Sendable, Equatable, Codable {
+    public var title: String
+    /// Hex from the theme's cover palette — resolved against the live theme when
+    /// drawn, so a cover follows a theme change like everything else.
+    public var coverColorHex: String
+    public var design: CoverDesign
+    /// The "Cover" switch: off means the artwork carries no title.
+    public var showsTitle: Bool
+
+    public init(
+        title: String,
+        coverColorHex: String,
+        design: CoverDesign = .default,
+        showsTitle: Bool = true
+    ) {
+        self.title = title
+        self.coverColorHex = coverColorHex
+        self.design = design
+        self.showsTitle = showsTitle
+    }
+}
+
 /// What kind of document a library entry is. All of them are notebook packages on
 /// disk; the kind decides how the editor presents them.
 public enum NotebookKind: String, CaseIterable, Sendable, Codable, Identifiable {

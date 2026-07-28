@@ -66,13 +66,8 @@ public struct LibraryListScreen<Destination: View>: View {
         List(filtered) { notebook in
             NavigationLink(value: notebook) {
                 HStack(spacing: 14) {
-                    NotebookCoverView(
-                        title: "",
-                        coverColor: ThemeColor(hex: notebook.coverColorHex) ?? theme.accent,
-                        design: notebook.coverDesign,
-                        showsTitle: false
-                    )
-                    .frame(width: 34)
+                    NotebookCoverTile(notebook: notebook, showsTitle: false)
+                        .frame(width: 34)
                     VStack(alignment: .leading, spacing: 2) {
                         Label {
                             Text(notebook.title)

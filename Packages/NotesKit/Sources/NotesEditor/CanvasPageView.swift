@@ -261,6 +261,13 @@ struct CanvasPageView: UIViewRepresentable {
         func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
             isUsingTool = false
             scheduleInkPass()
+            // Re-arm beautification on the LIFT, not just on the last drawing
+            // change. Rest the tip on the page after a word and the drawing stops
+            // changing, so the settle timer fires while the pencil is still down;
+            // `apply` refuses to swap ink out from under it, and nothing ever
+            // asked again — the pass was simply lost. That is what "I write with
+            // it on and nothing happens" looks like from the outside.
+            scheduleBeautification()
         }
 
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
@@ -320,12 +327,14 @@ struct CanvasPageView: UIViewRepresentable {
             }
 
             var changed = false
+            var snappedAShape = false
             if toolState.tool == .pen {
                 for index in processedStrokeCount..<count {
                     let stroke = drawing.strokes[index]
                     if toolState.snapShapes, let snapped = ShapeSnapper.snapped(stroke) {
                         drawing.strokes[index] = snapped
                         changed = true
+                        snappedAShape = true
                     } else if let shaped = PenShaper.shaped(stroke, settings: toolState.penSettings) {
                         drawing.strokes[index] = shaped
                         changed = true
@@ -334,6 +343,9 @@ struct CanvasPageView: UIViewRepresentable {
             }
             processedStrokeCount = count
             guard changed else { return }
+            // A snap is the app acting on a deliberate gesture, so it gets a tap
+            // back — otherwise holding still and watching feels like guesswork.
+            if snappedAShape { UIImpactFeedbackGenerator(style: .rigid).impactOccurred() }
             replace(drawing, on: canvas)
             scheduleSave()
         }

@@ -14,7 +14,11 @@ let package = Package(
         .library(name: "NotesEditor", targets: ["NotesEditor"])
     ],
     dependencies: [
-        .package(path: "../ClassMateTheme")
+        .package(path: "../ClassMateTheme"),
+        // The launch animation is the designed Lottie scene itself
+        // (`Resources/LaunchScene.json`), not a hand-rebuilt approximation of it.
+        // This is the one third-party dependency in the app.
+        .package(url: "https://github.com/airbnb/lottie-ios.git", from: "4.5.0")
     ],
     targets: [
         .target(
@@ -27,7 +31,10 @@ let package = Package(
         ),
         .target(
             name: "NotesDesignSystem",
-            dependencies: ["ClassMateTheme", "NotesModels", "NotesServices"],
+            dependencies: [
+                "ClassMateTheme", "NotesModels", "NotesServices",
+                .product(name: "Lottie", package: "lottie-ios")
+            ],
             resources: [.process("Resources")]
         ),
         .target(
