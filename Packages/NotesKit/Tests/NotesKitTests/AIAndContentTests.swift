@@ -65,7 +65,11 @@ struct AIServiceTests {
     @Test("AIConfig mirrors ClassMate's Groq defaults and key fallback")
     func configDefaults() {
         #expect(AIConfig.defaultBaseURL == "https://api.groq.com/openai/v1")
-        #expect(AIConfig.defaultModel == "llama-3.3-70b-versatile")
+        #expect(AIConfig.defaultModel == "openai/gpt-oss-120b")
+        // Groq decommissioned this on 2026-06-17. Asking for it fails every
+        // message, and the app has no way to tell you why — which is exactly how
+        // NOVA "stopped working". ClassMate moved off it; this keeps us in step.
+        #expect(AIConfig.defaultModel != "llama-3.3-70b-versatile")
         #expect(AIConfig.chatCompletionsURL.absoluteString
             == "https://api.groq.com/openai/v1/chat/completions")
         // Keychain key is the fallback when no env/plist key is set.

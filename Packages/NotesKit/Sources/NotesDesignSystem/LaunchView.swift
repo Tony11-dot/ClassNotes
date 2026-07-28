@@ -41,13 +41,17 @@ public struct LaunchView: View {
     }
 
     public var body: some View {
-        if let scene = LaunchScene.animation {
-            // The designed scene itself. Everything below is a fallback for when
-            // it isn't bundled.
+        if let scene = LaunchScene.animation(surface: theme.surface, accent: theme.accent) {
+            // The designed scene itself, recoloured to the theme the way ClassMate
+            // recolours its own splash. Everything below is a fallback for when it
+            // isn't bundled.
             ZStack {
                 theme.surface.color.ignoresSafeArea()
                 LaunchSceneView(animation: scene, onFinished: finishOnce)
-                    .padding(.horizontal, 24)
+                    // The scene is authored 1280×720; letting it fill the screen
+                    // makes the lockup enormous on an iPad. Capped so it sits as a
+                    // mark on a themed field rather than as a poster.
+                    .frame(maxWidth: 460, maxHeight: 260)
             }
             .task {
                 CMFonts.registerIfNeeded()

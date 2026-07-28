@@ -5,7 +5,7 @@ import Foundation
 ///
 ///   SUPPORT_AI_BASE_URL  (default https://api.groq.com/openai/v1)
 ///   SUPPORT_AI_API_KEY   (falls back to GROQ_API_KEY)
-///   SUPPORT_AI_MODEL     (default llama-3.3-70b-versatile)
+///   SUPPORT_AI_MODEL     (default openai/gpt-oss-120b)
 ///
 /// Resolution order for each value: process environment (Xcode Run / xcodebuild
 /// dev) → Info.plist (injected at build time from `Config/Secrets.xcconfig`,
@@ -13,7 +13,10 @@ import Foundation
 /// Keychain value. No key is ever stored in source.
 public enum AIConfig {
     public static let defaultBaseURL = "https://api.groq.com/openai/v1"
-    public static let defaultModel = "llama-3.3-70b-versatile"
+    /// Groq decommissioned `llama-3.3-70b-versatile` on 2026-06-17; a build still
+    /// asking for it gets an error for every message, which is what "NOVA isn't
+    /// working" looked like. Kept in step with ClassMate's `support.service.ts`.
+    public static let defaultModel = "openai/gpt-oss-120b"
     /// A vision-capable Groq model for the magic pen (image prompts). Override
     /// with `SUPPORT_AI_VISION_MODEL` if Groq's lineup changes.
     public static let defaultVisionModel = "meta-llama/llama-4-scout-17b-16e-instruct"

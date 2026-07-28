@@ -147,6 +147,9 @@ struct CanvasPageView: UIViewRepresentable {
         pencilInteraction.delegate = context.coordinator
         canvas.addInteraction(pencilInteraction)
 
+        // Watches the pencil rest so a shape can settle WHILE it's still down.
+        context.coordinator.attachDwellWatcher(to: canvas)
+
         context.coordinator.canvas = canvas
         tracker.register(canvas, for: page.id)
         context.coordinator.loadDrawing()
@@ -214,6 +217,14 @@ struct CanvasPageView: UIViewRepresentable {
         /// hand to lift.
         private var isUsingTool = false
         private var inkPassTask: Task<Void, Never>?
+        /// The shape the live dwell watcher settled on, waiting for the pencil to
+        /// lift so it can be committed as ONE canvas rewrite.
+        private var pendingSnapPath: [CGPoint]?
+        /// Draws that shape under the resting pencil. A layer rather than a stroke
+        /// swap: the in-flight stroke belongs to PencilKit, and assigning
+        /// `drawing` mid-stroke tears it up.
+        private let snapPreviewLayer = CAShapeLayer()
+        private weak var dwellWatcher: StrokeDwellRecognizer?
 
         init(
             notebookID: UUID,
@@ -248,6 +259,66 @@ struct CanvasPageView: UIViewRepresentable {
                 processedStrokeCount = canvas?.drawing.strokes.count ?? 0
                 loaded = true
             }
+        }
+
+        // MARK: Live shape snapping
+
+        /// Adds the dwell watcher and the preview layer to a canvas.
+        func attachDwellWatcher(to canvas: PageCanvasView) {
+            snapPreviewLayer.fillColor = nil
+            snapPreviewLayer.lineCap = .round
+            snapPreviewLayer.lineJoin = .round
+            snapPreviewLayer.opacity = 0
+            canvas.layer.addSublayer(snapPreviewLayer)
+
+            let watcher = StrokeDwellRecognizer(target: nil, action: nil)
+            watcher.logicalPoint = { [weak canvas] touch in
+                guard let canvas, canvas.zoomScale > 0 else { return .zero }
+                // A scroll view hands back content coordinates already; the zoom
+                // is what stands between those and the page's own space.
+                let point = touch.location(in: canvas)
+                return CGPoint(x: point.x / canvas.zoomScale, y: point.y / canvas.zoomScale)
+            }
+            watcher.onDwell = { [weak self] points in self?.previewSnap(points) }
+            watcher.onResume = { [weak self] in self?.cancelSnapPreview() }
+            watcher.onEnd = { [weak self] held in
+                guard let self else { return }
+                self.hideSnapPreview()
+                if !held { self.pendingSnapPath = nil }
+            }
+            canvas.addGestureRecognizer(watcher)
+            dwellWatcher = watcher
+        }
+
+        /// The pencil has come to rest: fit what's been drawn and show it.
+        private func previewSnap(_ points: [CGPoint]) {
+            guard toolState.snapShapes, toolState.tool == .pen,
+                  let canvas, let path = ShapeSnapper.liveFit(points) else { return }
+            pendingSnapPath = path
+
+            let scale = canvas.zoomScale
+            let bezier = UIBezierPath()
+            for (index, point) in path.enumerated() {
+                let scaled = CGPoint(x: point.x * scale, y: point.y * scale)
+                if index == 0 { bezier.move(to: scaled) } else { bezier.addLine(to: scaled) }
+            }
+            let settings = toolState.penSettings
+            snapPreviewLayer.path = bezier.cgPath
+            snapPreviewLayer.lineWidth = max(1, settings.effectiveWidth * scale)
+            snapPreviewLayer.strokeColor = (canvas.tool as? PKInkingTool)?.color.cgColor
+            snapPreviewLayer.opacity = 1
+            // The shape landing under your pencil should feel like it clicked.
+            UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+        }
+
+        private func cancelSnapPreview() {
+            pendingSnapPath = nil
+            hideSnapPreview()
+        }
+
+        private func hideSnapPreview() {
+            snapPreviewLayer.opacity = 0
+            snapPreviewLayer.path = nil
         }
 
         // MARK: PKCanvasViewDelegate
@@ -328,13 +399,33 @@ struct CanvasPageView: UIViewRepresentable {
 
             var changed = false
             var snappedAShape = false
+            /// Only the fallback taps back — the live preview already did, when the
+            /// shape appeared under the pencil.
+            var snappedLate = false
             if toolState.tool == .pen {
+                // The shape the user already WATCHED settle under the pencil wins:
+                // it's the one they accepted by holding still, and committing it
+                // verbatim means the preview and the ink can never disagree.
+                if toolState.snapShapes, let path = pendingSnapPath, count > 0 {
+                    let last = count - 1
+                    drawing.strokes[last] = ShapeSnapper.stroke(
+                        from: path, like: drawing.strokes[last]
+                    )
+                    changed = true
+                    snappedAShape = true
+                    pendingSnapPath = nil
+                }
                 for index in processedStrokeCount..<count {
+                    // Already snapped — don't also re-shape it.
+                    if snappedAShape, index == count - 1 { continue }
                     let stroke = drawing.strokes[index]
+                    // Fallback for a hold the live watcher missed. Same result,
+                    // just a beat later.
                     if toolState.snapShapes, let snapped = ShapeSnapper.snapped(stroke) {
                         drawing.strokes[index] = snapped
                         changed = true
                         snappedAShape = true
+                        snappedLate = true
                     } else if let shaped = PenShaper.shaped(stroke, settings: toolState.penSettings) {
                         drawing.strokes[index] = shaped
                         changed = true
@@ -343,9 +434,7 @@ struct CanvasPageView: UIViewRepresentable {
             }
             processedStrokeCount = count
             guard changed else { return }
-            // A snap is the app acting on a deliberate gesture, so it gets a tap
-            // back — otherwise holding still and watching feels like guesswork.
-            if snappedAShape { UIImpactFeedbackGenerator(style: .rigid).impactOccurred() }
+            if snappedLate { UIImpactFeedbackGenerator(style: .rigid).impactOccurred() }
             replace(drawing, on: canvas)
             scheduleSave()
         }
@@ -376,9 +465,13 @@ struct CanvasPageView: UIViewRepresentable {
                     // here keeps the beautifier's bookkeeping intact, and the pass
                     // re-runs when the hand next rests.
                     guard !self.isUsingTool else { return false }
+                    // Typeset text FIRST, then take the ink away. The other order
+                    // leaves a frame with neither on the page, which is what made
+                    // beautification look like the writing vanished and something
+                    // else appeared, instead of the writing turning into type.
+                    await self.onBeautified(plan)
                     self.processedStrokeCount = remaining.strokes.count
                     self.replace(remaining, on: canvas)
-                    await self.onBeautified(plan)
                     self.scheduleSave()
                     return true
                 }

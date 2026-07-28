@@ -59,9 +59,16 @@ Universal app, Swift 6 (strict concurrency), SwiftUI-first, Liquid Glass design 
 - Secrets go through `SecretStore` — `KeychainStore` in the app, `InMemorySecretStore`
   in tests (SPM test hosts can't use the Keychain). The two secrets are the
   ClassMate session token and the user's Groq API key. Never embed keys in source.
-- AI is `AIProvider` (Groq streaming today) behind `NovaConversation`; the Groq
-  key is user-entered in Settings → Keychain. Circle-to-explain OCRs the focused
-  page and seeds NOVA. Keep AI provider-swappable for a future backend proxy.
+- AI is `AIProvider` behind `NovaConversation`, and `NovaProviderRouter` decides
+  who answers. DEFAULT is `NovaBackendProvider` — ClassMate's own
+  `POST /classnotes/ai`, authenticated with the session the library already needs,
+  with the model key server-side. `GroqProvider` (direct, user's Keychain key) is
+  only used for IMAGE prompts, which that endpoint doesn't take. This is not
+  belt-and-braces: a key in the binary plus a model string in the binary means a
+  revoked key or a retired model silently kills NOVA for everyone until the next
+  release — which is exactly what happened when Groq dropped
+  `llama-3.3-70b-versatile`. Keep `AIConfig.defaultModel` in step with ClassMate's
+  `support.service.ts`. Circle-to-explain OCRs the focused page and seeds NOVA.
 - `NotesAI` is the only module that owns NOVA UI; `NotesEditor` and `NotesLibrary`
   depend on it. Editor-only code still lives behind the `App/Routing` import rule.
 - Brand parity: reuse ClassMate's single blue CM mark + wordmark as TEMPLATE
@@ -73,9 +80,13 @@ Universal app, Swift 6 (strict concurrency), SwiftUI-first, Liquid Glass design 
   third-party dependency, added deliberately: the launch used to be a SwiftUI
   rebuild of the artwork, which drifted from the artwork every time it changed.
   `LaunchView` still falls back to a bundled video and then to the native
-  animation if the scene is missing. The scene plays as authored — its CN mark is
-  a raster layer, so it keeps ClassNotes navy rather than following the accent;
-  the field around it is still `theme.surface`.
+  animation if the scene is missing. The scene is RECOLOURED to the theme exactly
+  the way ClassMate recolours its own splash (`splash_screen.dart`): the baked
+  white canvas becomes `theme.surface` so the animation melts into the background,
+  the baked navy becomes `theme.accent`, and the CN monogram — an embedded PNG
+  that vector recolouring can't reach — has its pixels retinted with the alpha
+  preserved. Recoloured scenes are cached per theme; a recolouring failure costs
+  the theme, never the launch.
 - The cover is PAGE ONE of the document (`PageRecord.isCover`, manifest v7), drawn
   on with every tool like any other page. Its "paper" is the notebook's artwork
   (`CoverPaper` → `CoverPaperView`, via `PagePaperView`), never a template. Only a
@@ -96,7 +107,15 @@ Universal app, Swift 6 (strict concurrency), SwiftUI-first, Liquid Glass design 
   once it's finished. Pure math lives in `NotesModels.InkGeometry`
   (`StrokeSmoothing`, `ScribbleDetector`, `LineGrouper`, `BeautifyLayout`) so it's
   testable without a canvas — keep it there.
-- Hold-to-snap shapes read the hold from the stroke's TIMING, as "how long since
+- Hold-to-snap settles the shape WHILE the pencil is still down. `StrokeDwellRecognizer`
+  watches the live touch (it never recognizes — `cancelsTouchesInView` off, always
+  ends `.failed` — so PencilKit's own drawing gesture is untouched), and on a rest
+  it draws the fitted shape as a CAShapeLayer preview under the pencil. The ink is
+  rewritten ONCE, on lift, from that same fitted path, so the preview and the
+  committed stroke can't disagree. A stroke can't report a hold before it ends, so
+  reading it from `PKStroke` could only ever snap after the release; that path
+  survives as the fallback below.
+- The stroke-timing fallback reads the hold as "how long since
   the pencil was last more than `holdRadius` from where it came to rest" — never as
   the span of points inside a trailing window. `PKStrokePath` is a fitted spline,
   so a pencil held still emits ONE control point covering the whole dwell; a window

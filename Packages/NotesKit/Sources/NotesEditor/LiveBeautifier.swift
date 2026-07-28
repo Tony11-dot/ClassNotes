@@ -66,6 +66,7 @@ final class LiveBeautifier {
     /// Typeset runs per page, used to append to a line already beautified.
     private var runs: [UUID: [BeautifiedRun]] = [:]
     private var settleTask: Task<Void, Never>?
+    private var hintTask: Task<Void, Never>?
     private let recognizeLine: LineRecognizer
 
     /// Line geometry that reads as handwriting rather than a diagram or a doodle.
@@ -79,6 +80,26 @@ final class LiveBeautifier {
     /// The shipping recognizer: on-device Vision, one tight crop per line.
     static let visionRecognizer: LineRecognizer = { image, language in
         (try? await OCRService().recognizeText(in: image, languages: [language])) ?? ""
+    }
+
+    /// Raises the "couldn't read that" hint, and takes it back down by itself.
+    /// A sticky hint is worse than none: it outlives the writing it was about and
+    /// reads as a permanent verdict on the feature.
+    private func noteFoundNothing(_ askedRecognizer: Bool) {
+        guard askedRecognizer else { return }
+        lastPassFoundNothing = true
+        hintTask?.cancel()
+        hintTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            self?.lastPassFoundNothing = false
+        }
+    }
+
+    private func clearFoundNothing() {
+        hintTask?.cancel()
+        hintTask = nil
+        lastPassFoundNothing = false
     }
 
     /// Forget a page's runs — after the ink is cleared, or the page is closed.
@@ -144,12 +165,17 @@ final class LiveBeautifier {
         isWorking = true
         defer { isWorking = false }
 
-        let lines = await recognize(current, settings: settings, pageSize: pageSize)
+        let pass = await recognize(current, settings: settings, pageSize: pageSize)
+        let lines = pass.lines
         guard !lines.isEmpty else {
-            lastPassFoundNothing = true
+            // Only "couldn't read that" when we actually ASKED and got nothing.
+            // Ink that never looked like writing in the first place (a diagram, a
+            // doodle, a single tick) isn't a failure, and reporting it as one made
+            // the hint permanent — it was on screen whatever the user did.
+            noteFoundNothing(pass.askedRecognizer)
             return
         }
-        lastPassFoundNothing = false
+        clearFoundNothing()
 
         let plan = Self.plan(
             lines: lines,
@@ -160,7 +186,7 @@ final class LiveBeautifier {
             pageSize: pageSize
         )
         guard !plan.isEmpty else {
-            lastPassFoundNothing = true
+            noteFoundNothing(true)
             return
         }
 
@@ -200,12 +226,20 @@ final class LiveBeautifier {
     /// Groups the drawing's strokes into lines and reads each one. Each line is
     /// rendered on its own, tightly cropped and upscaled — Vision is far more
     /// accurate on a dense crop of one line than on a mostly-empty page.
+    /// One recognition sweep: what was read, and whether the recognizer was asked
+    /// at all — the two are different failures and only one is worth telling the
+    /// user about.
+    struct RecognitionPass {
+        var lines: [RecognizedLine] = []
+        var askedRecognizer = false
+    }
+
     private func recognize(
         _ drawing: PKDrawing, settings: BeautifySettings, pageSize: CGSize
-    ) async -> [RecognizedLine] {
+    ) async -> RecognitionPass {
         let strokes = drawing.strokes
         let boxes = strokes.map(\.renderBounds)
-        var result: [RecognizedLine] = []
+        var pass = RecognitionPass()
 
         for indices in LineGrouper.lines(of: boxes) {
             let bounds = indices.reduce(CGRect.null) { $0.union(boxes[$1]) }
@@ -219,20 +253,21 @@ final class LiveBeautifier {
             let image = Self.recognitionImage(
                 of: lineDrawing, region: region, scale: Self.renderScale(for: bounds)
             )
+            pass.askedRecognizer = true
             let text = await recognizeLine(image, settings.language)
             let cleaned = text
                 .replacingOccurrences(of: "\n", with: " ")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             guard !cleaned.isEmpty else { continue }
 
-            result.append(RecognizedLine(
+            pass.lines.append(RecognizedLine(
                 text: cleaned,
                 bounds: bounds,
                 strokeIndices: indices,
                 meanForce: Self.meanForce(of: indices.map { strokes[$0] })
             ))
         }
-        return result
+        return pass
     }
 
     /// The image Vision actually reads: the line's ink re-inked to solid black on

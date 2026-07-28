@@ -21,11 +21,30 @@ enum ShapeSnapper {
 
     /// If `stroke` ends with a dwell and fits a primitive confidently, returns a
     /// replacement stroke; otherwise nil (leave the freehand stroke as drawn).
+    ///
+    /// This is the FALLBACK path, used when the live dwell watcher didn't catch
+    /// the hold — the snap normally settles under the pencil while it's still
+    /// down (see `StrokeDwellRecognizer`).
     static func snapped(_ stroke: PKStroke) -> PKStroke? {
         guard holdDuration(of: stroke) >= minimumHold else { return nil }
         let points = trimmedTail(densePoints(stroke))
         guard points.count >= 6, let path = fit(points) else { return nil }
         return rebuild(stroke, along: path)
+    }
+
+    /// The shape a live, in-progress path would snap to, or nil if it isn't one.
+    /// Used while the pencil is still resting on the page, so the preview under it
+    /// is exactly what the committed stroke will be.
+    static func liveFit(_ points: [CGPoint]) -> [CGPoint]? {
+        let trimmed = trimmedTail(points)
+        guard trimmed.count >= 6 else { return nil }
+        return fit(trimmed)
+    }
+
+    /// Rebuilds `original` along an already-fitted path — the commit half of the
+    /// live snap, so the preview and the ink can't disagree.
+    static func stroke(from path: [CGPoint], like original: PKStroke) -> PKStroke {
+        rebuild(original, along: path)
     }
 
     // MARK: - Hold detection

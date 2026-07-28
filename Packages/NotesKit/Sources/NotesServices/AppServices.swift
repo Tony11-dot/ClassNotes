@@ -16,7 +16,7 @@ public final class AppServices {
     public let repository: NotebookRepository
     public let auth: AuthService
     public let keychain: any SecretStore
-    public let aiProvider: GroqProvider
+    public let aiProvider: NovaProviderRouter
     /// User-uploaded fonts (OTF/TTF) for beautify + text, registered at launch.
     public let fontStore: CustomFontStore
     /// Mirrors the local library up to the ClassMate backend so the ClassMate
@@ -43,7 +43,7 @@ public final class AppServices {
         self.repository = NotebookRepository(
             context: context, store: store, entitlements: entitlements, sync: sync
         )
-        self.aiProvider = GroqProvider(keychain: keychain)
+        self.aiProvider = NovaProviderRouter(keychain: keychain)
         self.fontStore = CustomFontStore()
     }
 
