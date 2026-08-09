@@ -43,7 +43,7 @@ struct RecognizedTextSheet: View {
             }
         }
         var font: Font {
-            self == .system ? .system(size: 20) : .custom(rawValue, size: 20)
+            FontResolver.font(named: rawValue, size: 20)
         }
     }
 

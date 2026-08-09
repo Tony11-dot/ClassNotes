@@ -205,7 +205,10 @@ struct FontRow: View {
                         selected = font.id
                     } label: {
                         Text("Aa")
-                            .font(.custom(font.fontName, size: 20))
+                            // Through the resolver, or the swatch shows a face the
+                            // page will never use — the picker's whole job is to
+                            // let you see the difference before you commit to it.
+                            .font(FontResolver.font(named: font.fontName, size: 20))
                             .foregroundStyle(theme.ink.color)
                             .frame(width: 52, height: 44)
                             .background(theme.surface.color,
