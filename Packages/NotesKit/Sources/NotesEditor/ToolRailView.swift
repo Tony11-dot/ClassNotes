@@ -46,7 +46,12 @@ struct ToolRailView: View {
     }
 
     private static let edgeInset: CGFloat = 30
-    private static let railWidth: CGFloat = 58
+    private static let railWidth: CGFloat = 68
+    /// The instruments are drawn as objects, not icons, so they need the room to
+    /// show a clip, a ferrule, a nib. Below about this size the detail turns into
+    /// texture and every pen starts to look like the same coloured stick.
+    private static let glyphWidth: CGFloat = 56
+    private static let glyphHeight: CGFloat = 24
 
     var body: some View {
         GeometryReader { geo in
@@ -203,15 +208,27 @@ struct ToolRailView: View {
                 color: color.withAlpha(max(0.35, settings.concentration)),
                 isSelected: isSelected
             )
-            .frame(width: 46, height: 20)
-            // The selected instrument slides out of the rail, toward the page.
-            .offset(x: isSelected ? 10 : 0)
-            .scaleEffect(isSelected ? 1.08 : 1, anchor: .leading)
-            .frame(width: 46, height: 26)
+            .frame(width: Self.glyphWidth, height: Self.glyphHeight)
+            // The instrument in your hand sits on a lit plate, pulled out of the
+            // rail toward the page and standing a little above its neighbours —
+            // the same read as a pen lifted off a desk.
+            .background {
+                if isSelected {
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .fill(theme.accentMuted.color)
+                        .padding(.vertical, -5)
+                        .padding(.horizontal, -7)
+                        .shadow(color: theme.accent.withAlpha(0.28).color, radius: 6, y: 2)
+                }
+            }
+            .offset(x: isSelected ? 13 : 0)
+            .scaleEffect(isSelected ? 1.16 : 1, anchor: .leading)
+            .frame(width: Self.glyphWidth, height: Self.glyphHeight + 10)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .animation(.spring(duration: 0.26), value: isSelected)
+        .zIndex(isSelected ? 1 : 0)
+        .animation(.spring(duration: 0.3, bounce: 0.28), value: isSelected)
         .accessibilityLabel(preset.displayName)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .popover(isPresented: binding(.pen(preset.id)), arrowEdge: .leading) {

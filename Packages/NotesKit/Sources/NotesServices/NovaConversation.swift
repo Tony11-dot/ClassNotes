@@ -67,14 +67,23 @@ public final class NovaConversation {
         beginAssistantReply()
     }
 
-    /// Magic pen: seed NOVA with the circled region as an image (text OR
-    /// picture) plus any text detected in it, then ask for an explanation.
+    /// Snip: seed NOVA with the snipped region as a PICTURE, and ask what it
+    /// shows.
+    ///
+    /// Whatever was recognized in it rides along only as a hint. A snip out of a
+    /// maths or physics page is usually a diagram, a graph or working laid out in
+    /// two dimensions — the parts OCR silently drops — so the picture has to be
+    /// what the answer is based on, not a caption for text we already extracted.
     public func explainRegion(image: Data, ocrHint: String) {
         errorText = nil
-        var prompt = "I circled this part of my notes. Explain what it shows or "
-            + "says, clearly and simply, then offer one follow-up I could ask."
+        var prompt = "Look at this snip from my notes. Explain what it shows — "
+            + "diagrams, sketches and working included, not just the words — "
+            + "clearly and simply, then offer one follow-up I could ask."
         let hint = ocrHint.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !hint.isEmpty { prompt += "\n\nText detected in it: \"\(hint)\"" }
+        if !hint.isEmpty {
+            prompt += "\n\n(If you can't see the picture, this text was detected "
+                + "in it: \"\(hint)\")"
+        }
         messages.append(AIMessage(role: .user, content: prompt, imageData: image))
         beginAssistantReply()
     }

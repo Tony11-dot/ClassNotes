@@ -165,13 +165,17 @@ struct ScribbleDetectorTests {
 @Suite("Pen shaping")
 struct PenShaperTests {
     private func stroke(points: Int = 24, size: CGFloat = 3) -> PKStroke {
-        let controlPoints = (0..<points).map { index in
-            PKStrokePoint(
-                location: CGPoint(x: Double(index) * 4, y: index % 2 == 0 ? 3 : -3),
+        let controlPoints: [PKStrokePoint] = (0..<points).map { index in
+            let even = index % 2 == 0
+            let location = CGPoint(x: Double(index) * 4, y: even ? 3 : -3)
+            // Alternating point sizes stand in for varying pressure.
+            let pointSize = CGSize(width: even ? size * 2 : size, height: size)
+            let force: CGFloat = even ? 2 : 0.5
+            return PKStrokePoint(
+                location: location,
                 timeOffset: Double(index) * 0.01,
-                // Alternating point sizes stand in for varying pressure.
-                size: CGSize(width: index % 2 == 0 ? size * 2 : size, height: size),
-                opacity: 1, force: index % 2 == 0 ? 2 : 0.5,
+                size: pointSize,
+                opacity: 1, force: force,
                 azimuth: 0, altitude: .pi / 2
             )
         }
@@ -301,23 +305,64 @@ struct LineGrouperTests
 struct BeautifyLayoutTests {
     private let pageSize = PageSize.a4.portraitSize
 
+    /// A face that measures 10 pt per character per point of type size, so the
+    /// arithmetic in a test is something you can do in your head.
+    private let metrics = TextMetrics(
+        width: { text, size in Double(text.count) * size * 0.5 },
+        lineHeight: { size in size * 1.2 }
+    )
+
     @Test("Typeset text lands on the handwriting's own line")
     func framesOnBaseline() {
         let ink = CGRect(x: 90, y: 200, width: 300, height: 34)
         let frame = BeautifyLayout.frame(
-            inkBounds: ink, typeSize: 24, lineSpacing: 1.2,
-            characterCount: 22, in: pageSize
+            inkBounds: ink, text: "twenty-two characters", typeSize: 24,
+            lineSpacing: 1.2, metrics: metrics, in: pageSize
         )
         #expect(abs(frame.minX - ink.minX) < 1, "it starts where the writing started")
         #expect(abs(frame.midY - ink.midY) < 2, "and sits on the same line")
         #expect(frame.height >= 24)
     }
 
+    @Test("The box is as tall as the type size and line spacing ask for")
+    func heightFollowsTheSettings() {
+        let ink = CGRect(x: 40, y: 300, width: 200, height: 30)
+        func height(size: Double, spacing: Double) -> Double {
+            BeautifyLayout.frame(
+                inkBounds: ink, text: "one line", typeSize: size,
+                lineSpacing: spacing, metrics: metrics, in: pageSize
+            ).height
+        }
+        // One line at 24 pt, 1.0 spacing: lineHeight(24) + 6 pt padding each side.
+        #expect(abs(height(size: 24, spacing: 1) - (24 * 1.2 + 12)) < 0.01)
+        // Doubling the spacing doubles the leading, and nothing else.
+        #expect(abs(height(size: 24, spacing: 2) - (24 * 1.2 * 2 + 12)) < 0.01)
+        // A bigger size is a taller box at the same spacing.
+        #expect(height(size: 40, spacing: 1) > height(size: 24, spacing: 1))
+    }
+
+    @Test("Text too long for one line gets a box tall enough for the wraps")
+    func wrappedTextGetsRoom() {
+        let ink = CGRect(x: 40, y: 300, width: 200, height: 26)
+        let single = BeautifyLayout.frame(
+            inkBounds: ink, text: "short", typeSize: 24,
+            lineSpacing: 1, metrics: metrics, in: pageSize
+        )
+        // 300 characters at 12 pt each is far wider than any page.
+        let wrapped = BeautifyLayout.frame(
+            inkBounds: ink, text: String(repeating: "a", count: 300), typeSize: 24,
+            lineSpacing: 1, metrics: metrics, in: pageSize
+        )
+        #expect(wrapped.maxX <= pageSize.width + 0.01, "it still fits the page")
+        #expect(wrapped.height > single.height * 2, "so the extra lines have somewhere to go")
+    }
+
     @Test("Frames stay on the page, however near the edge the writing was")
     func clampsToPage() {
         let edge = CGRect(x: pageSize.width - 20, y: pageSize.height - 10, width: 300, height: 30)
         let frame = BeautifyLayout.frame(
-            inkBounds: edge, typeSize: 22, lineSpacing: 1.2, characterCount: 40, in: pageSize
+            inkBounds: edge, text: String(repeating: "x", count: 40), typeSize: 22,
+            lineSpacing: 1.2, metrics: metrics, in: pageSize
         )
         #expect(frame.minX >= 0)
         #expect(frame.maxX <= pageSize.width + 0.01)
@@ -328,10 +373,12 @@ struct BeautifyLayoutTests {
     func widthTracksLength() {
         let ink = CGRect(x: 40, y: 100, width: 60, height: 24)
         let short = BeautifyLayout.frame(
-            inkBounds: ink, typeSize: 20, lineSpacing: 1.2, characterCount: 4, in: pageSize
+            inkBounds: ink, text: "abcd", typeSize: 20,
+            lineSpacing: 1.2, metrics: metrics, in: pageSize
         )
         let long = BeautifyLayout.frame(
-            inkBounds: ink, typeSize: 20, lineSpacing: 1.2, characterCount: 30, in: pageSize
+            inkBounds: ink, text: String(repeating: "a", count: 30), typeSize: 20,
+            lineSpacing: 1.2, metrics: metrics, in: pageSize
         )
         #expect(long.width > short.width)
     }
@@ -348,15 +395,20 @@ struct BeautifyLayoutTests {
         #expect(!BeautifyLayout.continues(existing: run, incoming: farRight, typeSize: 22))
     }
 
-    @Test("Merging widens the run without moving or growing its line")
+    @Test("Merging keeps the run's start and line, and widens it to fit the words")
     func mergeKeepsBaseline() {
         let run = CGRect(x: 60, y: 200, width: 180, height: 30)
         let more = CGRect(x: 250, y: 202, width: 90, height: 28)
-        let merged = BeautifyLayout.merged(existing: run, incoming: more, in: pageSize)
+        let merged = BeautifyLayout.merged(
+            existing: run, incoming: more, text: "hi my name is tony",
+            typeSize: 24, lineSpacing: 1, metrics: metrics, in: pageSize
+        )
         #expect(merged.minX == run.minX)
         #expect(merged.minY == run.minY)
-        #expect(merged.height == run.height)
         #expect(merged.width > run.width)
+        // The box holds the JOINED text — the union of the two boxes is only a
+        // lower bound, and trusting it is what clipped a growing line.
+        #expect(merged.width >= metrics.width("hi my name is tony", 24))
     }
 }
 
@@ -364,6 +416,11 @@ struct BeautifyLayoutTests {
 @Suite("Real-time beautification planning")
 struct LiveBeautifierPlanTests {
     private let pageSize = PageSize.a4.portraitSize
+    /// A face whose measurements are easy to reason about in a test.
+    private let metrics = TextMetrics(
+        width: { text, size in Double(text.count) * size * 0.5 },
+        lineHeight: { size in size * 1.2 }
+    )
 
     private func line(
         _ text: String, at rect: CGRect, strokes: [Int], force: Double = 0.2
@@ -382,7 +439,8 @@ struct LiveBeautifierPlanTests {
             settings: BeautifySettings(isEnabled: true, unifySizeAndSpacing: true, fontSize: 23),
             fontName: "SnellRoundhand",
             colorHex: nil,
-            pageSize: pageSize
+            pageSize: pageSize,
+            metrics: metrics
         )
         #expect(plan.inserts.count == 2)
         #expect(plan.updates.isEmpty)
@@ -402,7 +460,7 @@ struct LiveBeautifierPlanTests {
                 line("BIG", at: CGRect(x: 40, y: 140, width: 200, height: 60), strokes: [1])
             ],
             existing: [], settings: settings, fontName: "Georgia",
-            colorHex: nil, pageSize: pageSize
+            colorHex: nil, pageSize: pageSize, metrics: metrics
         )
         let sizes = plan.inserts.map(\.resolvedFontSize)
         #expect(sizes.count == 2)
@@ -417,7 +475,7 @@ struct LiveBeautifierPlanTests {
             lines: [line("is tony", at: CGRect(x: 390, y: 120, width: 120, height: 32), strokes: [4, 5])],
             existing: [BeautifiedRun(elementID: existingID, frame: runFrame, text: "hi my name")],
             settings: BeautifySettings(isEnabled: true),
-            fontName: "Georgia", colorHex: nil, pageSize: pageSize
+            fontName: "Georgia", colorHex: nil, pageSize: pageSize, metrics: metrics
         )
         #expect(plan.inserts.isEmpty)
         let updated = try #require(plan.updates.first)
@@ -437,7 +495,7 @@ struct LiveBeautifierPlanTests {
                 text: "first line"
             )],
             settings: BeautifySettings(isEnabled: true),
-            fontName: "Georgia", colorHex: nil, pageSize: pageSize
+            fontName: "Georgia", colorHex: nil, pageSize: pageSize, metrics: metrics
         )
         #expect(plan.inserts.count == 1)
         #expect(plan.updates.isEmpty)
@@ -452,7 +510,7 @@ struct LiveBeautifierPlanTests {
                              strokes: [0], force: force)],
                 existing: [],
                 settings: BeautifySettings(isEnabled: true, dynamicBold: dynamicBold),
-                fontName: "Georgia", colorHex: nil, pageSize: pageSize
+                fontName: "Georgia", colorHex: nil, pageSize: pageSize, metrics: metrics
             )
         }
         #expect(plan(force: 0.9, dynamicBold: true).inserts[0].isBold)
@@ -464,7 +522,7 @@ struct LiveBeautifierPlanTests {
     func emptyPlan() {
         let plan = LiveBeautifier.plan(
             lines: [], existing: [], settings: BeautifySettings(isEnabled: true),
-            fontName: "Georgia", colorHex: nil, pageSize: pageSize
+            fontName: "Georgia", colorHex: nil, pageSize: pageSize, metrics: metrics
         )
         #expect(plan.isEmpty)
         #expect(plan.consumedStrokes.isEmpty)

@@ -57,6 +57,11 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
     public var textColorHex: String?
     /// For text: the type size in logical page points (nil = the legacy 20 pt).
     public var fontSize: Double?
+    /// For text: the line-height MULTIPLE the run was laid out at (nil = 1.0).
+    /// Beautification sizes its box from this, so the box and the drawn text have
+    /// to agree — leaving it out is how a run laid out at 2.4× got drawn at 1×
+    /// inside a box three lines tall.
+    public var lineSpacing: Double?
     /// For text: draw with a heavier weight (beautification's "Dynamic Bold").
     public var isBold: Bool
     /// For link: the destination.
@@ -94,6 +99,7 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
         fontName: String? = nil,
         textColorHex: String? = nil,
         fontSize: Double? = nil,
+        lineSpacing: Double? = nil,
         isBold: Bool = false,
         urlString: String? = nil,
         tapeShape: TapeShape? = nil,
@@ -117,6 +123,7 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
         self.fontName = fontName
         self.textColorHex = textColorHex
         self.fontSize = fontSize
+        self.lineSpacing = lineSpacing
         self.isBold = isBold
         self.urlString = urlString
         self.tapeShape = tapeShape
@@ -136,10 +143,20 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
 
     public var resolvedFontSize: Double { fontSize ?? Self.legacyTextSize }
 
+    /// The line-height multiple to draw the run at. Single-spaced unless the run
+    /// was laid out otherwise.
+    public var resolvedLineSpacing: Double { max(lineSpacing ?? 1, 0.5) }
+
+    /// Extra leading, in points, to hand SwiftUI's `.lineSpacing` — which takes the
+    /// gap BETWEEN lines, not a multiple of the line height.
+    public var extraLeading: Double {
+        max(0, (resolvedLineSpacing - 1) * resolvedFontSize)
+    }
+
     private enum CodingKeys: String, CodingKey {
         case id, kind, x, y, width, height, rotation
         case payloadFilename, displayName, durationSeconds
-        case text, fontName, textColorHex, fontSize, isBold, urlString
+        case text, fontName, textColorHex, fontSize, lineSpacing, isBold, urlString
         case tapeShape, tapePattern, colorHex, points, strokeWidth, isHidden
     }
 
@@ -161,6 +178,7 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
         fontName = try c.decodeIfPresent(String.self, forKey: .fontName)
         textColorHex = try c.decodeIfPresent(String.self, forKey: .textColorHex)
         fontSize = try c.decodeIfPresent(Double.self, forKey: .fontSize)
+        lineSpacing = try c.decodeIfPresent(Double.self, forKey: .lineSpacing)
         isBold = try c.decodeIfPresent(Bool.self, forKey: .isBold) ?? false
         urlString = try c.decodeIfPresent(String.self, forKey: .urlString)
         tapeShape = try c.decodeIfPresent(TapeShape.self, forKey: .tapeShape)

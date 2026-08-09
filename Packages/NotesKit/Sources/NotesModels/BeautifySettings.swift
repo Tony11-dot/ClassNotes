@@ -58,6 +58,14 @@ public struct BeautifySettings: Sendable, Equatable, Codable {
         let derived = Double(inkHeight) * 0.92
         return min(max(derived, Self.fontSizeRange.lowerBound), Self.fontSizeRange.upperBound)
     }
+
+    /// The line-height multiple a beautified run is laid out at. The slider only
+    /// governs when the page is being normalized; with unify off the type follows
+    /// the handwriting, and imposing a spacing on top of that would lift the words
+    /// off the line they were written on.
+    public var effectiveLineSpacing: Double {
+        unifySizeAndSpacing ? lineSpacing : 1
+    }
 }
 
 /// Recognition languages offered by the beautification panel. Vision supports far

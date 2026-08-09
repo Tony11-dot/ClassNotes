@@ -69,7 +69,34 @@ struct NovaBackendTests {
         #expect(NovaBackendProvider.chunks(of: "").isEmpty)
     }
 
-    @Test("Routing prefers the backend, and only uses a direct key for images")
+    @Test("A snip is sent as a picture, and stays attached to its follow-ups")
+    func snipPayload() throws {
+        let jpeg = Data([0xFF, 0xD8, 0xFF, 0xE0])
+        let payload = NovaBackendProvider.payload(for: [
+            AIMessage(role: .user, content: "what is this?", imageData: jpeg)
+        ])
+        #expect(payload["task"] as? String == "see")
+        #expect(payload["imageBase64"] as? String == jpeg.base64EncodedString())
+
+        // The follow-up carries no image of its own — but it is ABOUT the snip, so
+        // the picture goes with it. Dropping it here is how a second question gets
+        // answered from a description instead of from the page.
+        let followUp = NovaBackendProvider.payload(for: [
+            AIMessage(role: .user, content: "what is this?", imageData: jpeg),
+            AIMessage(role: .assistant, content: "A free-body diagram."),
+            AIMessage(role: .user, content: "why is that arrow there?")
+        ])
+        #expect(followUp["text"] as? String == "why is that arrow there?")
+        #expect(followUp["imageBase64"] as? String == jpeg.base64EncodedString())
+        #expect((followUp["history"] as? [[String: String]])?.count == 2)
+
+        // A conversation with no picture in it stays a plain chat.
+        let text = NovaBackendProvider.payload(for: [AIMessage(role: .user, content: "hi")])
+        #expect(text["task"] as? String == "chat")
+        #expect(text["imageBase64"] == nil)
+    }
+
+    @Test("Everything routes through the backend, snips included")
     func routing() {
         let secrets = InMemorySecretStore()
         secrets.set("jwt", for: .authToken)
@@ -84,9 +111,21 @@ struct NovaBackendTests {
         let text = [AIMessage(role: .user, content: "hi")]
         #expect(router.provider(for: text) is NovaBackendProvider)
 
-        // The magic pen sends a REGION; the endpoint takes text only.
+        // A snip too, now the endpoint can see. Sending it to Groq direct meant it
+        // only worked for a user who had pasted their own key — which is to say,
+        // for almost nobody.
         let withImage = [AIMessage(role: .user, content: "what is this?", imageData: Data([0x1]))]
-        #expect(router.provider(for: withImage) is GroqProvider)
+        #expect(router.provider(for: withImage) is NovaBackendProvider)
+    }
+
+    @Test("A snip is shrunk to something a model reads and a phone can upload")
+    func snipEncoding() {
+        // Never blown up: a small crop stays exactly as it was rendered.
+        #expect(NovaSnip.downscale(for: CGSize(width: 400, height: 300)) == 1)
+        // A full 2× page render is far bigger than any vision model samples.
+        let factor = NovaSnip.downscale(for: CGSize(width: 3200, height: 2400))
+        #expect(factor < 1)
+        #expect(abs(3200 * factor - NovaSnip.maximumSide) < 0.5, "the long side lands on the cap")
     }
 
     @Test("With no session at all, NOVA is unconfigured rather than silently broken")

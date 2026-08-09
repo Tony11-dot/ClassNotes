@@ -29,7 +29,14 @@ final class StrokeDwellRecognizer: UIGestureRecognizer {
     /// Fired once per stroke, when the pencil has rested long enough. Carries the
     /// path drawn up to the rest.
     var onDwell: (([CGPoint]) -> Void)?
-    /// The pencil moved off again after a dwell — whatever was previewed is stale.
+    /// The pencil moved after the shape settled. It is now HOLDING the shape's free
+    /// end: every report is a new size / direction, not a cancellation.
+    ///
+    /// This is the difference between a snap you accept and a snap you can work
+    /// with. Treating the next movement as "never mind" meant the only way to
+    /// change a snapped circle was to undo it and draw another one.
+    var onAdjust: ((CGPoint) -> Void)?
+    /// The pencil moved off again before anything settled — drop any preview.
     var onResume: (() -> Void)?
     /// The stroke ended. `true` if it ended while resting (i.e. the dwell stands).
     var onEnd: ((Bool) -> Void)?
@@ -62,16 +69,21 @@ final class StrokeDwellRecognizer: UIGestureRecognizer {
         super.touchesMoved(touches, with: event)
         guard let touch = touches.first, let map = logicalPoint else { return }
         let point = map(touch)
+
+        // Once a shape has settled, the pencil is holding its free end. Its path
+        // from here is a handle position, not more ink to fit — appending it would
+        // drag the fit toward wherever the hand wandered.
+        if didDwell {
+            onAdjust?(point)
+            return
+        }
         points.append(point)
 
         guard let anchor = restAnchor else { return }
         if hypot(point.x - anchor.x, point.y - anchor.y) > holdRadius {
-            // Moving again: restart the clock from here, and drop any preview.
+            // Moving again before anything settled: restart the clock from here.
             restAnchor = point
-            if didDwell {
-                didDwell = false
-                onResume?()
-            }
+            onResume?()
             armTimer()
         }
     }

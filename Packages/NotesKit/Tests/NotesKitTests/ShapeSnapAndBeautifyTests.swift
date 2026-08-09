@@ -170,6 +170,65 @@ struct ShapeSnapperTests {
         #expect((fitted?.count ?? 0) > 32)
     }
 
+    @Test("A snapped line keeps its start and hands the pencil the other end")
+    func lineHandleFollowsThePencil() throws {
+        // Drawn left to right, then rested at the far end.
+        let drawn = (0...40).map { CGPoint(x: 100 + CGFloat($0) * 8, y: 300) }
+        let snap = try #require(ShapeSnapper.liveSnap(drawn))
+        #expect(snap.shape == .line)
+        #expect(snap.anchor == CGPoint(x: 100, y: 300), "the end it started from stays put")
+
+        // Drag the pencil somewhere else entirely: same line, new length and angle.
+        let moved = try #require(ShapeSnapper.path(for: snap, handle: CGPoint(x: 260, y: 120)))
+        #expect(moved.first == snap.anchor)
+        #expect(moved.last == CGPoint(x: 260, y: 120))
+
+        // Dragged back onto its own start it would be nothing at all, so it isn't
+        // drawn — a flick of the wrist must not be able to erase the shape.
+        #expect(ShapeSnapper.path(for: snap, handle: CGPoint(x: 101, y: 301)) == nil)
+    }
+
+    @Test("A snapped closed shape resizes from the opposite corner")
+    func closedShapeResizesFromItsAnchor() throws {
+        let circle = (0...72).map { index -> CGPoint in
+            let t = Double(index) / 72 * 2 * .pi
+            return CGPoint(x: 200 + 100 * cos(t), y: 300 + 100 * sin(t))
+        }
+        let snap = try #require(ShapeSnapper.liveSnap(circle))
+        #expect(snap.shape == .ellipse)
+        // Anchor and handle are opposite corners of the shape's box.
+        #expect(snap.anchor.x != snap.handle.x)
+        #expect(snap.anchor.y != snap.handle.y)
+
+        let bigger = try #require(ShapeSnapper.path(
+            for: snap, handle: CGPoint(x: snap.anchor.x + 400, y: snap.anchor.y + 400)
+        ))
+        let box = bounds(of: bigger)
+        #expect(abs(box.width - 400) < 1, "the box now spans anchor → pencil")
+        #expect(abs(box.height - 400) < 1)
+        // Collapsed onto the anchor there is no shape left to draw.
+        #expect(ShapeSnapper.path(for: snap, handle: snap.anchor) == nil)
+    }
+
+    @Test("A resized rectangle is still a rectangle, and a triangle keeps its lean")
+    func resizingKeepsTheShape() {
+        let box = CGRect(x: 0, y: 0, width: 300, height: 200)
+        let rectangle = ShapeSnapper.path(for: .rectangle, in: box)
+        #expect(abs(bounds(of: rectangle).width - 300) < 0.01)
+
+        // Apex a quarter of the way across stays a quarter of the way across.
+        let leaning = ShapeSnapper.path(for: .triangle(apexFraction: 0.25), in: box)
+        let apex = leaning.min { $0.y < $1.y }
+        #expect(abs((apex?.x ?? 0) - 75) < 1)
+    }
+
+    private func bounds(of points: [CGPoint]) -> CGRect {
+        let xs = points.map(\.x), ys = points.map(\.y)
+        guard let minX = xs.min(), let maxX = xs.max(),
+              let minY = ys.min(), let maxY = ys.max() else { return .zero }
+        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+    }
+
     @Test("An open stroke that is neither straight nor a single bend is left alone")
     func leavesFreehandAlone() {
         // A squiggle: three reversals, no clean primitive in it.

@@ -14,6 +14,16 @@ public struct OCRService: Sendable {
         public let text: String
         /// Normalized Vision bounding box (origin bottom-left).
         public let boundingBox: CGRect
+        /// Vision's confidence in this reading, 0…1. Vision always returns its
+        /// best guess, so a caller that replaces the user's ink with the result
+        /// (beautification) needs this to tell a reading from a guess.
+        public let confidence: Double
+
+        public init(text: String, boundingBox: CGRect, confidence: Double = 1) {
+            self.text = text
+            self.boundingBox = boundingBox
+            self.confidence = confidence
+        }
     }
 
     public enum OCRError: Error, Sendable { case noImage, failed }
@@ -30,7 +40,11 @@ public struct OCRService: Sendable {
                 let observations = request.results as? [VNRecognizedTextObservation] ?? []
                 let lines: [Line] = observations.compactMap { observation in
                     guard let candidate = observation.topCandidates(1).first else { return nil }
-                    return Line(text: candidate.string, boundingBox: observation.boundingBox)
+                    return Line(
+                        text: candidate.string,
+                        boundingBox: observation.boundingBox,
+                        confidence: Double(candidate.confidence)
+                    )
                 }
                 continuation.resume(returning: lines)
             }

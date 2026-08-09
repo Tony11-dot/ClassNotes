@@ -243,6 +243,7 @@ struct PageElementsLayer: View {
         } else {
             Text(element.text ?? "")
                 .font(textFont(element))
+                .lineSpacing(element.extraLeading * scale)
                 .foregroundStyle((element.textColorHex.flatMap(ThemeColor.init(hex:)) ?? theme.ink).color)
                 .padding(6 * scale)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -250,12 +251,11 @@ struct PageElementsLayer: View {
     }
 
     private func textFont(_ element: PageElement) -> Font {
-        let size = element.resolvedFontSize * scale
-        guard let name = element.fontName, name != "system" else {
-            return .system(size: size, weight: element.isBold ? .bold : .regular)
-        }
-        let base = Font.custom(name, size: size)
-        return element.isBold ? base.weight(.bold) : base
+        FontResolver.font(
+            named: element.fontName,
+            size: element.resolvedFontSize * scale,
+            bold: element.isBold
+        )
     }
 
     // MARK: - Chrome

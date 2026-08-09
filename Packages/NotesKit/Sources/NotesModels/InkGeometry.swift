@@ -167,27 +167,73 @@ public enum LineGrouper {
     }
 }
 
+/// How a face measures — injected so layout stays pure and testable, while the
+/// real numbers come from the actual font (`FontResolver`).
+///
+/// Beautification used to estimate a run's width as `characters × size × 0.58`.
+/// That single constant is wrong for every face by a different amount, and it is
+/// why the type never matched the settings: too narrow and the run wrapped inside
+/// a box only one line tall, so the second half was CLIPPED and the size looked
+/// ignored; too wide and the box drifted away from the writing it replaced.
+public struct TextMetrics: Sendable {
+    /// Width of `text` set on ONE line at `typeSize`.
+    public let width: @Sendable (String, Double) -> Double
+    /// Height of one line of type at `typeSize` (ascent + descent + leading).
+    public let lineHeight: @Sendable (Double) -> Double
+
+    public init(
+        width: @escaping @Sendable (String, Double) -> Double,
+        lineHeight: @escaping @Sendable (Double) -> Double
+    ) {
+        self.width = width
+        self.lineHeight = lineHeight
+    }
+
+    /// A face-agnostic approximation. Only for callers with no font at hand —
+    /// anything that draws should measure the real one.
+    public static let nominal = TextMetrics(
+        width: { text, size in Double(max(text.count, 1)) * size * 0.55 },
+        lineHeight: { size in size * 1.2 }
+    )
+}
+
 /// Where a beautified line of text goes, and when new writing should join a line
 /// that was already typeset. Pure so the placement rules are pinned by tests.
 public enum BeautifyLayout {
-    /// The frame for a run of typeset text replacing handwriting in `inkBounds`.
-    /// The type sits on the handwriting's own baseline so nothing appears to jump.
+    /// The padding `PageContentView` / `PageElementsLayer` draw text inside, on
+    /// every edge. The box has to carry it or the last word is cut off.
+    public static let textInset: Double = 6
+
+    /// The frame for a run of typeset text replacing handwriting in `inkBounds`,
+    /// measured in the face and size it will actually be drawn in — so the box is
+    /// exactly as tall as the settings say, and as wide as the words need.
     public static func frame(
         inkBounds: CGRect,
+        text: String,
         typeSize: Double,
         lineSpacing: Double,
-        characterCount: Int,
-        in pageSize: CGSize
+        metrics: TextMetrics,
+        in pageSize: CGSize,
+        minimumWidth: Double = 0
     ) -> CGRect {
-        let height = max(typeSize * max(lineSpacing, 1) + 6, typeSize * 1.2)
-        // A typeset run is usually narrower than the handwriting; keep room for
-        // the words that are actually there, and for a few more on the same line.
-        let estimated = Double(max(characterCount, 1)) * typeSize * 0.58 + typeSize
-        let width = min(
-            Double(pageSize.width) - 16,
-            max(Double(inkBounds.width) * 1.05, estimated)
-        )
-        let x = min(max(Double(inkBounds.minX), 8), max(8, Double(pageSize.width) - width - 8))
+        let inset = textInset * 2
+        let line = metrics.lineHeight(typeSize)
+        let leading = max(lineSpacing, 0.5)
+
+        let x = min(max(Double(inkBounds.minX), 8), max(8, Double(pageSize.width) - 48))
+        let available = max(Double(pageSize.width) - x - 8, 48)
+        let measured = metrics.width(text, typeSize) + inset + 2
+        // A run never gets NARROWER than it already was: it may have been laid out
+        // in another face or at another size, and shrinking it around today's
+        // measurement would cut yesterday's words off.
+        let width = min(max(max(measured, minimumWidth), 32), available)
+
+        // Long enough to wrap? Then the box has to be tall enough for the wraps,
+        // or the run is silently cut in half.
+        let usable = max(width - inset, 1)
+        let lines = max(1, Int(ceil((measured - inset) / usable)))
+        let height = line * leading * Double(lines) + inset
+
         // Center the type band on the handwriting's visual middle.
         let y = min(
             max(Double(inkBounds.midY) - height / 2, 4),
@@ -199,6 +245,11 @@ public enum BeautifyLayout {
     /// True when a freshly recognized line belongs to an existing typeset run —
     /// the student kept writing on the same line, so the words should be appended
     /// rather than dropped on top as a second box.
+    ///
+    /// Both rectangles are the INK's, never the type's. Typeset words are far
+    /// narrower than the handwriting they replace, so measuring the gap from the
+    /// text box makes a hand that carried straight on across the page look like it
+    /// started somewhere new.
     public static func continues(
         existing: CGRect, incoming: CGRect, typeSize: Double
     ) -> Bool {
@@ -211,12 +262,31 @@ public enum BeautifyLayout {
         return gap > -existing.width * 0.5 && gap < CGFloat(typeSize) * 6
     }
 
-    /// The two runs joined: the appended text and the widened frame.
+    /// The two runs joined: the box that holds the appended TEXT, measured — not
+    /// merely the union of the two boxes. The union is a lower bound (the joined
+    /// words set tighter than two hand-written stretches), and using it alone
+    /// clipped every line that grew a word at a time.
     public static func merged(
-        existing: CGRect, incoming: CGRect, in pageSize: CGSize
+        existing: CGRect,
+        incoming: CGRect,
+        text: String,
+        typeSize: Double,
+        lineSpacing: Double,
+        metrics: TextMetrics,
+        in pageSize: CGSize
     ) -> CGRect {
-        let union = existing.union(incoming)
-        let width = min(union.width, pageSize.width - union.minX - 8)
-        return CGRect(x: union.minX, y: existing.minY, width: max(width, existing.width), height: existing.height)
+        let anchor = CGRect(
+            x: existing.minX, y: existing.midY,
+            width: max(existing.width, incoming.maxX - existing.minX), height: 0
+        )
+        var frame = self.frame(
+            inkBounds: anchor, text: text, typeSize: typeSize,
+            lineSpacing: lineSpacing, metrics: metrics, in: pageSize,
+            minimumWidth: Double(existing.width)
+        )
+        // The run keeps its own top edge: a growing line must not creep upward as
+        // it gets taller, or the words wander off the ruling they were written on.
+        frame.origin.y = min(existing.minY, Double(pageSize.height) - frame.height - 4)
+        return frame
     }
 }

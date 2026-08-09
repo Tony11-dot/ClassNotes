@@ -32,13 +32,87 @@ enum ShapeSnapper {
         return rebuild(stroke, along: path)
     }
 
-    /// The shape a live, in-progress path would snap to, or nil if it isn't one.
-    /// Used while the pencil is still resting on the page, so the preview under it
-    /// is exactly what the committed stroke will be.
-    static func liveFit(_ points: [CGPoint]) -> [CGPoint]? {
+    // MARK: - Live, adjustable snapping
+
+    /// The kind of shape a stroke settled into. Kept apart from the points it was
+    /// fitted from so the SAME shape can be redrawn at a new size or angle while
+    /// the pencil is still down.
+    enum Shape: Equatable {
+        case line
+        /// A single deliberate bend, at a fraction along the way to the handle.
+        case angle(bendAt: CGPoint)
+        case ellipse
+        case rectangle
+        /// Apex position across the box, 0…1 — so a leaning triangle keeps leaning
+        /// as it's resized.
+        case triangle(apexFraction: CGFloat)
+        case polygon(sides: Int)
+
+        var isClosed: Bool {
+            switch self {
+            case .line, .angle: false
+            default: true
+            }
+        }
+    }
+
+    /// A shape that has settled under a pencil which is STILL DOWN: the corner or
+    /// end that stays put, and the one the pencil now holds.
+    ///
+    /// This is what makes a snap feel like a tool rather than a verdict. Snapping
+    /// on release means the only way to change a circle's size is to undo it and
+    /// draw again; here the pencil keeps the far end, so length, direction and size
+    /// are still yours until you lift.
+    struct LiveSnap: Equatable {
+        var shape: Shape
+        /// Fixed while the pencil drags.
+        var anchor: CGPoint
+        /// Where the pencil is; moving it redraws the shape.
+        var handle: CGPoint
+    }
+
+    /// Classifies an in-progress path and works out which end the pencil holds.
+    static func liveSnap(_ points: [CGPoint]) -> LiveSnap? {
         let trimmed = trimmedTail(points)
-        guard trimmed.count >= 6 else { return nil }
-        return fit(trimmed)
+        guard trimmed.count >= 6, let (shape, box) = classify(trimmed),
+              let start = trimmed.first, let rest = trimmed.last else { return nil }
+
+        guard shape.isClosed else {
+            return LiveSnap(shape: shape, anchor: start, handle: rest)
+        }
+        // A closed shape is sized by its box, so the pencil takes the corner
+        // nearest where it stopped and the opposite corner stays put.
+        let corners = [
+            CGPoint(x: box.minX, y: box.minY), CGPoint(x: box.maxX, y: box.minY),
+            CGPoint(x: box.maxX, y: box.maxY), CGPoint(x: box.minX, y: box.maxY)
+        ]
+        let handle = corners.min { distance($0, rest) < distance($1, rest) } ?? corners[2]
+        let anchor = CGPoint(
+            x: handle.x == box.minX ? box.maxX : box.minX,
+            y: handle.y == box.minY ? box.maxY : box.minY
+        )
+        return LiveSnap(shape: shape, anchor: anchor, handle: handle)
+    }
+
+    /// The snap redrawn with the pencil somewhere new. Returns nil once the shape
+    /// has been dragged down to nothing, so a stray flick can't collapse it.
+    static func path(for snap: LiveSnap, handle: CGPoint) -> [CGPoint]? {
+        let anchor = snap.anchor
+        switch snap.shape {
+        case .line:
+            guard distance(anchor, handle) > 6 else { return nil }
+            return [anchor, handle]
+        case .angle(let bend):
+            guard distance(anchor, handle) > 6 else { return nil }
+            return densify([anchor, bend, handle])
+        default:
+            let box = CGRect(
+                x: min(anchor.x, handle.x), y: min(anchor.y, handle.y),
+                width: abs(handle.x - anchor.x), height: abs(handle.y - anchor.y)
+            )
+            guard box.width > 8, box.height > 8 else { return nil }
+            return path(for: snap.shape, in: box)
+        }
     }
 
     /// Rebuilds `original` along an already-fitted path — the commit half of the
@@ -98,6 +172,17 @@ enum ShapeSnapper {
     // MARK: - Fitting
 
     static func fit(_ points: [CGPoint]) -> [CGPoint]? {
+        guard let (shape, box) = classify(points),
+              let start = points.first, let end = points.last else { return nil }
+        switch shape {
+        case .line: return [start, end]
+        case .angle(let bend): return densify([start, bend, end])
+        default: return path(for: shape, in: box)
+        }
+    }
+
+    /// What the ink looks like it was meant to be, and the box it occupies.
+    static func classify(_ points: [CGPoint]) -> (shape: Shape, box: CGRect)? {
         guard let start = points.first, let end = points.last else { return nil }
         let box = boundingBox(points)
         let diagonal = hypot(box.width, box.height)
@@ -107,11 +192,11 @@ enum ShapeSnapper {
         let corners = cornerCount(points, closed: closed)
 
         if !closed {
-            if isStraight(points) { return [start, end] }
+            if isStraight(points) { return (.line, box) }
             // One deliberate bend and nothing else: an angle, cleaned into two
             // straight legs rather than left as a wobble.
             if corners == 1, let bend = sharpestCorner(points) {
-                return densify([start, bend, end])
+                return (.angle(bendAt: bend), box)
             }
             return nil
         }
@@ -119,14 +204,41 @@ enum ShapeSnapper {
         switch corners {
         // A closed shape with no clear corners is a circle, and one with a couple
         // is a lumpy circle — both read as "I meant an ellipse".
-        case ...2: return ellipsePath(in: box)
-        case 3: return trianglePath(points, in: box)
-        case 4: return rectanglePath(in: box)
-        case 5: return polygonPath(in: box, sides: 5)
+        case ...2: return (.ellipse, box)
+        case 3: return (.triangle(apexFraction: apexFraction(points, in: box)), box)
+        case 4: return (.rectangle, box)
+        case 5: return (.polygon(sides: 5), box)
         // Six or more detected corners on a closed path is a scribbled round
         // shape, not a hexagon anybody meant to draw.
-        default: return ellipsePath(in: box)
+        default: return (.ellipse, box)
         }
+    }
+
+    /// A classified shape drawn at whatever size the box now is.
+    static func path(for shape: Shape, in box: CGRect) -> [CGPoint] {
+        switch shape {
+        case .line:
+            return [CGPoint(x: box.minX, y: box.minY), CGPoint(x: box.maxX, y: box.maxY)]
+        case .angle(let bend):
+            return densify([
+                CGPoint(x: box.minX, y: box.minY), bend, CGPoint(x: box.maxX, y: box.maxY)
+            ])
+        case .ellipse:
+            return ellipsePath(in: box)
+        case .rectangle:
+            return rectanglePath(in: box)
+        case .triangle(let fraction):
+            return trianglePath(in: box, apexFraction: fraction)
+        case .polygon(let sides):
+            return polygonPath(in: box, sides: sides)
+        }
+    }
+
+    /// Where the drawn apex sat across the box, 0…1 — so a leaning triangle keeps
+    /// its lean when it's resized.
+    private static func apexFraction(_ points: [CGPoint], in box: CGRect) -> CGFloat {
+        guard box.width > 0, let apex = points.min(by: { $0.y < $1.y }) else { return 0.5 }
+        return min(max((apex.x - box.minX) / box.width, 0), 1)
     }
 
     private static func ellipsePath(in box: CGRect) -> [CGPoint] {
@@ -150,9 +262,9 @@ enum ShapeSnapper {
         return densify(corners)
     }
 
-    private static func trianglePath(_ points: [CGPoint], in box: CGRect) -> [CGPoint] {
-        // Apex = highest point; base = the two bottom box corners.
-        let apex = points.min(by: { $0.y < $1.y }) ?? CGPoint(x: box.midX, y: box.minY)
+    private static func trianglePath(in box: CGRect, apexFraction: CGFloat) -> [CGPoint] {
+        // Apex across the top; base = the two bottom box corners.
+        let apex = CGPoint(x: box.minX + box.width * apexFraction, y: box.minY)
         let corners = [
             CGPoint(x: apex.x, y: box.minY),
             CGPoint(x: box.maxX, y: box.maxY),

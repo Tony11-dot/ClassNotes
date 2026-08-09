@@ -62,13 +62,21 @@ Universal app, Swift 6 (strict concurrency), SwiftUI-first, Liquid Glass design 
 - AI is `AIProvider` behind `NovaConversation`, and `NovaProviderRouter` decides
   who answers. DEFAULT is `NovaBackendProvider` — ClassMate's own
   `POST /classnotes/ai`, authenticated with the session the library already needs,
-  with the model key server-side. `GroqProvider` (direct, user's Keychain key) is
-  only used for IMAGE prompts, which that endpoint doesn't take. This is not
+  with the model key server-side — SNIPS INCLUDED. `GroqProvider` (direct, user's
+  Keychain key) is a fallback for a session-less device, nothing more. This is not
   belt-and-braces: a key in the binary plus a model string in the binary means a
   revoked key or a retired model silently kills NOVA for everyone until the next
   release — which is exactly what happened when Groq dropped
   `llama-3.3-70b-versatile`. Keep `AIConfig.defaultModel` in step with ClassMate's
-  `support.service.ts`. Circle-to-explain OCRs the focused page and seeds NOVA.
+  `support.service.ts`.
+- The AI snip (`SnipOverlay`) is a RECTANGLE, and it is answered as a PICTURE:
+  the crop goes to `/classnotes/ai` as `imageBase64` (task `see`, vision model
+  server-side, `SUPPORT_AI_VISION_MODEL`), because a maths or physics snip is
+  mostly the part OCR throws away — the diagram, the graph, the working laid out
+  in two dimensions. OCR of the crop rides along only as a hint for a model that
+  can't see. `NovaBackendProvider.payload` attaches the conversation's most recent
+  image to EVERY turn, so a follow-up question is still looking at the snip;
+  `NovaSnip` shrinks it first so that stays affordable.
 - `NotesAI` is the only module that owns NOVA UI; `NotesEditor` and `NotesLibrary`
   depend on it. Editor-only code still lives behind the `App/Routing` import rule.
 - Brand parity: reuse ClassMate's single blue CM mark + wordmark as TEMPLATE
@@ -115,6 +123,13 @@ Universal app, Swift 6 (strict concurrency), SwiftUI-first, Liquid Glass design 
   committed stroke can't disagree. A stroke can't report a hold before it ends, so
   reading it from `PKStroke` could only ever snap after the release; that path
   survives as the fallback below.
+- A settled shape stays ADJUSTABLE until the pencil lifts. `ShapeSnapper.classify`
+  returns a `Shape` (line / angle / ellipse / rectangle / triangle-with-lean /
+  polygon) apart from the points it came from, so `path(for:handle:)` can redraw
+  that same shape at a new size or angle; the recognizer's `onAdjust` hands over
+  each new pencil position, with the far end (or the opposite box corner) pinned as
+  the anchor. Movement after a dwell is a HANDLE, not a cancellation — treating it
+  as "never mind" meant the only way to resize a snapped circle was to undo it.
 - The stroke-timing fallback reads the hold as "how long since
   the pencil was last more than `holdRadius` from where it came to rest" — never as
   the span of points inside a trailing window. `PKStrokePath` is a fitted spline,
@@ -137,6 +152,22 @@ Universal app, Swift 6 (strict concurrency), SwiftUI-first, Liquid Glass design 
   line re-inked BLACK on an OPAQUE WHITE crop (`recognitionImage`) — the raw
   `PKDrawing.image` is the pen's own colour on transparency, which recognized
   nothing, and `apply` returns Bool so a refused pass doesn't advance the run list.
+  The crop is also re-inked with the PEN at a minimum width and retried at a much
+  larger scale when a line reads back empty; low-confidence readings are dropped
+  rather than typeset, because Vision always returns its best guess and its best
+  guess at a squiggle is a word.
+- A beautified run is MEASURED, never estimated. `TextMetrics` (injected, so
+  `BeautifyLayout` stays pure) comes from `FontResolver` on the real face, and the
+  box carries the settings' `fontSize`, `lineSpacing` (stored on `PageElement` and
+  applied when drawing) and the room a wrapped line needs. The old
+  `characters × size × 0.58` guess is why the panel looked ignored: the type was
+  set correctly and then clipped by a box that didn't fit it. Whether new writing
+  CONTINUES a run is judged on the run's INK bounds, not its text box — typeset
+  words are much narrower than the hand that wrote them.
+- Font names resolve through `FontResolver`, never `Font.custom` directly.
+  `Font.custom` / `UIFont(name:)` fail SILENTLY, and Apple's own faces (SF Rounded,
+  New York) are unreachable by PostScript name — so half the font picker quietly
+  rendered as San Francisco. A catalog entry that stops resolving is a failed test.
 - NEVER assign `PKCanvasView.drawing` while the pencil is down. The coordinator
   gates every rewrite (pen shaping, shape snap, scribble-erase, beautification)
   on `canvasViewDidBeginUsingTool`/`…DidEndUsingTool` and batches them into ONE

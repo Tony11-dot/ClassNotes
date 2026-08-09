@@ -98,8 +98,8 @@ public struct EditorScreen: View {
                 RulerOverlay(isVisible: $rulerVisible).ignoresSafeArea()
             }
             if explainMode {
-                MagicPenOverlay(
-                    onComplete: { points in handleMagicPen(points) },
+                SnipOverlay(
+                    onComplete: { rect in handleSnip(rect) },
                     onCancel: { explainMode = false }
                 )
                 .zIndex(4)
@@ -425,15 +425,11 @@ extension EditorScreen {
         if !text.isEmpty { ocrText = OCRResult(text: text) }
     }
 
-    /// Magic pen finished: map the scribble to the page under it, crop that
-    /// region (text OR image), and hand it to NOVA in the sidebar.
-    func handleMagicPen(_ points: [CGPoint]) {
+    /// Snip finished: map the rectangle to the page under it, crop that region,
+    /// and hand the PICTURE to NOVA in the sidebar.
+    func handleSnip(_ region: CGRect) {
         explainMode = false
-        guard points.count > 1 else { return }
-        let xs = points.map(\.x), ys = points.map(\.y)
-        guard let minX = xs.min(), let maxX = xs.max(),
-              let minY = ys.min(), let maxY = ys.max() else { return }
-        let region = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+        guard region.width > 1, region.height > 1 else { return }
         let center = CGPoint(x: region.midX, y: region.midY)
 
         // The page under the scribble's center (fallback to the focused page).
@@ -452,16 +448,19 @@ extension EditorScreen {
             height: onPage.height / scale
         )
         model.focusedPageID = pageID
-        Task { await runMagicExplain(pageID: pageID, logicalRegion: logical) }
+        Task { await runSnipExplain(pageID: pageID, logicalRegion: logical) }
     }
 
     @MainActor
-    func runMagicExplain(pageID: UUID, logicalRegion: CGRect) async {
+    func runSnipExplain(pageID: UUID, logicalRegion: CGRect) async {
         guard let page = model.page(pageID) else { return }
         let full = renderPageImage(page)
         let cropped = crop(full, to: logicalRegion, logicalSize: page.logicalSize) ?? full
+        // The snip goes as a PICTURE. OCR of it would drop exactly the part that
+        // usually matters — the diagram, the graph, the working laid out across
+        // the page — so it is carried only as a hint for a model that can't see.
+        let jpeg = NovaSnip.encode(cropped)
         let ocr = await model.ocr(image: cropped)
-        let jpeg = cropped.jpegData(compressionQuality: 0.7) ?? Data()
 
         if novaConversation == nil {
             novaConversation = services.makeNovaConversation()

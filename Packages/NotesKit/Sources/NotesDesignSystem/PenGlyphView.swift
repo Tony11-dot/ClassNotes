@@ -24,7 +24,7 @@ import SwiftUI
 /// The art is data-driven through `PenGlyphProfile`, keyed by preset id, so adding
 /// an instrument stays a data change.
 public struct PenGlyphView: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) var theme
 
     let preset: PenPreset
     let color: ThemeColor
@@ -37,7 +37,7 @@ public struct PenGlyphView: View {
         self.isSelected = isSelected
     }
 
-    private var profile: PenGlyphProfile { PenGlyphProfile.of(preset) }
+    var profile: PenGlyphProfile { PenGlyphProfile.of(preset) }
 
     public var body: some View {
         GeometryReader { geo in
@@ -59,8 +59,10 @@ public struct PenGlyphView: View {
                     .frame(width: tipWidth, height: tipHeight)
             }
             .frame(width: width, height: height)
-            .shadow(color: .black.opacity(isSelected ? 0.22 : 0.08),
-                    radius: isSelected ? 4 : 2, x: isSelected ? -2 : 0, y: 1)
+            // The instrument lying on a surface: a soft contact shadow under it,
+            // and a longer, lower one when it has been picked up.
+            .shadow(color: .black.opacity(isSelected ? 0.28 : 0.10),
+                    radius: isSelected ? 6 : 2.5, x: isSelected ? -3 : 0, y: isSelected ? 3 : 1)
         }
         .accessibilityLabel(preset.displayName)
     }
@@ -75,51 +77,15 @@ public struct PenGlyphView: View {
             // nine of them reads as one set under one lamp.
             .overlay { shape.fill(PenGlyphView.cylinderShading) }
             .overlay { furniture(width: width, height: height).clipShape(shape) }
+            // Gloss: one long specular streak riding the top third. It is what
+            // separates a drawn cylinder from a photographed one, and at tray size
+            // it is most of what makes the instrument look like an object.
+            .overlay { gloss(width: width, height: height).clipShape(shape) }
             // Furniture that legitimately breaks the silhouette (a clip standing
             // proud of the barrel, a clicker behind it) is drawn unclipped.
             .overlay { proudFurniture(width: width, height: height) }
             .overlay { shape.stroke(theme.separator.color.opacity(0.7), lineWidth: 0.5) }
             .frame(width: width, height: height)
-    }
-
-    /// One cylindrical light, reused by every barrel.
-    static let cylinderShading = LinearGradient(
-        stops: [
-            .init(color: .white.opacity(0.38), location: 0.05),
-            .init(color: .white.opacity(0.14), location: 0.26),
-            .init(color: .clear, location: 0.50),
-            .init(color: .black.opacity(0.14), location: 0.80),
-            // A little bounce light along the very bottom edge stops the barrel
-            // reading as a shape fading into the background.
-            .init(color: .black.opacity(0.05), location: 1.0)
-        ],
-        startPoint: .top, endPoint: .bottom
-    )
-
-    /// What the barrel is made of. Manufactured bodies stay pale so the ink band
-    /// reads against them; wax, wood and translucent bodies carry the colour.
-    private func material(height: CGFloat) -> LinearGradient {
-        let base: Color
-        switch profile.material {
-        case .plasticPale:
-            base = theme.isDark ? theme.surfaceRaised.color : Color(white: 0.97)
-        case .plasticInk:
-            base = color.color.opacity(theme.isDark ? 0.72 : 0.86)
-        case .resin:
-            // Deep glossy resin: the ink colour, darkened, so a fountain pen reads
-            // as a heavier object than a biro.
-            base = color.color.opacity(0.9)
-        case .wood:
-            base = Color(red: 0.85, green: 0.68, blue: 0.42)
-        case .wax:
-            base = color.color
-        case .translucent:
-            base = color.color.opacity(0.3)
-        }
-        return LinearGradient(
-            colors: [base, base.opacity(0.86)],
-            startPoint: .top, endPoint: .bottom
-        )
     }
 
     // MARK: - Furniture (clipped to the barrel)

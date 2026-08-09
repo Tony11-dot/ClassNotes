@@ -220,6 +220,9 @@ struct CanvasPageView: UIViewRepresentable {
         /// The shape the live dwell watcher settled on, waiting for the pencil to
         /// lift so it can be committed as ONE canvas rewrite.
         private var pendingSnapPath: [CGPoint]?
+        /// The settled shape while the pencil still holds it, so moving the pencil
+        /// resizes THAT shape instead of refitting the wandering ink.
+        private var liveSnap: ShapeSnapper.LiveSnap?
         /// Draws that shape under the resting pencil. A layer rather than a stroke
         /// swap: the in-flight stroke belongs to PencilKit, and assigning
         /// `drawing` mid-stroke tears it up.
@@ -280,10 +283,12 @@ struct CanvasPageView: UIViewRepresentable {
                 return CGPoint(x: point.x / canvas.zoomScale, y: point.y / canvas.zoomScale)
             }
             watcher.onDwell = { [weak self] points in self?.previewSnap(points) }
+            watcher.onAdjust = { [weak self] point in self?.adjustSnap(to: point) }
             watcher.onResume = { [weak self] in self?.cancelSnapPreview() }
             watcher.onEnd = { [weak self] held in
                 guard let self else { return }
                 self.hideSnapPreview()
+                self.liveSnap = nil
                 if !held { self.pendingSnapPath = nil }
             }
             canvas.addGestureRecognizer(watcher)
@@ -293,26 +298,49 @@ struct CanvasPageView: UIViewRepresentable {
         /// The pencil has come to rest: fit what's been drawn and show it.
         private func previewSnap(_ points: [CGPoint]) {
             guard toolState.snapShapes, toolState.tool == .pen,
-                  let canvas, let path = ShapeSnapper.liveFit(points) else { return }
+                  let snap = ShapeSnapper.liveSnap(points),
+                  let path = ShapeSnapper.path(for: snap, handle: snap.handle) else { return }
+            liveSnap = snap
             pendingSnapPath = path
+            drawSnapPreview(path)
+            // The shape landing under your pencil should feel like it clicked.
+            UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+        }
 
+        /// The pencil is still down and has moved: it's holding the shape's free
+        /// end, so redraw the SAME shape at the new size or angle.
+        private func adjustSnap(to point: CGPoint) {
+            guard var snap = liveSnap,
+                  let path = ShapeSnapper.path(for: snap, handle: point) else { return }
+            snap.handle = point
+            liveSnap = snap
+            pendingSnapPath = path
+            drawSnapPreview(path)
+        }
+
+        private func drawSnapPreview(_ path: [CGPoint]) {
+            guard let canvas else { return }
             let scale = canvas.zoomScale
             let bezier = UIBezierPath()
             for (index, point) in path.enumerated() {
                 let scaled = CGPoint(x: point.x * scale, y: point.y * scale)
                 if index == 0 { bezier.move(to: scaled) } else { bezier.addLine(to: scaled) }
             }
-            let settings = toolState.penSettings
+            // The preview redraws on every pencil sample while a shape is being
+            // adjusted; implicit layer animation would smear it a frame behind the
+            // pencil, which reads as lag.
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
             snapPreviewLayer.path = bezier.cgPath
-            snapPreviewLayer.lineWidth = max(1, settings.effectiveWidth * scale)
+            snapPreviewLayer.lineWidth = max(1, toolState.penSettings.effectiveWidth * scale)
             snapPreviewLayer.strokeColor = (canvas.tool as? PKInkingTool)?.color.cgColor
             snapPreviewLayer.opacity = 1
-            // The shape landing under your pencil should feel like it clicked.
-            UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+            CATransaction.commit()
         }
 
         private func cancelSnapPreview() {
             pendingSnapPath = nil
+            liveSnap = nil
             hideSnapPreview()
         }
 

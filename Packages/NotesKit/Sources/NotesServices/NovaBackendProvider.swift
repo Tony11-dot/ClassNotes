@@ -56,6 +56,17 @@ public struct NovaBackendProvider: AIProvider {
         var payload: [String: Any] = ["task": "chat", "text": question]
         if !context.isEmpty { payload["pageContext"] = context }
         if !history.isEmpty { payload["history"] = history }
+
+        // The most recent snip in the conversation travels with EVERY turn about
+        // it, not only the first. The endpoint keeps no state, so a follow-up that
+        // left the picture behind would be answered from the model's memory of a
+        // description — which is how "and why is that arrow there?" gets a
+        // confident answer about the wrong thing.
+        if let image = messages.last(where: { $0.imageData != nil })?.imageData,
+           !image.isEmpty {
+            payload["task"] = "see"
+            payload["imageBase64"] = image.base64EncodedString()
+        }
         return payload
     }
 
@@ -131,10 +142,12 @@ public struct NovaBackendProvider: AIProvider {
 
 /// Picks how NOVA answers for a given exchange.
 ///
-/// The backend is preferred because it needs no key on the device and its model
-/// is updated server-side. Groq is used when the user has supplied their own key
-/// AND the backend can't serve the request — which today means image prompts:
-/// the magic pen sends a circled REGION, and `/classnotes/ai` takes text only.
+/// The backend answers everything it can, because it needs no key on the device
+/// and its model is updated server-side — snips included: `/classnotes/ai` now
+/// takes the picture and routes it to a vision model with the key kept on the
+/// server. Groq direct survives only as a fallback for a user who has entered
+/// their own key and has no session, which is not a state the app can normally
+/// reach.
 public struct NovaProviderRouter: AIProvider {
     private let backend: NovaBackendProvider
     private let direct: GroqProvider
@@ -153,8 +166,6 @@ public struct NovaProviderRouter: AIProvider {
 
     /// Which provider answers this exchange.
     public func provider(for messages: [AIMessage]) -> any AIProvider {
-        let needsVision = messages.contains { $0.imageData != nil }
-        if needsVision, direct.isConfigured { return direct }
         if backend.isConfigured { return backend }
         return direct
     }

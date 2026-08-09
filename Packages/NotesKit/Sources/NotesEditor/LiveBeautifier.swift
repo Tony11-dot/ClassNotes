@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import NotesDesignSystem
 import NotesModels
 import NotesServices
 import Observation
@@ -23,6 +24,10 @@ struct BeautifiedRun: Equatable {
     let elementID: UUID
     var frame: CGRect
     var text: String
+    /// The INK this run was read from. Whether the student carried on writing on
+    /// this line is a question about where their hand went, not about where the
+    /// (much narrower) type ended up.
+    var inkBounds: CGRect = .null
 }
 
 /// What one beautification pass should change.
@@ -78,8 +83,33 @@ final class LiveBeautifier {
     }
 
     /// The shipping recognizer: on-device Vision, one tight crop per line.
+    ///
+    /// Low-confidence readings are dropped rather than typeset. Vision always
+    /// returns its best guess, and its best guess at a squiggle is a word — so
+    /// without a floor here, "detection is weak" doesn't look like a miss, it looks
+    /// like beautification confidently replacing writing with the wrong words.
     static let visionRecognizer: LineRecognizer = { image, language in
-        (try? await OCRService().recognizeText(in: image, languages: [language])) ?? ""
+        guard let lines = try? await OCRService().recognize(in: image, languages: [language])
+        else { return "" }
+        let trusted = lines.filter { $0.confidence >= LiveBeautifier.minimumConfidence }
+        return OCRService.assemble(trusted)
+    }
+
+    /// Below this, Vision is guessing. Handwriting rarely clears 0.9 even when it
+    /// is read perfectly, so the bar is low — it exists to reject noise, not to
+    /// demand printing.
+    nonisolated static let minimumConfidence: Double = 0.3
+
+    /// How the chosen face actually measures, so the box matches the type.
+    static func metrics(fontName: String) -> TextMetrics {
+        TextMetrics(
+            width: { text, size in
+                Double(FontResolver.measureWidth(text, name: fontName, size: size))
+            },
+            lineHeight: { size in
+                Double(FontResolver.lineHeight(name: fontName, size: size))
+            }
+        )
     }
 
     /// Raises the "couldn't read that" hint, and takes it back down by itself.
@@ -183,7 +213,8 @@ final class LiveBeautifier {
             settings: settings,
             fontName: fontName,
             colorHex: nil,
-            pageSize: pageSize
+            pageSize: pageSize,
+            metrics: Self.metrics(fontName: fontName)
         )
         guard !plan.isEmpty else {
             noteFoundNothing(true)
@@ -250,14 +281,23 @@ final class LiveBeautifier {
                 .intersection(CGRect(origin: .zero, size: pageSize))
             guard region.width > 4, region.height > 4 else { continue }
 
-            let image = Self.recognitionImage(
-                of: lineDrawing, region: region, scale: Self.renderScale(for: bounds)
-            )
             pass.askedRecognizer = true
-            let text = await recognizeLine(image, settings.language)
-            let cleaned = text
-                .replacingOccurrences(of: "\n", with: " ")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+            // Read the line at the size Vision likes; if that comes back empty,
+            // read it again much larger before giving up. A single fixed scale is
+            // why small or cramped writing read as nothing at all — the retry
+            // costs one crop and turns most of those misses into text.
+            var cleaned = ""
+            for scale in Self.renderScales(for: bounds) {
+                let image = Self.recognitionImage(
+                    of: lineDrawing, region: region, scale: scale,
+                    minimumInkWidth: Self.recognitionInkWidth(for: bounds)
+                )
+                let text = await recognizeLine(image, settings.language)
+                cleaned = text
+                    .replacingOccurrences(of: "\n", with: " ")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !cleaned.isEmpty { break }
+            }
             guard !cleaned.isEmpty else { continue }
 
             pass.lines.append(RecognizedLine(
@@ -279,12 +319,15 @@ final class LiveBeautifier {
     /// to begin with), so passes came back with no text at all and nothing was ever
     /// typeset. Forcing black-on-white is what makes beautification fire reliably.
     static func recognitionImage(
-        of drawing: PKDrawing, region: CGRect, scale: CGFloat
+        of drawing: PKDrawing, region: CGRect, scale: CGFloat, minimumInkWidth: CGFloat = 0
     ) -> UIImage {
         let inked = PKDrawing(strokes: drawing.strokes.map { stroke in
             PKStroke(
-                ink: PKInk(stroke.ink.inkType, color: .black),
-                path: stroke.path,
+                // Always the PEN, whatever wrote it. A marker or a highlighter
+                // renders as a wide translucent band whose letters bleed into each
+                // other — legible to a person, unreadable to Vision.
+                ink: PKInk(.pen, color: .black),
+                path: Self.thickened(stroke.path, to: minimumInkWidth),
                 transform: stroke.transform,
                 mask: stroke.mask
             )
@@ -307,6 +350,46 @@ final class LiveBeautifier {
         let target: CGFloat = 180
         let height = max(bounds.height, 1)
         return min(max(target / height, 2), 8)
+    }
+
+    /// The scales a line is attempted at, in order: the sweet spot first, then a
+    /// much larger crop for writing that came back blank.
+    static func renderScales(for bounds: CGRect) -> [CGFloat] {
+        let first = renderScale(for: bounds)
+        let second = min(first * 2.2, 14)
+        return second > first * 1.2 ? [first, second] : [first]
+    }
+
+    /// A floor on how wide the ink is drawn for RECOGNITION only. A fineliner at
+    /// 0.5 pt all but disappears once the crop is rasterized, and Vision reads a
+    /// disappearing letter as no letter. Scaled off the line height so big writing
+    /// doesn't turn into a solid blob.
+    static func recognitionInkWidth(for bounds: CGRect) -> CGFloat {
+        max(1.6, bounds.height * 0.07)
+    }
+
+    /// The same path with every point at least `width` across. Returns the path
+    /// untouched when it's already thick enough, or when no floor was asked for.
+    static func thickened(_ path: PKStrokePath, to width: CGFloat) -> PKStrokePath {
+        guard width > 0 else { return path }
+        let points = Array(path)
+        guard points.contains(where: { $0.size.width < width || $0.size.height < width })
+        else { return path }
+        let widened = points.map { point in
+            PKStrokePoint(
+                location: point.location,
+                timeOffset: point.timeOffset,
+                size: CGSize(
+                    width: max(point.size.width, width),
+                    height: max(point.size.height, width)
+                ),
+                opacity: max(point.opacity, 1),
+                force: point.force,
+                azimuth: point.azimuth,
+                altitude: point.altitude
+            )
+        }
+        return PKStrokePath(controlPoints: widened, creationDate: path.creationDate)
     }
 
     /// Rejects diagrams and doodles: a line of writing is neither a hairline nor
@@ -341,7 +424,8 @@ final class LiveBeautifier {
         settings: BeautifySettings,
         fontName: String,
         colorHex: String?,
-        pageSize: CGSize
+        pageSize: CGSize,
+        metrics: TextMetrics
     ) -> BeautifyPlan {
         var plan = BeautifyPlan()
         var runs = existing
@@ -349,29 +433,40 @@ final class LiveBeautifier {
         for line in lines {
             let typeSize = settings.typeSize(forInkHeight: line.bounds.height)
             let bold = settings.dynamicBold && line.meanForce > 0.5
+            let spacing = settings.effectiveLineSpacing
             let frame = BeautifyLayout.frame(
                 inkBounds: line.bounds,
+                text: line.text,
                 typeSize: typeSize,
-                lineSpacing: settings.lineSpacing,
-                characterCount: line.text.count,
+                lineSpacing: spacing,
+                metrics: metrics,
                 in: pageSize
             )
 
             if let index = runs.firstIndex(where: {
-                BeautifyLayout.continues(existing: $0.frame, incoming: frame, typeSize: typeSize)
+                BeautifyLayout.continues(
+                    existing: $0.inkBounds.isNull ? $0.frame : $0.inkBounds,
+                    incoming: line.bounds,
+                    typeSize: typeSize
+                )
             }) {
                 // The student kept writing on a line that's already typeset.
                 let joined = runs[index].text + " " + line.text
                 let merged = BeautifyLayout.merged(
-                    existing: runs[index].frame, incoming: frame, in: pageSize
+                    existing: runs[index].frame, incoming: frame, text: joined,
+                    typeSize: typeSize, lineSpacing: spacing,
+                    metrics: metrics, in: pageSize
                 )
                 runs[index].text = joined
                 runs[index].frame = merged
+                runs[index].inkBounds = runs[index].inkBounds.isNull
+                    ? line.bounds
+                    : runs[index].inkBounds.union(line.bounds)
                 let element = PageElement(
                     id: runs[index].elementID, kind: .text,
                     x: merged.minX, y: merged.minY, width: merged.width, height: merged.height,
                     text: joined, fontName: fontName, textColorHex: colorHex,
-                    fontSize: typeSize, isBold: bold
+                    fontSize: typeSize, lineSpacing: spacing, isBold: bold
                 )
                 // One line can only join one run per pass; replace any earlier
                 // update for the same element so the text doesn't double up.
@@ -382,10 +477,13 @@ final class LiveBeautifier {
                     kind: .text,
                     x: frame.minX, y: frame.minY, width: frame.width, height: frame.height,
                     text: line.text, fontName: fontName, textColorHex: colorHex,
-                    fontSize: typeSize, isBold: bold
+                    fontSize: typeSize, lineSpacing: spacing, isBold: bold
                 )
                 plan.inserts.append(element)
-                runs.append(BeautifiedRun(elementID: element.id, frame: frame, text: line.text))
+                runs.append(BeautifiedRun(
+                    elementID: element.id, frame: frame, text: line.text,
+                    inkBounds: line.bounds
+                ))
             }
             plan.consumedStrokes.formUnion(line.strokeIndices)
         }
