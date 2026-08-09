@@ -282,7 +282,7 @@ struct CanvasPageView: UIViewRepresentable {
                 let point = touch.location(in: canvas)
                 return CGPoint(x: point.x / canvas.zoomScale, y: point.y / canvas.zoomScale)
             }
-            watcher.onDwell = { [weak self] points in self?.previewSnap(points) }
+            watcher.onDwell = { [weak self] points in self?.previewSnap(points) ?? false }
             watcher.onAdjust = { [weak self] point in self?.adjustSnap(to: point) }
             watcher.onResume = { [weak self] in self?.cancelSnapPreview() }
             watcher.onEnd = { [weak self] held in
@@ -295,16 +295,19 @@ struct CanvasPageView: UIViewRepresentable {
             dwellWatcher = watcher
         }
 
-        /// The pencil has come to rest: fit what's been drawn and show it.
-        private func previewSnap(_ points: [CGPoint]) {
+        /// The pencil has come to rest: fit what's been drawn and show it. Returns
+        /// false when the ink isn't a shape yet, so the watcher stays armed for the
+        /// pause that comes once it is.
+        private func previewSnap(_ points: [CGPoint]) -> Bool {
             guard toolState.snapShapes, toolState.tool == .pen,
                   let snap = ShapeSnapper.liveSnap(points),
-                  let path = ShapeSnapper.path(for: snap, handle: snap.handle) else { return }
+                  let path = ShapeSnapper.path(for: snap, handle: snap.handle) else { return false }
             liveSnap = snap
             pendingSnapPath = path
             drawSnapPreview(path)
             // The shape landing under your pencil should feel like it clicked.
             UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+            return true
         }
 
         /// The pencil is still down and has moved: it's holding the shape's free

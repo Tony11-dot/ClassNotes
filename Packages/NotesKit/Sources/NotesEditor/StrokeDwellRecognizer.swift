@@ -26,9 +26,12 @@ final class StrokeDwellRecognizer: UIGestureRecognizer {
     /// The path so far, in the canvas's own logical coordinates.
     private(set) var points: [CGPoint] = []
 
-    /// Fired once per stroke, when the pencil has rested long enough. Carries the
-    /// path drawn up to the rest.
-    var onDwell: (([CGPoint]) -> Void)?
+    /// Fired when the pencil has rested long enough, with the path drawn up to the
+    /// rest. Returns whether the rest was USED — a pause over ink that isn't a
+    /// shape yet (halfway round a circle) must leave the stroke exactly as it was,
+    /// and leave the watcher armed for the pause that comes after the shape is
+    /// finished.
+    var onDwell: (([CGPoint]) -> Bool)?
     /// The pencil moved after the shape settled. It is now HOLDING the shape's free
     /// end: every report is a new size / direction, not a cancellation.
     ///
@@ -120,8 +123,7 @@ final class StrokeDwellRecognizer: UIGestureRecognizer {
         let timer = Timer(timeInterval: minimumHold, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, !self.didDwell, self.points.count > 2 else { return }
-                self.didDwell = true
-                self.onDwell?(self.points)
+                self.didDwell = self.onDwell?(self.points) ?? false
             }
         }
         // Common modes, or the timer stops while the finger is scrolling anything.
