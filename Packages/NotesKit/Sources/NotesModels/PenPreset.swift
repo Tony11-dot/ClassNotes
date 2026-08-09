@@ -57,7 +57,12 @@ public struct PenPreset: Identifiable, Sendable, Equatable, Hashable, Codable {
 public struct PenSettings: Sendable, Equatable, Hashable, Codable {
     /// 1 = raw pencil path, 7 = heavily smoothed (the "Stability" slider).
     public var stability: Int
-    /// How much of the nominal width the tip actually lays down, 0…1.
+    /// How POINTED the tip is, 0…1 — a pointed tip tapers the stroke in at its
+    /// start and end, a blunt one lays full width from the first point to the last.
+    ///
+    /// It used to be a second multiplier on the width, which meant Tip and
+    /// Thickness were one slider wearing two hats: moving either did the same
+    /// thing, and their product could exceed the thickness slider's own maximum.
     public var tip: Double
     /// How strongly pressure and speed modulate the width, 0…1.
     public var sensitivity: Double
@@ -70,9 +75,9 @@ public struct PenSettings: Sendable, Equatable, Hashable, Codable {
 
     public init(
         stability: Int = 1,
-        tip: Double = 0.6,
-        sensitivity: Double = 0.4,
-        thickness: Double = 1.2,
+        tip: Double = 0,
+        sensitivity: Double = 0.5,
+        thickness: Double = 1.4,
         concentration: Double = 1,
         colorHex: String? = nil
     ) {
@@ -86,17 +91,21 @@ public struct PenSettings: Sendable, Equatable, Hashable, Codable {
 
     public static let stabilityRange = 1...7
 
-    /// The width actually handed to PencilKit: nominal thickness scaled by the tip.
+    /// The width handed to PencilKit. The Thickness slider IS the width — nothing
+    /// else scales it, so the number under your finger is the number on the page.
     public var effectiveWidth: Double {
-        max(0.3, thickness * (0.4 + tip * 1.2))
+        max(0.3, thickness)
     }
+
+    /// Whether the tip is pointed enough to taper the stroke at all.
+    public var tapersEnds: Bool { tip > 0.02 }
 
     /// Clamps every field into range — applied whenever settings are loaded from
     /// disk so a hand-edited or future value can't produce an invalid tool.
     public func normalized(in range: ClosedRange<Double>) -> PenSettings {
         PenSettings(
             stability: min(max(stability, Self.stabilityRange.lowerBound), Self.stabilityRange.upperBound),
-            tip: min(max(tip, 0.05), 1),
+            tip: min(max(tip, 0), 1),
             sensitivity: min(max(sensitivity, 0), 1),
             thickness: min(max(thickness, range.lowerBound), range.upperBound),
             concentration: min(max(concentration, 0.05), 1),
@@ -109,9 +118,12 @@ public struct PenSettings: Sendable, Equatable, Hashable, Codable {
 /// media, then the highlighter). Every preset maps to a genuinely different
 /// PencilKit ink, so they don't just differ by numbers.
 public enum PenLibrary {
+    /// Thicknesses are the widths these instruments ALREADY drew at — Tip used to
+    /// multiply into the width, so removing that from the arithmetic means folding
+    /// the product back into the number, or every pen would suddenly write thinner.
     public static let flow = PenPreset(
         id: "flow", displayName: "Flow Pen", ink: .monoline,
-        defaults: PenSettings(stability: 1, tip: 0.6, sensitivity: 0.4, thickness: 1.2, concentration: 1),
+        defaults: PenSettings(stability: 1, tip: 0, sensitivity: 0.5, thickness: 1.4, concentration: 1),
         symbolName: "pencil.tip"
     )
 
@@ -119,42 +131,46 @@ public enum PenLibrary {
         flow,
         PenPreset(
             id: "ballpoint", displayName: "Ballpoint", ink: .pen,
-            defaults: PenSettings(stability: 2, tip: 0.55, sensitivity: 0.55, thickness: 2.4, concentration: 1),
+            // A ball is blunt: a biro's line starts and stops at full width.
+            defaults: PenSettings(stability: 2, tip: 0.1, sensitivity: 0.55, thickness: 2.6, concentration: 1),
             symbolName: "pencil"
         ),
         PenPreset(
             id: "fineliner", displayName: "Fineliner", ink: .monoline,
-            defaults: PenSettings(stability: 3, tip: 0.4, sensitivity: 0.1, thickness: 1.6, concentration: 1),
+            defaults: PenSettings(stability: 3, tip: 0, sensitivity: 0.1, thickness: 1.4, concentration: 1),
             symbolName: "pencil.line"
         ),
         PenPreset(
             id: "fountain", displayName: "Fountain Pen", ink: .fountainPen,
-            defaults: PenSettings(stability: 2, tip: 0.7, sensitivity: 0.85, thickness: 3.2, concentration: 1),
+            // A nib enters and leaves the paper on its point.
+            defaults: PenSettings(stability: 2, tip: 0.7, sensitivity: 0.85, thickness: 4, concentration: 1),
             symbolName: "pencil.tip.crop.circle"
         ),
         PenPreset(
             id: "pencil", displayName: "Pencil", ink: .pencil,
-            defaults: PenSettings(stability: 1, tip: 0.65, sensitivity: 0.7, thickness: 3, concentration: 0.9),
+            defaults: PenSettings(stability: 1, tip: 0.4, sensitivity: 0.7, thickness: 3.6, concentration: 0.9),
             symbolName: "pencil.and.outline"
         ),
         PenPreset(
             id: "crayon", displayName: "Crayon", ink: .crayon,
-            defaults: PenSettings(stability: 1, tip: 0.85, sensitivity: 0.6, thickness: 8, concentration: 0.95),
+            defaults: PenSettings(stability: 1, tip: 0.15, sensitivity: 0.6, thickness: 11, concentration: 0.95),
             symbolName: "paintbrush.pointed"
         ),
         PenPreset(
             id: "brush", displayName: "Brush", ink: .watercolor,
-            defaults: PenSettings(stability: 2, tip: 0.9, sensitivity: 0.9, thickness: 12, concentration: 0.75),
+            // The one instrument whose whole character is the taper.
+            defaults: PenSettings(stability: 2, tip: 0.9, sensitivity: 0.9, thickness: 16, concentration: 0.75),
             symbolName: "paintbrush"
         ),
         PenPreset(
             id: "marker", displayName: "Marker", ink: .marker,
-            defaults: PenSettings(stability: 2, tip: 0.8, sensitivity: 0.3, thickness: 9, concentration: 0.85),
+            defaults: PenSettings(stability: 2, tip: 0, sensitivity: 0.3, thickness: 12, concentration: 0.85),
             symbolName: "highlighter"
         ),
         PenPreset(
             id: "highlighter", displayName: "Highlighter", ink: .marker,
-            defaults: PenSettings(stability: 3, tip: 1, sensitivity: 0, thickness: 22, concentration: 0.35),
+            // A chisel: dead flat, both ends.
+            defaults: PenSettings(stability: 3, tip: 0, sensitivity: 0, thickness: 35, concentration: 0.35),
             symbolName: "highlighter", isHighlighter: true
         )
     ]

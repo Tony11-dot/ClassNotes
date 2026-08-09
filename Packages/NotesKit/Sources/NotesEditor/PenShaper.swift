@@ -13,30 +13,34 @@ import PencilKit
 /// - **Stability** averages the path (see `StrokeSmoothing`), straightening tremor.
 /// - **Sensitivity** scales how far pressure moves the point size: 0 gives a
 ///   perfectly even line, 1 gives the full pressure range.
-/// - **Tip** is folded into the tool's width before drawing, so it needs no work
-///   here (see `PenSettings.effectiveWidth`).
+/// - **Tip** tapers the stroke's ends: a pointed tip enters and leaves the paper
+///   on its point, a blunt one lays full width from the first point to the last.
 ///
-/// Nothing is rebuilt when the settings ask for no change, so the common case
-/// (stability 1, sensitivity at the ink's own default) costs nothing.
+/// Every slider in the panel lands in one of those three places or in the tool
+/// itself (thickness → width, concentration → alpha, colour → colour). A setting
+/// that changed nothing on the page would be a lie about what the pen does, so
+/// there isn't one.
+///
+/// Nothing is rebuilt when the settings ask for no change, so a pen left at
+/// stability 1, neutral sensitivity and a blunt tip costs nothing at all.
 enum PenShaper {
     /// PencilKit's own pressure response — the sensitivity value that means
     /// "leave the stroke exactly as the pencil drew it".
     static let neutralSensitivity = 0.5
-    /// How far sensitivity has to sit from neutral before a stroke is worth
-    /// rebuilding. Anything inside this band reads identically on the page.
-    static let sensitivityDeadband = 0.25
+    /// How far sensitivity has to sit from neutral to be worth rebuilding for.
+    /// Small enough that any deliberate move of the slider shows up: a wide band
+    /// (this was 0.25) means half the slider's travel does nothing, which is
+    /// indistinguishable from a broken control.
+    static let sensitivityDeadband = 0.02
 
     /// Returns a reshaped copy of `stroke`, or nil when the settings are a no-op.
     static func shaped(_ stroke: PKStroke, settings: PenSettings) -> PKStroke? {
         let window = StrokeSmoothing.window(forStability: settings.stability)
         let needsSmoothing = window > 1
-        // Sensitivity only needs applying when it pulls FAR from PencilKit's own
-        // 1:1 response. The band is deliberately wide: rebuilding a stroke means
-        // reassigning the canvas's drawing, and a barely-visible tweak isn't worth
-        // that (the default Flow Pen sits at 0.4, so it now costs nothing at all).
         let needsPressure = abs(settings.sensitivity - Self.neutralSensitivity)
             > Self.sensitivityDeadband
-        guard needsSmoothing || needsPressure else { return nil }
+        let needsTaper = settings.tapersEnds
+        guard needsSmoothing || needsPressure || needsTaper else { return nil }
 
         let points = Array(stroke.path)
         guard points.count > 2 else { return nil }
@@ -45,9 +49,13 @@ enum PenShaper {
         let averageSize = mean(of: points.map(\.size))
 
         let rebuilt: [PKStrokePoint] = points.enumerated().map { index, point in
-            let size = needsPressure
+            var size = needsPressure
                 ? blended(point.size, toward: averageSize, sensitivity: settings.sensitivity)
                 : point.size
+            if needsTaper {
+                let factor = taper(at: index, of: points.count, tip: settings.tip)
+                size = CGSize(width: size.width * factor, height: size.height * factor)
+            }
             return PKStrokePoint(
                 location: index < locations.count ? locations[index] : point.location,
                 timeOffset: point.timeOffset,
@@ -60,6 +68,24 @@ enum PenShaper {
         }
         let path = PKStrokePath(controlPoints: rebuilt, creationDate: stroke.path.creationDate)
         return PKStroke(ink: stroke.ink, path: path, transform: stroke.transform, mask: stroke.mask)
+    }
+
+    /// How much of its width the stroke lays down at `index`.
+    ///
+    /// A pointed tip narrows the stroke over a run-in at each end and is at full
+    /// width everywhere between. Both the length of that run-in and how thin the
+    /// very end gets follow the Tip slider, so the difference between a ball and a
+    /// brush is visible in a single downstroke.
+    static func taper(at index: Int, of count: Int, tip: Double) -> CGFloat {
+        guard count > 2, tip > 0 else { return 1 }
+        let span = max(1.0, Double(count - 1) * min(0.3, tip * 0.32))
+        let fromStart = Double(index)
+        let fromEnd = Double(count - 1 - index)
+        let distance = min(fromStart, fromEnd)
+        guard distance < span else { return 1 }
+        // Thinnest at the very tip, full width by the end of the run-in.
+        let narrowest = 1 - tip * 0.85
+        return CGFloat(narrowest + (1 - narrowest) * (distance / span))
     }
 
     /// Pulls a point's size toward the stroke's average as sensitivity drops.

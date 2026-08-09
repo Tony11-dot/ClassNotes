@@ -149,7 +149,8 @@ struct PenSettingsPanel: View {
 
                 StrokePreview(
                     color: color, width: settings.effectiveWidth,
-                    opacity: settings.concentration, stability: settings.stability
+                    opacity: settings.concentration, stability: settings.stability,
+                    tip: settings.tip
                 )
 
                 PanelSlider(
@@ -165,7 +166,9 @@ struct PenSettingsPanel: View {
                     title: "Tip",
                     readout: "\(Int((settings.tip * 100).rounded()))%",
                     value: binding(\.tip),
-                    range: 0.05...1
+                    range: 0...1,
+                    hint: "How pointed the tip is. A point tapers the stroke in at "
+                        + "each end; a blunt tip lays full width throughout."
                 )
 
                 PanelSlider(
@@ -173,7 +176,8 @@ struct PenSettingsPanel: View {
                     readout: "\(Int((settings.sensitivity * 100).rounded()))%",
                     value: binding(\.sensitivity),
                     range: 0...1,
-                    hint: "How much pressure changes the stroke width."
+                    hint: "How much pressure changes the stroke width. 50% is the "
+                        + "pencil's own response."
                 )
 
                 PanelSlider(
@@ -182,14 +186,16 @@ struct PenSettingsPanel: View {
                     value: binding(\.thickness),
                     range: preset.widthRange,
                     step: 0.2,
-                    showsSteppers: true
+                    showsSteppers: true,
+                    hint: "The width of the line, in page points."
                 )
 
                 PanelSlider(
                     title: "Concentration",
                     readout: "\(Int((settings.concentration * 100).rounded()))%",
                     value: binding(\.concentration),
-                    range: 0.05...1
+                    range: 0.05...1,
+                    hint: "How strongly the ink covers what's under it."
                 )
 
                 Divider().overlay(theme.separator.color)

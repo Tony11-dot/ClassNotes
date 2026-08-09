@@ -110,9 +110,18 @@ Universal app, Swift 6 (strict concurrency), SwiftUI-first, Liquid Glass design 
   under the package's `media/`. Tape is an element above the ink: tapping toggles
   `isHidden`, which lifts the strip and reveals what it covers.
 - The pen tray is data, not code: `PenLibrary` lists the instruments, each with a
-  `PenSettings` the user tunes. PencilKit has no API for smoothing or pressure
-  response, so those sliders are applied in `PenShaper`, which rebuilds a stroke
-  once it's finished. Pure math lives in `NotesModels.InkGeometry`
+  `PenSettings` the user tunes. PencilKit has no API for smoothing, pressure
+  response or taper, so those sliders are applied in `PenShaper`, which rebuilds a
+  stroke once it's finished.
+- EVERY pen setting has to change the ink, and each one owns a different axis:
+  Thickness IS the width (nothing else scales it), Tip is how POINTED the tip is
+  and tapers the stroke's ends, Sensitivity is pressure response, Stability is
+  smoothing, Concentration is alpha, Colour is colour. Tip used to be a second
+  multiplier on the width — the same axis as Thickness, wearing a different name,
+  and their product could exceed the Thickness slider's own maximum. Sensitivity
+  used to no-op inside a ±0.25 deadband, so half its travel did nothing. Preset
+  thicknesses are the widths those instruments already drew at, so the arithmetic
+  change didn't quietly make every pen thinner. Pure math lives in `NotesModels.InkGeometry`
   (`StrokeSmoothing`, `ScribbleDetector`, `LineGrouper`, `BeautifyLayout`) so it's
   testable without a canvas — keep it there.
 - Hold-to-snap settles the shape WHILE the pencil is still down. `StrokeDwellRecognizer`

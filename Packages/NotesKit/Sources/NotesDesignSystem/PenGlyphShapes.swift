@@ -335,32 +335,54 @@ public struct StrokePreview: View {
     let opacity: Double
     /// Higher stability draws a cleaner curve — the preview shows the difference.
     let stability: Int
+    /// How pointed the tip is: the preview tapers its ends by the same amount the
+    /// pen will, so Tip is a slider you can watch rather than one you have to try.
+    let tip: Double
 
-    public init(color: ThemeColor, width: Double, opacity: Double, stability: Int) {
+    public init(color: ThemeColor, width: Double, opacity: Double, stability: Int, tip: Double = 0) {
         self.color = color
         self.width = width
         self.opacity = opacity
         self.stability = stability
+        self.tip = tip
+    }
+
+    /// The width at a point `t` (0…1) along the stroke — mirrors `PenShaper.taper`.
+    private func taper(at t: CGFloat) -> CGFloat {
+        guard tip > 0 else { return 1 }
+        let span = CGFloat(min(0.3, tip * 0.32))
+        let distance = min(t, 1 - t)
+        guard distance < span, span > 0 else { return 1 }
+        let narrowest = CGFloat(1 - tip * 0.85)
+        return narrowest + (1 - narrowest) * (distance / span)
     }
 
     public var body: some View {
         Canvas { context, size in
             let wobble = CGFloat(PenSettings.stabilityRange.upperBound - stability) * 0.7
-            var path = Path()
             let steps = 60
-            for step in 0...steps {
+            func point(_ step: Int) -> CGPoint {
                 let t = CGFloat(step) / CGFloat(steps)
                 let x = 14 + t * (size.width - 28)
                 let base = size.height / 2 - sin(t * .pi * 2) * (size.height * 0.28)
-                let jitter = sin(t * 34) * wobble
-                let point = CGPoint(x: x, y: base + jitter)
-                if step == 0 { path.move(to: point) } else { path.addLine(to: point) }
+                return CGPoint(x: x, y: base + sin(t * 34) * wobble)
             }
-            context.stroke(
-                path,
-                with: .color(color.color.opacity(opacity)),
-                style: StrokeStyle(lineWidth: max(1, width * 1.6), lineCap: .round, lineJoin: .round)
-            )
+            // Segment by segment, because a stroke whose width varies along its
+            // length isn't one `Path`.
+            for step in 0..<steps {
+                let t = (CGFloat(step) + 0.5) / CGFloat(steps)
+                var segment = Path()
+                segment.move(to: point(step))
+                segment.addLine(to: point(step + 1))
+                context.stroke(
+                    segment,
+                    with: .color(color.color.opacity(opacity)),
+                    style: StrokeStyle(
+                        lineWidth: max(1, width * 1.6 * taper(at: t)),
+                        lineCap: .round, lineJoin: .round
+                    )
+                )
+            }
         }
         .frame(height: 92)
         .background(theme.surface.color, in: RoundedRectangle(cornerRadius: 12, style: .continuous))

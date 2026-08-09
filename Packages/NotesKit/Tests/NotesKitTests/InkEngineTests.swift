@@ -191,6 +191,68 @@ struct PenShaperTests {
         #expect(PenShaper.shaped(stroke(), settings: settings) == nil)
     }
 
+    @Test("Every setting on the panel changes what lands on the page")
+    func everySettingHasAnEffect() throws {
+        // The panel promises six controls. A slider that moves and changes nothing
+        // is worse than a missing one — you keep going back to it.
+        let neutral = PenSettings(stability: 1, tip: 0, sensitivity: 0.5, thickness: 3)
+
+        // Thickness IS the width now: no second multiplier, so the number under
+        // your finger is the number on the page.
+        #expect(neutral.effectiveWidth == 3)
+        var thicker = neutral
+        thicker.thickness = 6
+        #expect(thicker.effectiveWidth == 6)
+
+        // Tip tapers the ends. It used to be a second width multiplier, i.e. the
+        // Thickness slider under another name.
+        var pointed = neutral
+        pointed.tip = 0.9
+        let tapered = try #require(PenShaper.shaped(stroke(), settings: pointed))
+        let sizes = Array(tapered.path).map(\.size.width)
+        #expect(sizes.first! < sizes[sizes.count / 2], "it enters the paper on its point")
+        #expect(sizes.last! < sizes[sizes.count / 2], "and leaves on it")
+        #expect(pointed.effectiveWidth == neutral.effectiveWidth, "without touching the width")
+
+        // Sensitivity, anywhere on its travel. Half the slider used to sit inside a
+        // deadband and do nothing at all.
+        var slightlySofter = neutral
+        slightlySofter.sensitivity = 0.35
+        #expect(PenShaper.shaped(stroke(), settings: slightlySofter) != nil)
+
+        // Stability, concentration and colour: the first reshapes, the last two go
+        // straight into the tool (see the ToolState suite).
+        var steadier = neutral
+        steadier.stability = 5
+        #expect(PenShaper.shaped(stroke(), settings: steadier) != nil)
+        #expect(neutral.concentration != 0.4)
+        #expect(neutral.colorHex == nil)
+    }
+
+    @Test("Taper is confined to the ends, and a blunt tip has none")
+    func taperShape() {
+        #expect(PenShaper.taper(at: 0, of: 100, tip: 0) == 1, "a blunt tip lays full width")
+        #expect(PenShaper.taper(at: 50, of: 100, tip: 1) == 1, "the middle is never thinned")
+        let atTheTip = PenShaper.taper(at: 0, of: 100, tip: 1)
+        #expect(atTheTip < 0.2)
+        // Monotonic from the tip inward.
+        #expect(PenShaper.taper(at: 1, of: 100, tip: 1) > atTheTip)
+        #expect(PenShaper.taper(at: 99, of: 100, tip: 1) == atTheTip, "both ends alike")
+        // A gentler tip is a shorter, shallower run-in than a sharp one.
+        #expect(PenShaper.taper(at: 0, of: 100, tip: 0.3) > PenShaper.taper(at: 0, of: 100, tip: 0.9))
+    }
+
+    @Test("Every preset's width sits inside the slider that edits it")
+    func presetWidthsAreReachable() {
+        for preset in PenLibrary.all {
+            let width = preset.defaults.effectiveWidth
+            #expect(
+                preset.widthRange.contains(width),
+                "\(preset.displayName) draws at \(width), outside its own \(preset.widthRange)"
+            )
+        }
+    }
+
     @Test("Every shipped pen preset that reads as neutral rebuilds nothing")
     func shippedDefaultsAvoidPointlessRebuilds() {
         // Shaping a stroke means reassigning the canvas's whole drawing, which is
@@ -243,11 +305,14 @@ struct PenShaperTests {
         #expect(spread(of: shaped) > spread(of: original))
     }
 
-    @Test("Tip folds into the width handed to PencilKit")
-    func tipDrivesWidth() {
-        let thin = PenSettings(tip: 0.1, thickness: 4)
-        let fat = PenSettings(tip: 1, thickness: 4)
-        #expect(thin.effectiveWidth < fat.effectiveWidth)
+    @Test("Thickness alone decides the width handed to PencilKit")
+    func thicknessDrivesWidth() {
+        // Tip used to multiply into the width, so the two sliders fought over one
+        // number and their product could leave the thickness slider's own range.
+        let pointed = PenSettings(tip: 0.1, thickness: 4)
+        let blunt = PenSettings(tip: 1, thickness: 4)
+        #expect(pointed.effectiveWidth == blunt.effectiveWidth)
+        #expect(blunt.effectiveWidth == 4)
         #expect(PenSettings(tip: 0.05, thickness: 0.4).effectiveWidth > 0)
     }
 
