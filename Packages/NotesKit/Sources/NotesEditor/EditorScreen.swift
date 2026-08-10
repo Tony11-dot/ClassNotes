@@ -38,6 +38,8 @@ public struct EditorScreen: View {
     /// Pinch zoom over the page stack, and the value it started the pinch at.
     @State var pageZoom: CGFloat = 1
     @State var zoomAnchor: CGFloat = 1
+    /// What the lasso is currently holding, and on which page.
+    @State var lassoSelection: PageSelection?
 
     // Insertion sheets/state
     @State var photoItem: PhotosPickerItem?
@@ -605,7 +607,8 @@ extension EditorScreen {
                     name: element.displayName ?? url,
                     url: url
                 )
-            case .image, .text, .tape:
+            case .image, .text, .tape, .fill:
+                // Nothing to play or open: these are already in the page render.
                 return nil
             }
         }

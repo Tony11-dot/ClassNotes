@@ -26,6 +26,8 @@ public struct LibraryGridScreen<Destination: View>: View {
     @State private var selectedShelf: UUID?
     @State private var showNewShelf = false
     @State private var showAddBooks = false
+    @State private var selection = LibrarySelection()
+    @State private var confirmBulkDelete = false
 
     public init(@ViewBuilder destination: @escaping (Notebook) -> Destination) {
         self.destination = destination
@@ -56,7 +58,27 @@ public struct LibraryGridScreen<Destination: View>: View {
             .navigationDestination(item: $opened) { notebook in
                 destination(notebook)
             }
-            .overlay(alignment: .bottom) { floatingToolbar }
+            .overlay(alignment: .bottom) {
+                if selection.isActive {
+                    LibrarySelectionBar(
+                        selection: selection,
+                        shelves: shelves,
+                        allIDs: visibleNotebooks.map(\.id),
+                        onDelete: { confirmBulkDelete = true },
+                        onMove: { shelfID in
+                            try? services.repository.setShelf(
+                                shelfID, for: selection.selected(from: visibleNotebooks)
+                            )
+                            selection.end()
+                        }
+                    )
+                    .padding(.bottom, 16)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                } else {
+                    floatingToolbar
+                }
+            }
+            .animation(.spring(duration: 0.28), value: selection.isActive)
         }
         .addContentFlows(choice: $addChoice, shelfID: selectedShelf) { notebook in
             opened = notebook
@@ -88,6 +110,20 @@ public struct LibraryGridScreen<Destination: View>: View {
                 deleteTarget = nil
             }
             Button("Cancel", role: .cancel) { deleteTarget = nil }
+        }
+        .confirmationDialog(
+            selection.count == 1
+                ? "Delete 1 notebook? Its pages will be removed from this iPad."
+                : "Delete \(selection.count) notebooks? Their pages will be removed from this iPad.",
+            isPresented: $confirmBulkDelete,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                let doomed = selection.selected(from: visibleNotebooks)
+                selection.end()
+                Task { try? await services.repository.delete(doomed) }
+            }
+            Button("Cancel", role: .cancel) {}
         }
     }
 
@@ -160,6 +196,11 @@ public struct LibraryGridScreen<Destination: View>: View {
 
     private func coverCell(_ notebook: Notebook) -> some View {
         Button {
+            // While selecting, a tap picks up and puts down instead of opening.
+            if selection.isActive {
+                selection.toggle(notebook.id)
+                return
+            }
             services.repository.touch(notebook)
             opened = notebook
         } label: {
@@ -184,7 +225,13 @@ public struct LibraryGridScreen<Destination: View>: View {
             }
         }
         .buttonStyle(.plain)
+        .librarySelectable(isActive: selection.isActive, isSelected: selection.contains(notebook.id))
         .contextMenu {
+            Button {
+                selection.begin(with: notebook.id)
+            } label: {
+                Label("Select", systemImage: "checkmark.circle")
+            }
             Button {
                 renameText = notebook.title
                 renameTarget = notebook

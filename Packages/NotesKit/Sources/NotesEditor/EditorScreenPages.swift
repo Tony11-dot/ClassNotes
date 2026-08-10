@@ -289,6 +289,34 @@ extension EditorScreen {
                 }
             }
         }
+        if toolState.tool == .fill {
+            FillPlacementLayer(displaySize: displaySize, logicalSize: page.logicalSize) { point in
+                Task { await floodFill(at: point, on: page) }
+            }
+        }
+        if toolState.tool == .lasso {
+            if let selection = lassoSelection, selection.pageID == page.id {
+                LassoSelectionView(
+                    selection: selection.caught,
+                    displaySize: displaySize,
+                    logicalSize: page.logicalSize,
+                    onDelete: { Task { await deleteSelection() } },
+                    onDuplicate: { Task { await duplicateSelection() } },
+                    onCopy: { copySelection() },
+                    onMove: { offset in Task { await moveSelection(by: offset) } },
+                    onDismiss: { lassoSelection = nil }
+                )
+            } else {
+                LassoOverlay(
+                    displaySize: displaySize,
+                    logicalSize: page.logicalSize,
+                    resolve: { loop in resolveLasso(loop, on: page) },
+                    onSelected: { caught in
+                        lassoSelection = PageSelection(pageID: page.id, caught: caught)
+                    }
+                )
+            }
+        }
         if toolState.tool == .text, editingTextID == nil {
             TextPlacementLayer(displaySize: displaySize, logicalSize: page.logicalSize) { point in
                 Task {

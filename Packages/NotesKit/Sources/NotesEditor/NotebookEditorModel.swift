@@ -234,6 +234,71 @@ public final class NotebookEditorModel {
         _ = try? await store.setElements(current.pages[pageIndex].elements, notebook: notebookID, page: pageID)
     }
 
+    /// Adds a flooded region. Fills go in FIRST in the element list so anything
+    /// placed on the page later — a text box, a photo, a strip of tape — draws
+    /// over the colour rather than under it.
+    public func insertFill(outline: [CGPoint], colorHex: String, on pageID: UUID) async {
+        guard outline.count > 2, var current = manifest,
+              let index = current.pages.firstIndex(where: { $0.id == pageID }) else { return }
+        let box = outline.dropFirst().reduce(
+            CGRect(origin: outline[0], size: .zero)
+        ) { $0.union(CGRect(origin: $1, size: .zero)) }
+        let element = PageElement(
+            kind: .fill,
+            x: box.minX, y: box.minY, width: box.width, height: box.height,
+            colorHex: colorHex,
+            points: outline.map(PagePoint.init)
+        )
+        current.pages[index].elements.insert(element, at: 0)
+        manifest = current
+        _ = try? await store.setElements(
+            current.pages[index].elements, notebook: notebookID, page: pageID
+        )
+    }
+
+    /// Copies an element, offset so the copy is visible rather than exactly on
+    /// top of what it was copied from.
+    public func duplicateElement(_ elementID: UUID, on pageID: UUID, offset: CGSize) async {
+        guard var current = manifest,
+              let pageIndex = current.pages.firstIndex(where: { $0.id == pageID }),
+              let source = current.pages[pageIndex].elements.first(where: { $0.id == elementID })
+        else { return }
+        var copy = source
+        copy.id = UUID()
+        copy.x += offset.width
+        copy.y += offset.height
+        copy.points = source.points.map {
+            PagePoint(x: $0.x + offset.width, y: $0.y + offset.height)
+        }
+        current.pages[pageIndex].elements.append(copy)
+        manifest = current
+        _ = try? await store.setElements(
+            current.pages[pageIndex].elements, notebook: notebookID, page: pageID
+        )
+    }
+
+    /// Shifts an element, and any path it carries, by `offset`.
+    public func moveElement(_ elementID: UUID, on pageID: UUID, by offset: CGSize) async {
+        guard var current = manifest,
+              let pageIndex = current.pages.firstIndex(where: { $0.id == pageID }),
+              let elementIndex = current.pages[pageIndex].elements
+                .firstIndex(where: { $0.id == elementID })
+        else { return }
+        var element = current.pages[pageIndex].elements[elementIndex]
+        element.x += offset.width
+        element.y += offset.height
+        // Tape and fills are drawn from their own point list, in page space —
+        // moving the frame without moving the path leaves the colour behind.
+        element.points = element.points.map {
+            PagePoint(x: $0.x + offset.width, y: $0.y + offset.height)
+        }
+        current.pages[pageIndex].elements[elementIndex] = element
+        manifest = current
+        _ = try? await store.setElements(
+            current.pages[pageIndex].elements, notebook: notebookID, page: pageID
+        )
+    }
+
     public func deleteElement(_ elementID: UUID, on pageID: UUID) async {
         guard var current = manifest,
               let pageIndex = current.pages.firstIndex(where: { $0.id == pageID }) else { return }

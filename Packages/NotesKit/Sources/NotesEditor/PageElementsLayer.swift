@@ -117,7 +117,7 @@ struct PageElementsLayer: View {
             guard allowsEditing else { return }
             editingTextID = element.id
             textFieldFocused = true
-        case .image, .audio:
+        case .image, .audio, .fill:
             break
         }
     }
@@ -164,6 +164,11 @@ struct PageElementsLayer: View {
     @ViewBuilder
     private func elementView(_ element: PageElement) -> some View {
         switch element.kind {
+        case .fill:
+            FillRegionView(
+                points: element.points.map { CGPoint(x: $0.x * scale, y: $0.y * scale) },
+                color: element.colorHex.flatMap(ThemeColor.init(hex:)) ?? theme.accentMuted
+            )
         case .image:
             if let filename = element.payloadFilename,
                let data = try? Data(contentsOf: model.mediaURL(filename: filename)),

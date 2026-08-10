@@ -1,0 +1,174 @@
+import ClassMateTheme
+import NotesDesignSystem
+import NotesModels
+import PencilKit
+import SwiftUI
+
+/// What one lasso caught: the ink strokes and the page elements inside the loop.
+struct LassoCatch: Equatable {
+    var strokeIndices: [Int] = []
+    var elementIDs: [UUID] = []
+    /// The loop that caught them, in page-logical points.
+    var loop: [CGPoint] = []
+    /// The bounding box of everything caught, in page-logical points.
+    var bounds: CGRect = .null
+
+    var isEmpty: Bool { strokeIndices.isEmpty && elementIDs.isEmpty }
+}
+
+/// Circle something to select it: a dashed loop follows the pencil, and what it
+/// encloses gets a marching-ants outline and a menu of things to do with it.
+///
+/// The loop is drawn in the page's own logical space and scaled to the display,
+/// so a selection made at one zoom means the same thing at another.
+struct LassoOverlay: View {
+    @Environment(\.theme) private var theme
+
+    let displaySize: CGSize
+    let logicalSize: CGSize
+    /// Runs the hit test against the live page and hands back what was caught.
+    let resolve: ([CGPoint]) -> LassoCatch
+    let onSelected: (LassoCatch) -> Void
+
+    @State private var trail: [CGPoint] = []
+
+    private var scale: CGFloat {
+        logicalSize.width > 0 ? displaySize.width / logicalSize.width : 1
+    }
+
+    var body: some View {
+        Canvas { context, _ in
+            guard trail.count > 1 else { return }
+            var path = Path()
+            path.move(to: trail[0])
+            for point in trail.dropFirst() { path.addLine(to: point) }
+            context.stroke(
+                path,
+                with: .color(theme.accent.color),
+                style: StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: [6, 4])
+            )
+        }
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 2)
+                .onChanged { value in trail.append(value.location) }
+                .onEnded { _ in finish() }
+        )
+    }
+
+    private func finish() {
+        defer { trail = [] }
+        guard scale > 0 else { return }
+        let logical = trail.map { CGPoint(x: $0.x / scale, y: $0.y / scale) }
+        guard let loop = LassoSelection.closed(logical) else { return }
+        var caught = resolve(loop)
+        caught.loop = loop
+        guard !caught.isEmpty else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        onSelected(caught)
+    }
+}
+
+/// The marching-ants outline around a live selection, plus what you can do to it.
+///
+/// The dashes crawl — a still dashed box reads as a decoration, a crawling one
+/// reads as "this is held, and it is waiting for you".
+struct LassoSelectionView: View {
+    @Environment(\.theme) private var theme
+
+    let selection: LassoCatch
+    let displaySize: CGSize
+    let logicalSize: CGSize
+    let onDelete: () -> Void
+    let onDuplicate: () -> Void
+    let onCopy: () -> Void
+    let onMove: (CGSize) -> Void
+    let onDismiss: () -> Void
+
+    @State private var phase: CGFloat = 0
+    @State private var drag: CGSize = .zero
+
+    private var scale: CGFloat {
+        logicalSize.width > 0 ? displaySize.width / logicalSize.width : 1
+    }
+
+    private var frame: CGRect {
+        CGRect(
+            x: selection.bounds.minX * scale, y: selection.bounds.minY * scale,
+            width: selection.bounds.width * scale, height: selection.bounds.height * scale
+        )
+    }
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            // Tapping off the selection puts it down.
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture { onDismiss() }
+
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(
+                    theme.accent.color,
+                    style: StrokeStyle(lineWidth: 1.5, dash: [7, 5], dashPhase: phase)
+                )
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(theme.accent.withAlpha(0.08).color)
+                )
+                .frame(width: frame.width, height: frame.height)
+                .offset(x: frame.minX + drag.width, y: frame.minY + drag.height)
+                .gesture(
+                    DragGesture()
+                        .onChanged { drag = $0.translation }
+                        .onEnded { value in
+                            drag = .zero
+                            guard scale > 0 else { return }
+                            onMove(CGSize(
+                                width: value.translation.width / scale,
+                                height: value.translation.height / scale
+                            ))
+                        }
+                )
+
+            actions
+                .offset(
+                    x: max(8, min(frame.minX + drag.width, displaySize.width - 232)),
+                    y: max(8, frame.minY + drag.height - 52)
+                )
+        }
+        .frame(width: displaySize.width, height: displaySize.height)
+        .onAppear {
+            withAnimation(.linear(duration: 0.6).repeatForever(autoreverses: false)) {
+                phase = -24
+            }
+        }
+    }
+
+    private var actions: some View {
+        HStack(spacing: 2) {
+            action("Copy", systemImage: "doc.on.doc", onCopy)
+            action("Duplicate", systemImage: "plus.square.on.square", onDuplicate)
+            action("Delete", systemImage: "trash", onDelete, destructive: true)
+            action("Done", systemImage: "checkmark", onDismiss)
+        }
+        .padding(.horizontal, 6)
+        .frame(height: 40)
+        .dsGlass(in: Capsule(), interactive: true)
+        .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
+    }
+
+    private func action(
+        _ title: String, systemImage: String,
+        _ perform: @escaping () -> Void, destructive: Bool = false
+    ) -> some View {
+        Button(action: perform) {
+            Image(systemName: systemImage)
+                .font(.dsSystem(size: 15, weight: .medium))
+                .foregroundStyle(destructive ? Color.red : theme.ink.color)
+                .frame(width: 44, height: 36)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+    }
+}

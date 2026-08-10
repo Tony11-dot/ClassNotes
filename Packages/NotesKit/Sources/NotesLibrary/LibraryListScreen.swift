@@ -16,6 +16,8 @@ public struct LibraryListScreen<Destination: View>: View {
 
     @State private var searchText = ""
     @State private var showSettings = false
+    @State private var selection = LibrarySelection()
+    @State private var confirmBulkDelete = false
 
     public init(@ViewBuilder destination: @escaping (Notebook) -> Destination) {
         self.destination = destination
@@ -55,6 +57,45 @@ public struct LibraryListScreen<Destination: View>: View {
                     }
                     .accessibilityLabel("Settings")
                 }
+                if !notebooks.isEmpty {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button(selection.isActive ? "Done" : "Select") {
+                            if selection.isActive {
+                                selection.end()
+                            } else {
+                                selection.selectAll([])
+                            }
+                        }
+                    }
+                }
+            }
+            .overlay(alignment: .bottom) {
+                if selection.isActive {
+                    LibrarySelectionBar(
+                        selection: selection,
+                        shelves: [],
+                        allIDs: filtered.map(\.id),
+                        onDelete: { confirmBulkDelete = true },
+                        onMove: { _ in }
+                    )
+                    .padding(.bottom, 12)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .animation(.spring(duration: 0.28), value: selection.isActive)
+            .confirmationDialog(
+                selection.count == 1
+                    ? "Delete 1 notebook from this iPhone?"
+                    : "Delete \(selection.count) notebooks from this iPhone?",
+                isPresented: $confirmBulkDelete,
+                titleVisibility: .visible
+            ) {
+                Button("Delete", role: .destructive) {
+                    let doomed = selection.selected(from: filtered)
+                    selection.end()
+                    Task { try? await services.repository.delete(doomed) }
+                }
+                Button("Cancel", role: .cancel) {}
             }
         }
         // iOS 26 places search at the bottom edge on iPhone automatically.
@@ -64,8 +105,40 @@ public struct LibraryListScreen<Destination: View>: View {
 
     private var list: some View {
         List(filtered) { notebook in
+            row(notebook)
+                .listRowBackground(theme.surfaceRaised.color)
+        }
+        .scrollContentBackground(.hidden)
+    }
+
+    /// While selecting, the row picks up instead of navigating — a NavigationLink
+    /// would push the viewer out from under the tick the user just tapped.
+    @ViewBuilder
+    private func row(_ notebook: Notebook) -> some View {
+        if selection.isActive {
+            Button {
+                selection.toggle(notebook.id)
+            } label: {
+                rowContent(notebook)
+                    .librarySelectable(isActive: true, isSelected: selection.contains(notebook.id))
+            }
+            .buttonStyle(.plain)
+        } else {
             NavigationLink(value: notebook) {
-                HStack(spacing: 14) {
+                rowContent(notebook)
+            }
+            .contextMenu {
+                Button {
+                    selection.begin(with: notebook.id)
+                } label: {
+                    Label("Select", systemImage: "checkmark.circle")
+                }
+            }
+        }
+    }
+
+    private func rowContent(_ notebook: Notebook) -> some View {
+        HStack(spacing: 14) {
                     NotebookCoverTile(notebook: notebook, showsTitle: false)
                         .frame(width: 34)
                     VStack(alignment: .leading, spacing: 2) {
@@ -81,11 +154,7 @@ public struct LibraryListScreen<Destination: View>: View {
                         Text(notebook.updatedAt, format: .dateTime.day().month().year())
                             .font(.dsCaption)
                             .foregroundStyle(theme.inkSecondary.color)
-                    }
-                }
             }
-            .listRowBackground(theme.surfaceRaised.color)
         }
-        .scrollContentBackground(.hidden)
     }
 }

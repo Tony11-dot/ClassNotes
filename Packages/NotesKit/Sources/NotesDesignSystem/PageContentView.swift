@@ -65,6 +65,11 @@ public struct PageContentView: View {
     @ViewBuilder
     private func view(for element: PageElement) -> some View {
         switch element.kind {
+        case .fill:
+            FillRegionView(
+                points: element.points.map { CGPoint(x: $0.x * scale, y: $0.y * scale) },
+                color: element.colorHex.flatMap(ThemeColor.init(hex:)) ?? theme.accentMuted
+            )
         case .image:
             imageView(element)
         case .text:

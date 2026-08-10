@@ -35,6 +35,10 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
         case tape
         /// A tappable web link.
         case link
+        /// A closed region of the page flooded with colour. Its `points` are the
+        /// region's outline in page space, traced from where the ink bounded it,
+        /// so it stops exactly where the drawing does.
+        case fill
     }
 
     public var id: UUID

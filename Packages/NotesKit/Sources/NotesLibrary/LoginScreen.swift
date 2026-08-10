@@ -13,6 +13,7 @@ public struct LoginScreen: View {
     @State private var password = ""
     @State private var busy = false
     @State private var showForgot = false
+    @State private var showSignUp = false
     @FocusState private var focus: Field?
 
     private enum Field { case identifier, password }
@@ -39,6 +40,7 @@ public struct LoginScreen: View {
         .fullScreenCover(isPresented: $showForgot) {
             ForgotPasswordScreen(prefill: identifier)
         }
+        .fullScreenCover(isPresented: $showSignUp) { SignUpScreen() }
     }
 
     private var card: some View {
@@ -105,6 +107,18 @@ public struct LoginScreen: View {
             }
             .buttonStyle(.glassProminent)
             .disabled(busy)
+
+            // A student who has never had a ClassMate account has no way in
+            // otherwise — the app is gated behind sign-in, so "no account" was a
+            // dead end rather than a first run.
+            HStack(spacing: 4) {
+                Text("New here?")
+                    .foregroundStyle(theme.inkSecondary.color)
+                Button("Create an account") { showSignUp = true }
+                    .foregroundStyle(theme.accent.color)
+                    .buttonStyle(.plain)
+            }
+            .font(.dsSubheadline)
         }
         .padding(28)
         .background(

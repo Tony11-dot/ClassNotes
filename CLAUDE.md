@@ -267,3 +267,33 @@ ClassNotes tab, where pages zoom and their voice notes, files and links work.
 
 Later: iCloud sync; generating a PERSONAL font from handwriting samples (the hard
 ML feature — distinct from the shipped handwriting→text) stays a premium stub.
+
+## Architecture invariants (tools added round 5)
+
+- The paint bucket is a RASTER question answered as vector. `FillTool` renders
+  the page's ink to a boolean mask, `FillGeometry.region` floods out from the tap
+  until it hits ink, and the boundary of what it reached is traced
+  (`outline`), simplified (Douglas–Peucker) and stored as a `.fill` `PageElement`
+  whose `points` are the outline in page space. There is no vector answer to
+  "which region did they tap inside?" — hand-drawn outlines overlap, double back
+  and rarely close. A fill draws ABOVE the ink and still reads as underneath it,
+  because its polygon stops where the ink stopped the flood; that is why no
+  under-ink layer was needed. A flood that reaches `maximumCoverage` of the page
+  is REFUSED — the shape had a gap, and filling the page buries the notes.
+- The lasso's rules are pure (`LassoSelection`): even-odd containment, and a
+  stroke is caught when `coverage` of its sampled length is inside. People circle
+  generously, so the bar is well under half — and well above nothing, so the word
+  beside the loop isn't dragged in. Elements are caught by centre or by three
+  corners, because a loop around a big image rarely clears all four.
+- Multi-select is one model (`LibrarySelection`) shared by the iPad grid and the
+  iPhone list, so "select" means the same thing in both. Emptying the selection
+  does NOT leave selection mode: taking the last one back is a correction.
+  Batch delete/shelve save ONCE (`NotebookRepository.delete(_:[Notebook])`,
+  `setShelf(_:for:)`) and push each id, so a mass delete clears the ClassNotes
+  tab too.
+- `SignUpScreen` creates a REAL ClassMate account through `POST /auth/register`,
+  not a ClassNotes-only one. Everything the app does — the library mirror, page
+  renders, NOVA via `/classnotes/ai` — is authenticated with a ClassMate session;
+  a parallel account space would mean rebuilding all of it or silently losing the
+  notes made under it. Sign in with Apple and Google are NOT built: they need the
+  App ID capability and a Google client ID respectively.

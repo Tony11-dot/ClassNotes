@@ -231,6 +231,40 @@ public final class NotebookRepository {
         sync?.deleteNotebook(id: id)
     }
 
+    /// Deletes several notebooks, saving ONCE.
+    ///
+    /// Each deletion also tells the server, so a mass delete on the iPad clears
+    /// the same books out of the ClassNotes tab. Saving per notebook would fire a
+    /// SwiftData write and a fetch refresh for every row, which is what makes
+    /// deleting twenty things feel like deleting twenty things.
+    public func delete(_ notebooks: [Notebook]) async throws {
+        guard !notebooks.isEmpty else { return }
+        let ids = notebooks.map(\.id)
+        for id in ids {
+            try? await store.deleteDocument(id: id)
+        }
+        for notebook in notebooks {
+            context.delete(notebook)
+        }
+        try context.save()
+        for id in ids {
+            sync?.deleteNotebook(id: id)
+        }
+    }
+
+    /// Files several notebooks onto a shelf (or off every shelf, with nil).
+    public func setShelf(_ shelfID: UUID?, for notebooks: [Notebook]) throws {
+        guard !notebooks.isEmpty else { return }
+        for notebook in notebooks {
+            notebook.shelfID = shelfID
+            notebook.updatedAt = .now
+        }
+        try context.save()
+        for notebook in notebooks {
+            sync?.pushNotebook(snapshot(notebook))
+        }
+    }
+
     public func touch(_ notebook: Notebook) {
         notebook.updatedAt = .now
         try? context.save()

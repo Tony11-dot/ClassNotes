@@ -27,6 +27,10 @@ public final class ToolState {
         case text
         /// Moving / resizing the things already on the page; the pencil doesn't draw.
         case hand
+        /// Tapping inside a shape floods it with the current colour.
+        case fill
+        /// Circling something selects it, for copying, moving or deleting.
+        case lasso
 
         public var id: String { rawValue }
 
@@ -37,6 +41,8 @@ public final class ToolState {
             case .tape: "Tape"
             case .text: "Text"
             case .hand: "Move"
+            case .fill: "Fill"
+            case .lasso: "Select"
             }
         }
 
@@ -47,6 +53,8 @@ public final class ToolState {
             case .tape: "square.on.square.dashed"
             case .text: "textformat"
             case .hand: "hand.point.up.left"
+            case .fill: "drop.fill"
+            case .lasso: "lasso"
             }
         }
     }
@@ -251,7 +259,7 @@ public final class ToolState {
             // not erase anything in this mode — the tape layer handles the taps.
             case .tapeOnly: return PKInkingTool(.pen, color: .clear, width: 1)
             }
-        case .tape, .text, .hand:
+        case .tape, .text, .hand, .fill, .lasso:
             // Inert — drawing is disabled in these modes; the value is unused.
             return PKInkingTool(.pen, color: .clear, width: 1)
         }

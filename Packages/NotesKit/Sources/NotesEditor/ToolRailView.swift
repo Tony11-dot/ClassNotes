@@ -182,6 +182,16 @@ struct ToolRailView: View {
                 trayItem(preset)
             }
             eraserItem
+            // Fill takes the colour the pen is holding, so picking a colour and
+            // filling with it is one idea, not two.
+            railButton("Fill", systemImage: "drop.fill", isActive: toolState.tool == .fill) {
+                toolState.select(.fill)
+                panel = nil
+            }
+            railButton("Select", systemImage: "lasso", isActive: toolState.tool == .lasso) {
+                toolState.select(.lasso)
+                panel = nil
+            }
             railButton("Ruler", systemImage: "ruler", isActive: rulerVisible) {
                 rulerVisible.toggle()
             }
