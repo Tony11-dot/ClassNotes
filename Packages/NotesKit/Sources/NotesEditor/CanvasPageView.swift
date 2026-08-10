@@ -14,10 +14,45 @@ public final class ActiveCanvasTracker {
     /// Live canvases by page, so tools (OCR, beautify, circle-to-explain) can read
     /// a page's current ink without waiting for the debounced save.
     private var canvases: [UUID: Weak] = [:]
+    /// Bumped whenever anything lands on (or comes off) an undo stack, so the
+    /// rail's Undo/Redo buttons can re-read `canUndo` / `canRedo`. `UndoManager`
+    /// is not observable, so without a nudge the buttons would stay greyed out
+    /// through the whole session.
+    private var undoRevision = 0
 
     public init() {}
 
     struct Weak { weak var view: PKCanvasView? }
+
+    /// The undo stack of the page last drawn on.
+    public var activeUndoManager: UndoManager? {
+        (activeCanvas as? PageCanvasView)?.pageUndoManager ?? activeCanvas?.undoManager
+    }
+
+    public var canUndo: Bool {
+        _ = undoRevision
+        return activeUndoManager?.canUndo ?? false
+    }
+
+    public var canRedo: Bool {
+        _ = undoRevision
+        return activeUndoManager?.canRedo ?? false
+    }
+
+    public func undo() {
+        activeUndoManager?.undo()
+        undoRevision &+= 1
+    }
+
+    public func redo() {
+        activeUndoManager?.redo()
+        undoRevision &+= 1
+    }
+
+    /// Something changed on an undo stack — re-read `canUndo` / `canRedo`.
+    func undoStackChanged() {
+        undoRevision &+= 1
+    }
 
     func register(_ canvas: PKCanvasView, for pageID: UUID) {
         canvases[pageID] = Weak(view: canvas)
@@ -74,6 +109,22 @@ final class PageCanvasView: PKCanvasView {
     var allowsZoom = false
     private var didFit = false
 
+    /// The page's OWN undo stack.
+    ///
+    /// `UIResponder.undoManager` walks the responder chain, and a `PKCanvasView`
+    /// living inside a SwiftUI hierarchy that never makes it first responder
+    /// resolves to whatever the window happens to hand back — usually nothing.
+    /// PencilKit then registers its stroke undos somewhere the rail's buttons
+    /// can't reach, which is why Undo and Redo did nothing at all. Owning the
+    /// manager makes the stack a property of the page: PencilKit registers into
+    /// it, our own rewrites register into it, and the buttons drive it.
+    let pageUndoManager = UndoManager()
+
+    override var undoManager: UndoManager? { pageUndoManager }
+
+    /// Shake-to-undo and the hardware-keyboard ⌘Z both need this.
+    override var canBecomeFirstResponder: Bool { true }
+
     override func layoutSubviews() {
         super.layoutSubviews()
         guard bounds.width > 0, logicalSize.width > 0, logicalSize.height > 0 else { return }
@@ -121,8 +172,11 @@ struct CanvasPageView: UIViewRepresentable {
     /// A board pans and zooms instead of being pinned to a fit scale.
     var allowsZoom = false
     var onFocus: (UUID) -> Void = { _ in }
-    /// Applies a finished beautification pass to the manifest.
-    var onBeautified: (BeautifyPlan) async -> Void = { _ in }
+    /// Applies a finished beautification pass to the manifest, handing back the
+    /// page's elements as they were before it.
+    var onBeautified: (BeautifyPlan) async -> [PageElement] = { _ in [] }
+    /// Puts those elements back, so a beautification is a single step to undo.
+    var onReverted: ([PageElement]) async -> Void = { _ in }
 
     @Environment(AppServices.self) private var services
     @Environment(\.theme) private var theme
@@ -160,6 +214,7 @@ struct CanvasPageView: UIViewRepresentable {
         context.coordinator.toolState = toolState
         context.coordinator.beautifyFontName = beautifyFontName
         context.coordinator.onBeautified = onBeautified
+        context.coordinator.onReverted = onReverted
         context.coordinator.pageSize = page.logicalSize
         canvas.logicalSize = page.logicalSize
         canvas.tool = toolState.pkTool(theme: theme)
@@ -193,7 +248,9 @@ struct CanvasPageView: UIViewRepresentable {
         var toolState: ToolState
         var beautifyFontName: String
         var pageSize: CGSize
-        var onBeautified: (BeautifyPlan) async -> Void = { _ in }
+        var onBeautified: (BeautifyPlan) async -> [PageElement] = { _ in [] }
+        /// Takes a beautification pass back out of the manifest, for Undo.
+        var onReverted: ([PageElement]) async -> Void = { _ in }
 
         private let notebookID: UUID
         private let pageID: UUID
@@ -219,15 +276,18 @@ struct CanvasPageView: UIViewRepresentable {
         private var inkPassTask: Task<Void, Never>?
         /// The shape the live dwell watcher settled on, waiting for the pencil to
         /// lift so it can be committed as ONE canvas rewrite.
-        private var pendingSnapPath: [CGPoint]?
+        var pendingSnapPath: [CGPoint]?
         /// The settled shape while the pencil still holds it, so moving the pencil
         /// resizes THAT shape instead of refitting the wandering ink.
-        private var liveSnap: ShapeSnapper.LiveSnap?
+        var liveSnap: ShapeSnapper.LiveSnap?
+        /// Whether the held line is currently sitting on the level/upright detent,
+        /// so the haptic fires as it clicks in and not for every sample after.
+        var isOnDetent = false
         /// Draws that shape under the resting pencil. A layer rather than a stroke
         /// swap: the in-flight stroke belongs to PencilKit, and assigning
         /// `drawing` mid-stroke tears it up.
-        private let snapPreviewLayer = CAShapeLayer()
-        private weak var dwellWatcher: StrokeDwellRecognizer?
+        let snapPreviewLayer = CAShapeLayer()
+        weak var dwellWatcher: StrokeDwellRecognizer?
 
         init(
             notebookID: UUID,
@@ -264,94 +324,6 @@ struct CanvasPageView: UIViewRepresentable {
             }
         }
 
-        // MARK: Live shape snapping
-
-        /// Adds the dwell watcher and the preview layer to a canvas.
-        func attachDwellWatcher(to canvas: PageCanvasView) {
-            snapPreviewLayer.fillColor = nil
-            snapPreviewLayer.lineCap = .round
-            snapPreviewLayer.lineJoin = .round
-            snapPreviewLayer.opacity = 0
-            canvas.layer.addSublayer(snapPreviewLayer)
-
-            let watcher = StrokeDwellRecognizer(target: nil, action: nil)
-            watcher.logicalPoint = { [weak canvas] touch in
-                guard let canvas, canvas.zoomScale > 0 else { return .zero }
-                // A scroll view hands back content coordinates already; the zoom
-                // is what stands between those and the page's own space.
-                let point = touch.location(in: canvas)
-                return CGPoint(x: point.x / canvas.zoomScale, y: point.y / canvas.zoomScale)
-            }
-            watcher.onDwell = { [weak self] points in self?.previewSnap(points) ?? false }
-            watcher.onAdjust = { [weak self] point in self?.adjustSnap(to: point) }
-            watcher.onResume = { [weak self] in self?.cancelSnapPreview() }
-            watcher.onEnd = { [weak self] held in
-                guard let self else { return }
-                self.hideSnapPreview()
-                self.liveSnap = nil
-                if !held { self.pendingSnapPath = nil }
-            }
-            canvas.addGestureRecognizer(watcher)
-            dwellWatcher = watcher
-        }
-
-        /// The pencil has come to rest: fit what's been drawn and show it. Returns
-        /// false when the ink isn't a shape yet, so the watcher stays armed for the
-        /// pause that comes once it is.
-        private func previewSnap(_ points: [CGPoint]) -> Bool {
-            guard toolState.snapShapes, toolState.tool == .pen,
-                  let snap = ShapeSnapper.liveSnap(points),
-                  let path = ShapeSnapper.path(for: snap, handle: snap.handle) else { return false }
-            liveSnap = snap
-            pendingSnapPath = path
-            drawSnapPreview(path)
-            // The shape landing under your pencil should feel like it clicked.
-            UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
-            return true
-        }
-
-        /// The pencil is still down and has moved: it's holding the shape's free
-        /// end, so redraw the SAME shape at the new size or angle.
-        private func adjustSnap(to point: CGPoint) {
-            guard var snap = liveSnap,
-                  let path = ShapeSnapper.path(for: snap, handle: point) else { return }
-            snap.handle = point
-            liveSnap = snap
-            pendingSnapPath = path
-            drawSnapPreview(path)
-        }
-
-        private func drawSnapPreview(_ path: [CGPoint]) {
-            guard let canvas else { return }
-            let scale = canvas.zoomScale
-            let bezier = UIBezierPath()
-            for (index, point) in path.enumerated() {
-                let scaled = CGPoint(x: point.x * scale, y: point.y * scale)
-                if index == 0 { bezier.move(to: scaled) } else { bezier.addLine(to: scaled) }
-            }
-            // The preview redraws on every pencil sample while a shape is being
-            // adjusted; implicit layer animation would smear it a frame behind the
-            // pencil, which reads as lag.
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            snapPreviewLayer.path = bezier.cgPath
-            snapPreviewLayer.lineWidth = max(1, toolState.penSettings.effectiveWidth * scale)
-            snapPreviewLayer.strokeColor = (canvas.tool as? PKInkingTool)?.color.cgColor
-            snapPreviewLayer.opacity = 1
-            CATransaction.commit()
-        }
-
-        private func cancelSnapPreview() {
-            pendingSnapPath = nil
-            liveSnap = nil
-            hideSnapPreview()
-        }
-
-        private func hideSnapPreview() {
-            snapPreviewLayer.opacity = 0
-            snapPreviewLayer.path = nil
-        }
-
         // MARK: PKCanvasViewDelegate
 
         func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
@@ -375,6 +347,9 @@ struct CanvasPageView: UIViewRepresentable {
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
             guard loaded, !isRewriting else { return }
             tracker.activeCanvas = canvasView
+            // PencilKit has just registered (or consumed) an undo entry — let the
+            // rail's buttons re-read whether there is anything to undo.
+            tracker.undoStackChanged()
             onFocus(pageID)
 
             // Strokes went away (eraser, undo) — our "already processed" mark has
@@ -422,7 +397,7 @@ struct CanvasPageView: UIViewRepresentable {
             if toolState.scribbleToErase, toolState.tool == .pen,
                let cleaned = ScribbleEraser.applying(to: drawing) {
                 processedStrokeCount = cleaned.strokes.count
-                replace(cleaned, on: canvas)
+                replace(cleaned, on: canvas, undoName: "Scribble Erase")
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 scheduleSave()
                 return
@@ -474,10 +449,54 @@ struct CanvasPageView: UIViewRepresentable {
         /// callback for the user's own input. The flag clears on the NEXT main-actor
         /// turn because PKCanvasView reports the change asynchronously — clearing it
         /// on the same line let our own rewrite come back as "new ink".
-        private func replace(_ drawing: PKDrawing, on canvas: PKCanvasView) {
+        ///
+        /// `undoName` makes the rewrite its own step on the page's undo stack.
+        /// Refinements of the stroke just drawn (pen shaping, shape snap) pass nil:
+        /// PencilKit already recorded that stroke, and a second entry would mean two
+        /// presses of Undo to take back one line.
+        private func replace(
+            _ drawing: PKDrawing, on canvas: PKCanvasView, undoName: String? = nil
+        ) {
+            if let undoName, let page = canvas as? PageCanvasView {
+                registerUndo(restoring: page.drawing, on: page, named: undoName)
+            }
             isRewriting = true
             canvas.drawing = drawing
             Task { @MainActor [weak self] in self?.isRewriting = false }
+            tracker.undoStackChanged()
+        }
+
+        /// One undo entry covering a whole beautification pass: the handwriting
+        /// comes back AND the type it turned into goes away, together.
+        private func registerBeautifyUndo(
+            elements: [PageElement], restoring previous: PKDrawing
+        ) {
+            guard let canvas = canvas as? PageCanvasView else { return }
+            let revert = onReverted
+            canvas.pageUndoManager.registerUndo(withTarget: canvas) { [weak self] target in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    Task { @MainActor in await revert(elements) }
+                    self.replace(previous, on: target)
+                    self.processedStrokeCount = previous.strokes.count
+                    self.scheduleSave()
+                }
+            }
+            canvas.pageUndoManager.setActionName("Beautify")
+        }
+
+        /// Puts "put the ink back the way it was" on the page's stack, and re-arms
+        /// itself on the way through so Redo works as well as Undo.
+        private func registerUndo(
+            restoring previous: PKDrawing, on canvas: PageCanvasView, named: String
+        ) {
+            let manager = canvas.pageUndoManager
+            manager.registerUndo(withTarget: canvas) { [weak self] target in
+                MainActor.assumeIsolated {
+                    self?.replace(previous, on: target, undoName: named)
+                }
+            }
+            manager.setActionName(named)
         }
 
         /// Hand the page to the live beautifier; it debounces and only fires once
@@ -500,8 +519,14 @@ struct CanvasPageView: UIViewRepresentable {
                     // leaves a frame with neither on the page, which is what made
                     // beautification look like the writing vanished and something
                     // else appeared, instead of the writing turning into type.
-                    await self.onBeautified(plan)
+                    let elementsBefore = await self.onBeautified(plan)
                     self.processedStrokeCount = remaining.strokes.count
+                    // Beautification is ONE step to take back: the ink went away
+                    // and type appeared in its place, so Undo has to restore both
+                    // halves or the page is left with the words twice over.
+                    self.registerBeautifyUndo(
+                        elements: elementsBefore, restoring: canvas.drawing
+                    )
                     self.replace(remaining, on: canvas)
                     self.scheduleSave()
                     return true

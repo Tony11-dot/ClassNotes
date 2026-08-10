@@ -229,6 +229,95 @@ struct ShapeSnapperTests {
         return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
     }
 
+    // MARK: - Which closed shape did they mean?
+
+    /// A hand-drawn outline of `shape`: the ideal path, jittered, with rounded
+    /// corners and an imperfect closure — what actually comes off a pencil.
+    private func handDrawn(_ shape: ShapeSnapper.Shape, in box: CGRect) -> [CGPoint] {
+        let ideal = ShapeSnapper.path(for: shape, in: box)
+        var generator = SystemRandomNumberGenerator()
+        return ideal.enumerated().map { index, point in
+            let wobble = CGFloat.random(in: -2.5...2.5, using: &generator)
+            _ = index
+            return CGPoint(x: point.x + wobble, y: point.y + wobble)
+        }
+    }
+
+    @Test("A square snaps to a rectangle, not a triangle")
+    func squareStaysASquare() {
+        // The bug this pins: corner counting on a down-sampled ring lost a corner
+        // about as often as it found it, so hand-drawn squares came back as
+        // triangles. Fit residual can't confuse the two — a square's ink is
+        // nowhere near a triangle's outline.
+        let box = CGRect(x: 100, y: 100, width: 240, height: 240)
+        for _ in 0..<12 {
+            let ink = handDrawn(.rectangle, in: box)
+            #expect(ShapeSnapper.bestClosedShape(ink, in: box) == .rectangle)
+        }
+    }
+
+    @Test("A circle stays a circle and a triangle stays a triangle")
+    func theOtherClosedShapes() {
+        let box = CGRect(x: 100, y: 100, width: 220, height: 220)
+        for _ in 0..<8 {
+            #expect(ShapeSnapper.bestClosedShape(handDrawn(.ellipse, in: box), in: box) == .ellipse)
+        }
+        for _ in 0..<8 {
+            let ink = handDrawn(.triangle(apexFraction: 0.5), in: box)
+            if case .triangle = ShapeSnapper.bestClosedShape(ink, in: box) {
+                // as expected
+            } else {
+                Issue.record("a drawn triangle came back as something else")
+            }
+        }
+    }
+
+    @Test("A drawn square classifies as a rectangle end to end")
+    func classifyReadsASquare() {
+        let box = CGRect(x: 100, y: 100, width: 200, height: 200)
+        let ink = handDrawn(.rectangle, in: box)
+        #expect(ShapeSnapper.classify(ink)?.shape == .rectangle)
+    }
+
+    // MARK: - Level and upright detents
+
+    @Test("A held line clicks onto level and upright, keeping its length")
+    func lineDetents() {
+        let anchor = CGPoint(x: 100, y: 100)
+        // Two degrees off level: pulled flat, same length.
+        let nearlyLevel = CGPoint(x: 300, y: 107)
+        let flat = ShapeSnapper.detented(nearlyLevel, from: anchor)
+        #expect(flat.isDetent)
+        #expect(abs(flat.point.y - anchor.y) < 0.01)
+        #expect(abs(hypot(flat.point.x - anchor.x, flat.point.y - anchor.y)
+                    - hypot(nearlyLevel.x - anchor.x, nearlyLevel.y - anchor.y)) < 0.01)
+
+        let nearlyUpright = ShapeSnapper.detented(CGPoint(x: 106, y: 300), from: anchor)
+        #expect(nearlyUpright.isDetent)
+        #expect(abs(nearlyUpright.point.x - anchor.x) < 0.01)
+    }
+
+    @Test("A line drawn on a slant is left on its slant")
+    func noDetentOffAxis() {
+        let anchor = CGPoint(x: 100, y: 100)
+        let diagonal = CGPoint(x: 300, y: 260)
+        let result = ShapeSnapper.detented(diagonal, from: anchor)
+        #expect(!result.isDetent)
+        #expect(result.point == diagonal)
+    }
+
+    @Test("The detent applies to the committed path, not only the feel")
+    func detentReachesThePath() {
+        let snap = ShapeSnapper.LiveSnap(
+            shape: .line,
+            anchor: CGPoint(x: 100, y: 100),
+            handle: CGPoint(x: 300, y: 104)
+        )
+        let path = ShapeSnapper.path(for: snap, handle: CGPoint(x: 300, y: 104))
+        #expect(path?.count == 2)
+        #expect(abs((path?.last?.y ?? 0) - 100) < 0.01, "the line that clicked flat is drawn flat")
+    }
+
     @Test("An open stroke that is neither straight nor a single bend is left alone")
     func leavesFreehandAlone() {
         // A squiggle: three reversals, no clean primitive in it.
@@ -296,7 +385,7 @@ struct LiveBeautifierPassTests {
     @Test("A recognized line is typeset and its ink is wiped")
     func typesetsAndWipes() async {
         let recorder = Recorder(writingDrawing())
-        let beautifier = LiveBeautifier(recognizer: { _, _ in "hello world" })
+        let beautifier = LiveBeautifier(recognizer: { _, _ in [wholeCrop("hello world")] })
 
         await run(beautifier, recorder)
 
@@ -314,7 +403,7 @@ struct LiveBeautifierPassTests {
     @Test("Reading nothing back changes nothing, and says so")
     func emptyRecognitionIsANoOp() async {
         let recorder = Recorder(writingDrawing())
-        let beautifier = LiveBeautifier(recognizer: { _, _ in "" })
+        let beautifier = LiveBeautifier(recognizer: { _, _ in [] })
 
         await run(beautifier, recorder)
 
@@ -327,7 +416,7 @@ struct LiveBeautifierPassTests {
     func continuesAnExistingRun() async {
         let pageID = UUID()
         let recorder = Recorder(writingDrawing())
-        let beautifier = LiveBeautifier(recognizer: { _, _ in "hello" })
+        let beautifier = LiveBeautifier(recognizer: { _, _ in [wholeCrop("hello")] })
         await run(beautifier, recorder, pageID: pageID)
         #expect(recorder.plans.first?.inserts.count == 1)
 
@@ -349,7 +438,7 @@ struct LiveBeautifierPassTests {
         let pageID = UUID()
         let recorder = Recorder(writingDrawing())
         recorder.accepts = false
-        let beautifier = LiveBeautifier(recognizer: { _, _ in "hello" })
+        let beautifier = LiveBeautifier(recognizer: { _, _ in [wholeCrop("hello")] })
         await run(beautifier, recorder, pageID: pageID)
         #expect(recorder.plans.isEmpty)
 
@@ -364,11 +453,14 @@ struct LiveBeautifierPassTests {
 
     @Test("A doodle is not writing, and is never eaten")
     func leavesDiagramsAlone() async {
-        // Tall and narrow: fails `looksLikeWriting`, so it never reaches Vision.
+        // 180 pt of ink in one stroke — far taller than any line of handwriting,
+        // so even a recognizer that confidently reads words out of it is ignored.
+        // Vision always returns its best guess; the height guard is what stops
+        // that guess from replacing somebody's diagram with a sentence.
         let recorder = Recorder(PKDrawing(strokes: [
             stroke(line(from: CGPoint(x: 200, y: 200), to: CGPoint(x: 210, y: 380)))
         ]))
-        let beautifier = LiveBeautifier(recognizer: { _, _ in "should never be asked" })
+        let beautifier = LiveBeautifier(recognizer: { _, _ in [wholeCrop("this is a diagram, not writing")] })
 
         await run(beautifier, recorder)
 
@@ -382,7 +474,7 @@ struct LiveBeautifierPassTests {
         let asked = LanguageBox()
         let beautifier = LiveBeautifier(recognizer: { _, language in
             await asked.record(language)
-            return "bonjour"
+            return [wholeCrop("bonjour")]
         })
 
         await run(
@@ -392,6 +484,16 @@ struct LiveBeautifierPassTests {
 
         #expect(await asked.value == "fr-FR")
     }
+}
+
+/// A stub reading that fills the whole crop it was given, which is what a
+/// recognizer that read everything on the page would hand back.
+private func wholeCrop(_ text: String) -> OCRService.Line {
+    OCRService.Line(
+        text: text,
+        boundingBox: CGRect(x: 0, y: 0, width: 1, height: 1),
+        confidence: 0.9
+    )
 }
 
 /// Somewhere for the (nonisolated, Sendable) recognizer stub to leave what it saw.
@@ -456,14 +558,15 @@ struct LiveBeautifierRecognitionTests {
         let region = bounds.insetBy(dx: -padding, dy: -padding)
             .intersection(CGRect(origin: .zero, size: pageSize))
         let image = LiveBeautifier.recognitionImage(
-            of: drawing, region: region, scale: LiveBeautifier.renderScale(for: bounds)
+            of: drawing, region: region,
+            scale: LiveBeautifier.renderScale(for: bounds, in: region)
         )
 
         let text = try await OCRService().recognizeText(in: image, languages: ["en-US"])
         // Not an exact-match assertion: recognition is a model, and pinning it to
         // one string would make this a test of Vision's build rather than of ours.
         // Reading SOMETHING back is the thing that was in doubt.
-        #expect(!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+        #expect(!text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty,
                 "Vision read nothing from the pass's own render — that is the feature doing nothing")
     }
 

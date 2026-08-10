@@ -1,5 +1,8 @@
 import Foundation
 import NotesModels
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// A `Sendable` value snapshot of a `Notebook` (a SwiftData `@Model` is neither
 /// `Sendable` nor safe off the main actor), taken on `@MainActor` and handed to
@@ -70,29 +73,55 @@ public final class SyncService {
     // MARK: - Per-mutation hooks (call on @MainActor from NotebookRepository)
 
     public func pushNotebook(_ snapshot: NotebookSnapshot) {
+        guard auth.token != nil else { return }
+        Task { [weak self] in await self?.sendNotebook(snapshot) }
+    }
+
+    private func sendNotebook(_ snapshot: NotebookSnapshot) async {
         guard let token = auth.token else { return }
         let client = client
         let store = store
-        Task {
-            // Page count lives in the on-disk manifest, not the SwiftData row.
-            let pages = (try? await store.manifest(for: snapshot.id).pages.count) ?? 1
-            // The cover the user actually drew, so ClassMate's tile matches the
-            // iPad's. Absent until the editor has rendered one.
-            let cover = await store.coverImageData(for: snapshot.id)
-                .map { "data:image/png;base64,\($0.base64EncodedString())" }
-            let body = NotebookSyncBody(
-                title: snapshot.title,
-                coverColorHex: snapshot.coverColorHex,
-                template: snapshot.template,
-                shelfId: snapshot.shelfID?.uuidString,
-                pageCount: max(pages, 1),
-                createdAt: snapshot.createdAt,
-                updatedAt: snapshot.updatedAt,
-                coverImage: cover
-            )
-            try? await client.putNotebook(id: snapshot.id.uuidString, body: body, token: token)
-        }
+        // Page count lives in the on-disk manifest, not the SwiftData row.
+        let pages = (try? await store.manifest(for: snapshot.id).pages.count) ?? 1
+        // The cover the user actually drew, so ClassMate's tile matches the
+        // iPad's. Absent until the editor has rendered one.
+        let cover = await store.coverImageData(for: snapshot.id)
+            .map { Self.coverDataURL(from: $0) }
+        let body = NotebookSyncBody(
+            title: snapshot.title,
+            coverColorHex: snapshot.coverColorHex,
+            template: snapshot.template,
+            shelfId: snapshot.shelfID?.uuidString,
+            pageCount: max(pages, 1),
+            createdAt: snapshot.createdAt,
+            updatedAt: snapshot.updatedAt,
+            coverImage: cover
+        )
+        try? await client.putNotebook(id: snapshot.id.uuidString, body: body, token: token)
     }
+
+    /// The cover as a data URL small enough to survive a phone connection.
+    ///
+    /// `cover.png` is kept lossless on disk because the library tile draws it at
+    /// full size; a tile in the ClassMate tab is a thumbnail, and a lossless PNG
+    /// of a drawn-on cover is several times the size of a JPEG nobody can tell
+    /// apart at that scale. The bigger the body, the likelier the upload is still
+    /// in flight when iOS suspends the app — which is what "request aborted"
+    /// meant on the server.
+    static func coverDataURL(from png: Data) -> String {
+        #if canImport(UIKit)
+        if let image = UIImage(data: png) {
+            let jpeg = NovaSnip.encode(image, limit: coverMaximumSide)
+            if !jpeg.isEmpty, jpeg.count < png.count {
+                return "data:image/jpeg;base64,\(jpeg.base64EncodedString())"
+            }
+        }
+        #endif
+        return "data:image/png;base64,\(png.base64EncodedString())"
+    }
+
+    /// Longest side of a synced cover. The tile it feeds is never shown larger.
+    static let coverMaximumSide: CGFloat = 600
 
     public func deleteNotebook(id: UUID) {
         guard let token = auth.token else { return }
@@ -140,7 +169,17 @@ public final class SyncService {
     /// against existing shelves.
     public func pushAll(notebooks: [NotebookSnapshot], shelves: [ShelfSnapshot]) {
         for shelf in shelves { pushShelf(shelf) }
-        for notebook in notebooks { pushNotebook(notebook) }
+        // ONE at a time. A library of thirty notebooks used to open thirty
+        // uploads at once, each carrying a cover image, in the seconds after
+        // launch — exactly when the user is most likely to background the app
+        // and iOS tears the connections down mid-body. The server saw a pile of
+        // "request aborted"s; the user saw covers that never appeared.
+        Task { [weak self] in
+            for notebook in notebooks {
+                guard let self else { return }
+                await self.sendNotebook(notebook)
+            }
+        }
     }
 
     // MARK: - Pull (launch, before pushing)

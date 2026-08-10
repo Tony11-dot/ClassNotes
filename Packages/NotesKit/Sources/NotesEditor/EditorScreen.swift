@@ -35,6 +35,9 @@ public struct EditorScreen: View {
     /// Each page's frame in the editor coordinate space, so the magic pen can
     /// map a circled region back to page-logical coordinates for cropping.
     @State var pageFrames: [UUID: CGRect] = [:]
+    /// Pinch zoom over the page stack, and the value it started the pinch at.
+    @State var pageZoom: CGFloat = 1
+    @State var zoomAnchor: CGFloat = 1
 
     // Insertion sheets/state
     @State var photoItem: PhotosPickerItem?
@@ -138,9 +141,11 @@ public struct EditorScreen: View {
         }
         .coordinateSpace(.named("editor"))
         .overlay(alignment: .bottomTrailing) { novaBubble }
+        .overlay { novaDismissScrim }
         .overlay(alignment: .trailing) { novaPanel }
         .overlay(alignment: .top) { noticeBanner }
         .overlay(alignment: .top) { liveBeautifyIndicator }
+        .overlay(alignment: .bottom) { zoomIndicator }
         .overlay { beautifyingOverlay }
         .animation(.spring(duration: 0.3), value: showPages)
         .animation(.spring(duration: 0.3), value: showNova)
@@ -221,6 +226,21 @@ public struct EditorScreen: View {
             )
             .transition(.move(edge: .trailing))
             .zIndex(5)
+        }
+    }
+
+    /// Anywhere outside the NOVA panel closes it — the page is right there, and
+    /// reaching for the small ✕ to get back to it is a tax on every question.
+    /// Invisible, so the page stays fully visible while NOVA is open, and only
+    /// present while it is.
+    @ViewBuilder
+    var novaDismissScrim: some View {
+        if showNova {
+            Color.clear
+                .contentShape(Rectangle())
+                .ignoresSafeArea()
+                .onTapGesture { showNova = false }
+                .zIndex(4.5)
         }
     }
 

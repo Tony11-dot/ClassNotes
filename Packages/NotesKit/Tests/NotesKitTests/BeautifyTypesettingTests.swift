@@ -184,24 +184,84 @@ struct HandwritingDetectionTests {
                 Array(hairline.path).map(\.size))
     }
 
-    @Test("A line that reads as nothing is retried much larger before giving up")
+    @Test("Ink that reads as nothing is retried much larger before giving up")
     func retriesAtALargerScale() {
         let small = CGRect(x: 0, y: 0, width: 200, height: 14)
-        let scales = LiveBeautifier.renderScales(for: small)
+        let region = small.insetBy(dx: -12, dy: -12)
+        let scales = LiveBeautifier.renderScales(for: small, in: region)
         #expect(scales.count == 2, "one attempt is a coin toss on cramped writing")
         #expect(scales[1] > scales[0])
-        #expect(scales[0] == LiveBeautifier.renderScale(for: small), "the sweet spot goes first")
+        #expect(scales[0] == LiveBeautifier.renderScale(for: small, in: region),
+                "the sweet spot goes first")
+        #expect(scales.allSatisfy { $0 <= 14 })
+    }
 
-        // Writing already at the ceiling has nowhere to escalate to.
-        let huge = CGRect(x: 0, y: 0, width: 600, height: 120)
-        #expect(LiveBeautifier.renderScales(for: huge).allSatisfy { $0 <= 14 })
+    @Test("A whole page of writing is never rendered into an enormous crop")
+    func cropStaysBounded() {
+        // Tiny writing over a full page: the ideal per-line scale would blow the
+        // crop up past anything Vision can chew through.
+        let content = CGRect(x: 0, y: 0, width: 760, height: 1000)
+        let region = CGRect(x: 0, y: 0, width: 768, height: 1024)
+        let scale = LiveBeautifier.renderScale(for: content, in: region)
+        #expect(max(region.width, region.height) * scale <= LiveBeautifier.maximumCropSide + 1)
+        #expect(scale >= 1, "and never shrunk below its own size")
     }
 
     @Test("The recognition ink floor scales with the writing")
     func inkFloor() {
-        let small = LiveBeautifier.recognitionInkWidth(for: CGRect(x: 0, y: 0, width: 100, height: 12))
-        let large = LiveBeautifier.recognitionInkWidth(for: CGRect(x: 0, y: 0, width: 400, height: 90))
+        let small = LiveBeautifier.recognitionInkWidth(
+            for: [CGRect(x: 0, y: 0, width: 100, height: 12)]
+        )
+        let large = LiveBeautifier.recognitionInkWidth(
+            for: [CGRect(x: 0, y: 0, width: 400, height: 90)]
+        )
         #expect(small >= 1.6, "a fineliner still has to survive rasterization")
         #expect(large > small, "and big writing isn't turned into a solid blob")
+    }
+
+    // MARK: - Whole-region recognition
+
+    @Test("A Vision box maps back onto the page it was cropped from")
+    func visionBoxMapsToPage() {
+        let region = CGRect(x: 100, y: 200, width: 400, height: 300)
+        // Vision's origin is bottom-left: the TOP half of the crop is maxY 1.
+        let top = LiveBeautifier.pageRect(
+            forVisionBox: CGRect(x: 0, y: 0.5, width: 1, height: 0.5), in: region
+        )
+        #expect(top.minY == 200, "the top of the box is the top of the region")
+        #expect(top.height == 150)
+        #expect(top.minX == 100)
+        #expect(top.width == 400)
+    }
+
+    @Test("A recognized line claims the ink under it, and only once")
+    func linesClaimTheirOwnStrokes() {
+        // Two lines of two strokes each, one above the other.
+        let boxes = [
+            CGRect(x: 10, y: 10, width: 30, height: 20),
+            CGRect(x: 50, y: 12, width: 30, height: 18),
+            CGRect(x: 10, y: 60, width: 30, height: 20),
+            CGRect(x: 50, y: 62, width: 30, height: 18)
+        ]
+        let first = LiveBeautifier.strokes(
+            boxes, inside: CGRect(x: 8, y: 10, width: 80, height: 20), excluding: []
+        )
+        #expect(first == [0, 1])
+        let second = LiveBeautifier.strokes(
+            boxes, inside: CGRect(x: 8, y: 60, width: 80, height: 20),
+            excluding: Set(first)
+        )
+        #expect(second == [2, 3], "the second line takes the ink the first didn't")
+    }
+
+    @Test("One short word is read, not thrown away for being narrow")
+    func aSingleWordSurvives() {
+        // The old pass required a line's box to be wider than it was tall, so a
+        // single word — the commonest thing anybody writes — never reached Vision.
+        let word = CGRect(x: 20, y: 20, width: 26, height: 30)
+        let matched = LiveBeautifier.strokes(
+            [word], inside: CGRect(x: 18, y: 22, width: 30, height: 22), excluding: []
+        )
+        #expect(matched == [0])
     }
 }

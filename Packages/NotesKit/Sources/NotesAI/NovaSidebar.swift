@@ -396,20 +396,24 @@ public struct NovaBubble: View {
     }
 
     public var body: some View {
-        Button(action: action) {
-            ZStack {
-                Circle()
-                    .fill(theme.accent.color)
-                    .shadow(color: .black.opacity(0.26), radius: 12, y: 5)
-                NovaAvatar(size: 30, animated: isActive)
-            }
-            .frame(width: 56, height: 56)
+        ZStack {
+            Circle()
+                .fill(theme.accent.color)
+                .shadow(color: .black.opacity(0.26), radius: 12, y: 5)
+            NovaAvatar(size: 30, animated: isActive)
         }
-        .buttonStyle(.plain)
+        .frame(width: 56, height: 56)
+        .contentShape(Circle())
         .accessibilityLabel("Ask NOVA")
+        .accessibilityAddTraits(.isButton)
         .offset(offset)
-        .gesture(
-            DragGesture()
+        // A plain view rather than a `Button`, because a Button's own press
+        // gesture wins the touch and only yields once SwiftUI decides the drag
+        // has begun — so the bubble sat still under the finger and then flicked
+        // to the release point. Here the drag is the primary gesture and the tap
+        // is what happens when the finger didn't travel.
+        .highPriorityGesture(
+            DragGesture(minimumDistance: 4)
                 .onChanged { value in
                     offset = CGSize(
                         width: dragStart.width + value.translation.width,
@@ -418,5 +422,6 @@ public struct NovaBubble: View {
                 }
                 .onEnded { _ in dragStart = offset }
         )
+        .onTapGesture { action() }
     }
 }

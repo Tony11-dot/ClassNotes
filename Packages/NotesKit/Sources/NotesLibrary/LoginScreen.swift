@@ -93,7 +93,10 @@ public struct LoginScreen: View {
             Button(action: signIn) {
                 Group {
                     if busy {
-                        ProgressView().tint(theme.contrastingInk(on: theme.accent).color)
+                        // The brand's own loader, never the system spinner — the CN
+                        // monogram drawing itself on is what ClassMate shows while
+                        // it waits, everywhere it waits.
+                        BrandLoader(size: 22, tint: theme.contrastingInk(on: theme.accent).color)
                     } else {
                         Text("Sign in").font(.dsHeadline)
                     }

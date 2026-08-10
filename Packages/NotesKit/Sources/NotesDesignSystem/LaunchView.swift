@@ -43,18 +43,26 @@ public struct LaunchView: View {
     public var body: some View {
         if let scene = LaunchScene.animation(surface: theme.surface, accent: theme.accent) {
             // The designed scene itself, recoloured to the theme the way ClassMate
-            // recolours its own splash. Everything below is a fallback for when it
-            // isn't bundled.
+            // recolours its own splash — and staged the same way, layer for layer
+            // (`splash_screen.dart`): themed surface, ambient study symbols fading
+            // in over 1.1 s behind, the scene centred and aspect-fitted across the
+            // full width. Everything below is a fallback for when it isn't bundled.
             ZStack {
                 theme.surface.color.ignoresSafeArea()
+                AmbientBackground(seed: 3)
+                    .opacity(decorIn ? 1 : 0)
+                    .ignoresSafeArea()
                 LaunchSceneView(animation: scene, onFinished: finishOnce)
-                    // The scene is authored 1280×720; letting it fill the screen
-                    // makes the lockup enormous on an iPad. Capped so it sits as a
-                    // mark on a themed field rather than as a poster.
-                    .frame(maxWidth: 460, maxHeight: 260)
+                    // The scene is authored 1280×720. ClassMate lets its Lottie
+                    // take the width it is given and fit inside it; capping this at
+                    // 460 pt made the same artwork a postage stamp next to the
+                    // Flutter app's.
+                    .aspectRatio(LaunchScene.aspectRatio, contentMode: .fit)
+                    .frame(maxWidth: .infinity)
             }
             .task {
                 CMFonts.registerIfNeeded()
+                withAnimation(.easeOut(duration: 1.1)) { decorIn = true }
                 // A safety net: if playback never reports completion (launched
                 // into the background, animations disabled), hand off anyway.
                 try? await Task.sleep(for: .seconds(LaunchScene.duration + 1.2))

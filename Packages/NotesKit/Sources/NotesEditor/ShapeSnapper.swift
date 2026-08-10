@@ -94,6 +94,31 @@ enum ShapeSnapper {
         return LiveSnap(shape: shape, anchor: anchor, handle: handle)
     }
 
+    /// How near a line has to come to level or upright before it clicks onto it.
+    static let detentAngle: CGFloat = .pi / 180 * 5
+
+    /// A held line's free end, pulled onto the horizontal or the vertical when it
+    /// comes close — the reason you can rule a straight edge freehand.
+    ///
+    /// Returns whether it landed on a detent as well as where, so the caller can
+    /// tap the user's hand as it clicks in. The length is preserved: the line
+    /// straightens, it doesn't also shorten.
+    static func detented(_ handle: CGPoint, from anchor: CGPoint) -> (point: CGPoint, isDetent: Bool) {
+        let dx = handle.x - anchor.x
+        let dy = handle.y - anchor.y
+        let length = hypot(dx, dy)
+        guard length > 6 else { return (handle, false) }
+        let angle = atan2(dy, dx)
+        // Distance to the nearer of level (0 / π) and upright (±π/2).
+        let quarter = CGFloat.pi / 2
+        let nearest = (angle / quarter).rounded() * quarter
+        guard abs(angle - nearest) <= detentAngle else { return (handle, false) }
+        return (
+            CGPoint(x: anchor.x + cos(nearest) * length, y: anchor.y + sin(nearest) * length),
+            true
+        )
+    }
+
     /// The snap redrawn with the pencil somewhere new. Returns nil once the shape
     /// has been dragged down to nothing, so a stray flick can't collapse it.
     static func path(for snap: LiveSnap, handle: CGPoint) -> [CGPoint]? {
@@ -101,7 +126,7 @@ enum ShapeSnapper {
         switch snap.shape {
         case .line:
             guard distance(anchor, handle) > 6 else { return nil }
-            return [anchor, handle]
+            return [anchor, detented(handle, from: anchor).point]
         case .angle(let bend):
             guard distance(anchor, handle) > 6 else { return nil }
             return densify([anchor, bend, handle])
@@ -188,30 +213,73 @@ enum ShapeSnapper {
         let diagonal = hypot(box.width, box.height)
         guard diagonal > 24 else { return nil }
 
-        let closed = distance(start, end) < diagonal * 0.28
-        let corners = cornerCount(points, closed: closed)
+        let closed = distance(start, end) < diagonal * 0.33
 
         if !closed {
             if isStraight(points) { return (.line, box) }
             // One deliberate bend and nothing else: an angle, cleaned into two
             // straight legs rather than left as a wobble.
-            if corners == 1, let bend = sharpestCorner(points) {
+            if cornerCount(points, closed: false) == 1, let bend = sharpestCorner(points) {
                 return (.angle(bendAt: bend), box)
             }
             return nil
         }
+        return (bestClosedShape(points, in: box), box)
+    }
 
-        switch corners {
-        // A closed shape with no clear corners is a circle, and one with a couple
-        // is a lumpy circle — both read as "I meant an ellipse".
-        case ...2: return (.ellipse, box)
-        case 3: return (.triangle(apexFraction: apexFraction(points, in: box)), box)
-        case 4: return (.rectangle, box)
-        case 5: return (.polygon(sides: 5), box)
-        // Six or more detected corners on a closed path is a scribbled round
-        // shape, not a hexagon anybody meant to draw.
-        default: return (.ellipse, box)
+    /// Which primitive the closed ink actually resembles, decided by DRAWING each
+    /// candidate at the ink's own size and measuring how far the ink strays from
+    /// it.
+    ///
+    /// Counting corners is the obvious way to do this and it does not work. A
+    /// hand-drawn square's corners are rounded, its sides bow, and the down-sample
+    /// that stops sampling noise reading as corners can land either side of a real
+    /// one — so the count came out as three about as often as four, and squares
+    /// snapped to triangles. Fit residual asks the question the user is actually
+    /// asking ("which of these did I mean?") and a square is nowhere near a
+    /// triangle however its corners were drawn.
+    static func bestClosedShape(_ points: [CGPoint], in box: CGRect) -> Shape {
+        let sample = reduce(points)
+        let diagonal = max(hypot(box.width, box.height), 1)
+        let candidates: [(shape: Shape, penalty: CGFloat)] = [
+            // Round beats angular on a tie: an ellipse is the shape people draw
+            // fastest and least carefully, so its ink is the loosest.
+            (.ellipse, 0),
+            (.rectangle, 0.012),
+            (.triangle(apexFraction: apexFraction(points, in: box)), 0.012),
+            (.polygon(sides: 5), 0.03)
+        ]
+        var best: (shape: Shape, score: CGFloat)?
+        for candidate in candidates {
+            let outline = path(for: candidate.shape, in: box)
+            let residual = meanDistance(from: sample, to: outline) / diagonal
+            let score = residual + candidate.penalty
+            if best == nil || score < best!.score { best = (candidate.shape, score) }
         }
+        return best?.shape ?? .ellipse
+    }
+
+    /// Mean distance from each point to the nearest place on `outline`.
+    static func meanDistance(from points: [CGPoint], to outline: [CGPoint]) -> CGFloat {
+        guard !points.isEmpty, outline.count > 1 else { return .greatestFiniteMagnitude }
+        var total: CGFloat = 0
+        for point in points {
+            var nearest = CGFloat.greatestFiniteMagnitude
+            for index in 0..<(outline.count - 1) {
+                nearest = min(nearest, distance(point, to: outline[index], outline[index + 1]))
+            }
+            total += nearest
+        }
+        return total / CGFloat(points.count)
+    }
+
+    /// Distance from a point to the segment a→b (not the infinite line).
+    private static func distance(_ p: CGPoint, to a: CGPoint, _ b: CGPoint) -> CGFloat {
+        let dx = b.x - a.x, dy = b.y - a.y
+        let lengthSquared = dx * dx + dy * dy
+        guard lengthSquared > 0.0001 else { return distance(p, a) }
+        let t = min(max(((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSquared, 0), 1)
+        return hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy))
     }
 
     /// A classified shape drawn at whatever size the box now is.

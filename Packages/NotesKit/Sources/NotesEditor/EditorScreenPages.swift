@@ -96,7 +96,7 @@ extension EditorScreen {
 
     var pageScroll: some View {
         ScrollViewReader { proxy in
-            ScrollView {
+            ScrollView([.vertical, .horizontal]) {
                 LazyVStack(spacing: 32) {
                     ForEach(model.pages) { page in
                         pageView(page).id(page.id)
@@ -104,6 +104,12 @@ extension EditorScreen {
                 }
                 .padding(.vertical, 28)
             }
+            // Pinch zooms the page by making it LAY OUT bigger, not by scaling a
+            // rendered picture of it: `PageCanvasView` re-pins its zoom to the new
+            // width, so the ink is re-rasterized at the new size and stays vector
+            // crisp — and it stays in the page's own logical coordinates, which is
+            // what keeps a drawing device-independent.
+            .simultaneousGesture(zoomGesture)
             .onScrollGeometryChange(for: Overscroll.self) { geo in
                 let topRest = -geo.contentInsets.top
                 let bottomRest = geo.contentSize.height - geo.containerSize.height + geo.contentInsets.bottom
@@ -115,6 +121,47 @@ extension EditorScreen {
             } action: { _, over in
                 handleOverscroll(over, proxy: proxy)
             }
+        }
+    }
+
+    /// Pinch-to-zoom over the page stack. Clamped so a stray pinch can't leave
+    /// the user on a page too small to find or too large to navigate.
+    var zoomGesture: some Gesture {
+        MagnifyGesture(minimumScaleDelta: 0.01)
+            .onChanged { value in
+                pageZoom = Self.clampZoom(zoomAnchor * value.magnification)
+            }
+            .onEnded { _ in zoomAnchor = pageZoom }
+    }
+
+    static let zoomRange: ClosedRange<CGFloat> = 0.5...4
+
+    static func clampZoom(_ value: CGFloat) -> CGFloat {
+        min(max(value, zoomRange.lowerBound), zoomRange.upperBound)
+    }
+
+    /// The zoom readout, with a tap back to 100%. Only on screen while the page
+    /// is not at its natural size — otherwise it's a permanent badge for a
+    /// setting nobody changed.
+    @ViewBuilder
+    var zoomIndicator: some View {
+        if abs(pageZoom - 1) > 0.01 {
+            Button {
+                withAnimation(.spring(duration: 0.28)) {
+                    pageZoom = 1
+                    zoomAnchor = 1
+                }
+            } label: {
+                Label("\(Int((pageZoom * 100).rounded()))%", systemImage: "arrow.up.left.and.arrow.down.right")
+                    .font(.dsCaption.weight(.semibold))
+                    .foregroundStyle(theme.ink.color)
+                    .padding(.horizontal, 12).padding(.vertical, 7)
+            }
+            .buttonStyle(.plain)
+            .dsGlass(in: Capsule(), interactive: true)
+            .padding(.bottom, 18)
+            .accessibilityLabel("Zoom \(Int((pageZoom * 100).rounded())) percent. Tap to reset.")
+            .transition(.scale.combined(with: .opacity))
         }
     }
 
@@ -180,7 +227,7 @@ extension EditorScreen {
             .onTapGesture { model.focusedPageID = page.id }
         }
         .aspectRatio(PageTemplateView.aspectRatio(of: page.style), contentMode: .fit)
-        .frame(maxWidth: 840)
+        .frame(maxWidth: 840 * pageZoom)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -213,7 +260,8 @@ extension EditorScreen {
             beautifyFontName: beautifyFontName,
             allowsZoom: allowsZoom,
             onFocus: { model.focusedPageID = $0 },
-            onBeautified: { plan in await model.apply(plan: plan, to: page.id) }
+            onBeautified: { plan in await model.apply(plan: plan, to: page.id) },
+            onReverted: { elements in await model.restoreElements(elements, on: page.id) }
         )
         PageElementsLayer(
             pageID: page.id,

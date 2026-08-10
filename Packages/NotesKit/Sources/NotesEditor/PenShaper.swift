@@ -146,7 +146,21 @@ enum ScribbleEraser {
         return PKDrawing(strokes: Array(survivors))
     }
 
+    /// A stroke's geometry, densely sampled.
+    ///
+    /// It must read the SPLINE, not the control points. `PKStrokePath` is fitted:
+    /// a fast scrub back and forth over a word is stored as a handful of control
+    /// points, and `ScribbleDetector` needs at least eight samples and four
+    /// direction reversals before it will call anything an erasure. Measuring the
+    /// control points meant a real scrub scored two or three reversals out of a
+    /// possible four and the gesture never fired once — the switch was on and
+    /// nothing happened.
     private static func path(of stroke: PKStroke) -> [CGPoint] {
-        stroke.path.map { $0.location.applying(stroke.transform) }
+        let path = stroke.path
+        guard path.count > 1 else {
+            return path.map { $0.location.applying(stroke.transform) }
+        }
+        return path.interpolatedPoints(by: .distance(2))
+            .map { $0.location.applying(stroke.transform) }
     }
 }

@@ -25,8 +25,9 @@ public enum NovaSnip {
 
     #if canImport(UIKit)
     /// The snip as JPEG data, resized if it was bigger than a model will read.
-    public static func encode(_ image: UIImage) -> Data {
-        let factor = downscale(for: image.size)
+    /// `limit` also serves the cover sync, whose thumbnails are smaller still.
+    public static func encode(_ image: UIImage, limit: CGFloat = maximumSide) -> Data {
+        let factor = downscale(for: image.size, limit: limit)
         guard factor < 1 else { return image.jpegData(compressionQuality: jpegQuality) ?? Data() }
         let target = CGSize(
             width: (image.size.width * factor).rounded(),

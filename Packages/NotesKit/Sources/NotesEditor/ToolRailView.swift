@@ -58,7 +58,6 @@ struct ToolRailView: View {
             rail
                 .position(center ?? defaultCenter(in: geo.size))
                 .gesture(dragGesture(in: geo.size))
-                .animation(.spring(duration: 0.32), value: center)
         }
     }
 
@@ -70,12 +69,18 @@ struct ToolRailView: View {
                 penTray
                 divider
                 DSGlassIconButton("Ask NOVA", systemImage: "sparkles") { onNova() }
+                // The page owns its undo stack (`PageCanvasView.pageUndoManager`),
+                // so these reach the same manager PencilKit registers into.
                 DSGlassIconButton("Undo", systemImage: "arrow.uturn.backward") {
-                    tracker.activeCanvas?.undoManager?.undo()
+                    tracker.undo()
                 }
+                .disabled(!tracker.canUndo)
+                .opacity(tracker.canUndo ? 1 : 0.35)
                 DSGlassIconButton("Redo", systemImage: "arrow.uturn.forward") {
-                    tracker.activeCanvas?.undoManager?.redo()
+                    tracker.redo()
                 }
+                .disabled(!tracker.canRedo)
+                .opacity(tracker.canRedo ? 1 : 0.35)
             }
             .padding(.vertical, 8)
             .padding(.horizontal, 5)
@@ -212,22 +217,31 @@ struct ToolRailView: View {
             // The instrument in your hand sits on a lit plate, pulled out of the
             // rail toward the page and standing a little above its neighbours —
             // the same read as a pen lifted off a desk.
+            // The instrument in your hand sits on a lit plate, pulled out of the
+            // rail toward the page — the same read as a pen lifted off a desk.
+            //
+            // The plate stays INSIDE the slot the row already reserves
+            // (`glyphHeight + 10`). It used to bleed 5 pt into the rows above and
+            // below and rely on `.zIndex` to win the overlap — but that zIndex sat
+            // under the same `.animation(value: isSelected)` as everything else, so
+            // selecting a pen re-sorted the stack mid-spring and the glyph flicked
+            // behind its neighbours and back. Not overlapping at all is the fix:
+            // there is no z-order left to get wrong.
             .background {
                 if isSelected {
                     RoundedRectangle(cornerRadius: 11, style: .continuous)
                         .fill(theme.accentMuted.color)
-                        .padding(.vertical, -5)
-                        .padding(.horizontal, -7)
-                        .shadow(color: theme.accent.withAlpha(0.28).color, radius: 6, y: 2)
+                        .padding(.vertical, -2)
+                        .padding(.horizontal, -6)
+                        .shadow(color: theme.accent.withAlpha(0.28).color, radius: 5, y: 2)
                 }
             }
-            .offset(x: isSelected ? 13 : 0)
-            .scaleEffect(isSelected ? 1.16 : 1, anchor: .leading)
+            .offset(x: isSelected ? 9 : 0)
+            .scaleEffect(isSelected ? 1.12 : 1, anchor: .leading)
             .frame(width: Self.glyphWidth, height: Self.glyphHeight + 10)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .zIndex(isSelected ? 1 : 0)
         .animation(.spring(duration: 0.3, bounce: 0.28), value: isSelected)
         .accessibilityLabel(preset.displayName)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
@@ -285,8 +299,16 @@ struct ToolRailView: View {
         CGPoint(x: Self.edgeInset + Self.railWidth / 2, y: size.height / 2)
     }
 
+    /// Dragging the rail. Every reported position is applied IMMEDIATELY and
+    /// unanimated, so the rail stays under the finger; only the release — where
+    /// the rail flies to the nearer edge — is animated.
+    ///
+    /// A blanket `.animation(_:value: center)` on the rail animated the drag
+    /// itself: each `onChanged` started a fresh 0.32 s spring toward the finger,
+    /// so the rail trailed the whole way and only caught up after the lift. That
+    /// is what "it jumps to where the finger lifts" looks like.
     private func dragGesture(in size: CGSize) -> some Gesture {
-        DragGesture()
+        DragGesture(minimumDistance: 2)
             .onChanged { value in
                 let start = dragStart ?? center ?? defaultCenter(in: size)
                 dragStart = start
@@ -301,7 +323,9 @@ struct ToolRailView: View {
                     ? Self.edgeInset + half
                     : size.width - Self.edgeInset - half
                 let clampedY = min(max(current.y, 260), max(260, size.height - 260))
-                center = CGPoint(x: snappedX, y: clampedY)
+                withAnimation(.spring(duration: 0.32)) {
+                    center = CGPoint(x: snappedX, y: clampedY)
+                }
             }
     }
 }

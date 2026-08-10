@@ -153,10 +153,17 @@ public final class NotebookEditorModel {
 
     /// Commits one beautification pass: new typeset runs are added, runs the
     /// student continued are rewritten, all in a single manifest write.
-    func apply(plan: BeautifyPlan, to pageID: UUID) async {
+    ///
+    /// Returns the page's elements as they were BEFORE the pass, which is what
+    /// Undo restores. A pass both inserts and rewrites, so "remove what was
+    /// inserted" is not enough to take one back — the rewritten runs have to go
+    /// back to the words they held before the student carried on writing.
+    @discardableResult
+    func apply(plan: BeautifyPlan, to pageID: UUID) async -> [PageElement] {
         guard !plan.isEmpty, var current = manifest,
-              let index = current.pages.firstIndex(where: { $0.id == pageID }) else { return }
+              let index = current.pages.firstIndex(where: { $0.id == pageID }) else { return [] }
         var elements = current.pages[index].elements
+        let before = elements
         for updated in plan.updates {
             if let existing = elements.firstIndex(where: { $0.id == updated.id }) {
                 elements[existing] = updated
@@ -165,6 +172,17 @@ public final class NotebookEditorModel {
             }
         }
         elements.append(contentsOf: plan.inserts)
+        current.pages[index].elements = elements
+        manifest = current
+        _ = try? await store.setElements(elements, notebook: notebookID, page: pageID)
+        return before
+    }
+
+    /// Puts a page's elements back exactly as they were — the undo half of
+    /// `apply(plan:to:)`.
+    func restoreElements(_ elements: [PageElement], on pageID: UUID) async {
+        guard var current = manifest,
+              let index = current.pages.firstIndex(where: { $0.id == pageID }) else { return }
         current.pages[index].elements = elements
         manifest = current
         _ = try? await store.setElements(elements, notebook: notebookID, page: pageID)

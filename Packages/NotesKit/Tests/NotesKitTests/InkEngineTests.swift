@@ -606,11 +606,13 @@ struct LiveBeautifierPlanTests {
 
     @Test("Recognition scale rises for small writing and falls for large")
     func renderScale() {
-        let small = LiveBeautifier.renderScale(for: CGRect(x: 0, y: 0, width: 100, height: 14))
-        let large = LiveBeautifier.renderScale(for: CGRect(x: 0, y: 0, width: 400, height: 110))
+        let smallInk = CGRect(x: 0, y: 0, width: 100, height: 14)
+        let largeInk = CGRect(x: 0, y: 0, width: 400, height: 110)
+        let small = LiveBeautifier.renderScale(for: smallInk, in: smallInk.insetBy(dx: -12, dy: -12))
+        let large = LiveBeautifier.renderScale(for: largeInk, in: largeInk.insetBy(dx: -12, dy: -12))
         #expect(small > large)
-        #expect(small <= 8)
-        #expect(large >= 2)
+        #expect(small <= 10)
+        #expect(large >= 1)
     }
 
     @Test("The recognition image is black ink on an opaque white page")

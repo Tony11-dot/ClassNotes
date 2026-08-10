@@ -31,6 +31,17 @@ public enum LaunchScene {
 
     public static var isAvailable: Bool { rawJSON != nil }
 
+    /// The composition's own proportions, so the scene is laid out at the shape it
+    /// was authored in rather than a hardcoded guess.
+    public static var aspectRatio: CGFloat {
+        guard let json = rawJSON,
+              let doc = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
+              let width = doc["w"] as? Double, let height = doc["h"] as? Double,
+              width > 0, height > 0
+        else { return 16.0 / 9.0 }
+        return CGFloat(width / height)
+    }
+
     /// How long the scene runs — used to schedule the hand-off even if the
     /// completion callback is missed (a backgrounded launch drops it).
     public static var duration: TimeInterval {

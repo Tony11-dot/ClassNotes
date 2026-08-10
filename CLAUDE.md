@@ -88,7 +88,10 @@ Universal app, Swift 6 (strict concurrency), SwiftUI-first, Liquid Glass design 
   third-party dependency, added deliberately: the launch used to be a SwiftUI
   rebuild of the artwork, which drifted from the artwork every time it changed.
   `LaunchView` still falls back to a bundled video and then to the native
-  animation if the scene is missing. The scene is RECOLOURED to the theme exactly
+  animation if the scene is missing. It is staged exactly the way ClassMate stages
+  its splash: theme surface, `AmbientBackground` fading in over 1.1 s behind it,
+  and the scene centred and aspect-fitted across the FULL width (its own
+  `LaunchScene.aspectRatio`, not a hardcoded cap). The scene is RECOLOURED to the theme exactly
   the way ClassMate recolours its own splash (`splash_screen.dart`): the baked
   white canvas becomes `theme.surface` so the animation melts into the background,
   the baked navy becomes `theme.accent`, and the CN monogram — an embedded PNG
@@ -154,17 +157,22 @@ Universal app, Swift 6 (strict concurrency), SwiftUI-first, Liquid Glass design 
   on the page after a word used to lose the pass for good. A pass that reads
   nothing sets `lastPassFoundNothing`, which the editor shows — silence is
   indistinguishable from "the switch does nothing".
-- Real-time beautification is `LiveBeautifier`: a settle timer, per-LINE Vision
-  recognition on a tight upscaled crop, then `plan(...)` (pure) deciding inserts
-  vs. appends to a line already typeset. Only line-shaped ink is touched
-  (`looksLikeWriting`), so diagrams and doodles are never eaten. Vision gets the
-  line re-inked BLACK on an OPAQUE WHITE crop (`recognitionImage`) — the raw
+- Real-time beautification is `LiveBeautifier`: a settle timer, ONE Vision pass
+  over the whole region of fresh ink, then `plan(...)` (pure, in
+  `LiveBeautifierLayout.swift`) deciding inserts vs. appends to a line already
+  typeset. Vision does its OWN line segmentation and the boxes it returns are
+  matched back to the strokes underneath (`pageRect(forVisionBox:in:)` +
+  `strokes(_:inside:excluding:)`). Do NOT go back to cutting the ink into lines
+  and sending one crop each: a crop of a single word is a picture with no context
+  — the hardest thing there is to read — and the width-over-height test that
+  guarded it discarded every one-word line before Vision ever saw it, which is why
+  roughly one line in ten was ever beautified. Diagrams are ruled out by height
+  (`maximumLineHeight`) AFTER recognition, not by shape before it. Vision gets the
+  ink re-inked BLACK on an OPAQUE WHITE crop (`recognitionImage`) — the raw
   `PKDrawing.image` is the pen's own colour on transparency, which recognized
-  nothing, and `apply` returns Bool so a refused pass doesn't advance the run list.
-  The crop is also re-inked with the PEN at a minimum width and retried at a much
-  larger scale when a line reads back empty; low-confidence readings are dropped
-  rather than typeset, because Vision always returns its best guess and its best
-  guess at a squiggle is a word.
+  nothing — at a minimum ink width, retried at a much larger scale when the crop
+  reads back empty, and capped at `maximumCropSide`. `apply` returns Bool so a
+  refused pass doesn't advance the run list.
 - A beautified run is MEASURED, never estimated. `TextMetrics` (injected, so
   `BeautifyLayout` stays pure) comes from `FontResolver` on the real face, and the
   box carries the settings' `fontSize`, `lineSpacing` (stored on `PageElement` and
@@ -184,8 +192,36 @@ Universal app, Swift 6 (strict concurrency), SwiftUI-first, Liquid Glass design 
   in flight. `dataRepresentation()` runs inside the debounced save, never per
   stroke. `PenShaper` no-ops inside a wide sensitivity deadband so the default pen
   never triggers a rewrite at all.
+- Undo/redo belong to the PAGE: `PageCanvasView` overrides `undoManager` with its
+  own `pageUndoManager`. `UIResponder.undoManager` walks the responder chain, and
+  a PKCanvasView that is never first responder resolves to nothing — so PencilKit
+  registered its stroke undos somewhere the rail's buttons could not reach and
+  both buttons did nothing. Programmatic rewrites go through `replace(_:on:
+  undoName:)`: a refinement of the stroke just drawn (pen shaping, shape snap)
+  passes nil so one line isn't two presses to take back; scribble-erase and
+  beautification register their own entry, and beautification's restores the ink
+  AND the elements together (`apply(plan:)` returns the elements as they were).
+- Which closed shape the ink meant is decided by FIT RESIDUAL
+  (`ShapeSnapper.bestClosedShape`), not by counting corners. A hand-drawn square's
+  corners are rounded, its sides bow, and the down-sample that stops sampling
+  noise reading as corners lands either side of a real one — the count came out
+  three as often as four, so squares snapped to triangles.
+- The dwell watcher polls a rest CLOCK (`restSince`) and appends every coalesced
+  touch. A one-shot timer armed on the last big move gets one chance per move: a
+  pause over ink that isn't a shape yet used it up and nothing re-armed it, so the
+  pause after the shape was finished was never examined. A held line clicks onto
+  level/upright (`ShapeSnapper.detented`) and taps the hand as it lands.
 - Tape is erased by `PageElementsLayer`, not the canvas: tape is an element, so
   the eraser tool gets a high-priority gesture over tape strips only.
+- Pages pinch to zoom by LAYING OUT bigger (`pageZoom` scales the page's
+  `maxWidth`), never by `scaleEffect` on the canvas — a transform rasterizes the
+  PKCanvasView at its old size and the ink goes soft. Re-laying out re-pins
+  `PageCanvasView`'s zoom, so strokes stay vector crisp and stay in the page's own
+  logical space.
+- Nothing that follows a finger may sit under an `.animation(_:value:)` keyed on
+  its own position — the rail did, so every drag sample started a fresh spring and
+  the rail only caught up on release. Drag updates are applied bare; only the
+  release is animated, inside `withAnimation`.
 - Focus mode (`ToolState.focusMode`, entered by picking up the highlighter) is its
   own surface — one page, an Exit chip, no rail/bubble/navigation bar.
 - All type comes from `Font.ds*` / `CMType` (Cabinet Grotesk, ClassMate's family).

@@ -1,4 +1,5 @@
 import CoreGraphics
+import QuartzCore
 import PencilKit
 import UIKit
 
@@ -49,7 +50,19 @@ final class StrokeDwellRecognizer: UIGestureRecognizer {
 
     private var dwellTimer: Timer?
     private var restAnchor: CGPoint?
+    /// When the pencil arrived at `restAnchor`. The rest is measured from here
+    /// rather than from a one-shot timer armed on the last big move: a hand that
+    /// creeps a couple of points at a time never trips the "moved" branch, so the
+    /// one-shot never re-armed and the hold went unnoticed.
+    private var restSince: TimeInterval = 0
     private var didDwell = false
+    /// A rest that was offered and turned down (the ink isn't a shape yet). The
+    /// watcher keeps looking, but waits this long before asking again so a pause
+    /// halfway round a circle doesn't re-fit sixty times a second.
+    private var nextAttempt: TimeInterval = 0
+    /// How often the rest clock is checked.
+    private static let tick: TimeInterval = 1.0 / 30.0
+    private static let retryInterval: TimeInterval = 0.2
 
     override init(target: Any?, action: Selector?) {
         super.init(target: target, action: action)
@@ -64,6 +77,8 @@ final class StrokeDwellRecognizer: UIGestureRecognizer {
         guard let touch = touches.first, let map = logicalPoint else { return }
         points = [map(touch)]
         restAnchor = points[0]
+        restSince = CACurrentMediaTime()
+        nextAttempt = 0
         didDwell = false
         armTimer()
     }
@@ -80,14 +95,25 @@ final class StrokeDwellRecognizer: UIGestureRecognizer {
             onAdjust?(point)
             return
         }
-        points.append(point)
+
+        // EVERY sample the pencil produced since the last event, not just the one
+        // UIKit chose to deliver. A quick line arrives as four or five
+        // `touchesMoved` calls; the fitter needs six points before it will look at
+        // anything, so short strokes were being thrown away unexamined and only
+        // the after-the-fact path ever snapped them.
+        if let coalesced = event.coalescedTouches(for: touch), !coalesced.isEmpty {
+            points.append(contentsOf: coalesced.map(map))
+        } else {
+            points.append(point)
+        }
 
         guard let anchor = restAnchor else { return }
         if hypot(point.x - anchor.x, point.y - anchor.y) > holdRadius {
             // Moving again before anything settled: restart the clock from here.
             restAnchor = point
+            restSince = CACurrentMediaTime()
+            nextAttempt = 0
             onResume?()
-            armTimer()
         }
     }
 
@@ -118,16 +144,33 @@ final class StrokeDwellRecognizer: UIGestureRecognizer {
         state = .failed
     }
 
+    /// Polls the rest clock for as long as the stroke lasts.
+    ///
+    /// A one-shot timer armed on the last big move looked equivalent and wasn't:
+    /// it only ever got one chance per move. A pause over ink that isn't a shape
+    /// yet — halfway round a circle, at the corner of a square — used up that
+    /// chance, and nothing re-armed it, so the pause AFTER the shape was finished
+    /// was never examined. That is "I hold and nothing happens".
     private func armTimer() {
         dwellTimer?.invalidate()
-        let timer = Timer(timeInterval: minimumHold, repeats: false) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, !self.didDwell, self.points.count > 2 else { return }
-                self.didDwell = self.onDwell?(self.points) ?? false
-            }
+        let timer = Timer(timeInterval: Self.tick, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.checkRest() }
         }
         // Common modes, or the timer stops while the finger is scrolling anything.
         RunLoop.main.add(timer, forMode: .common)
         dwellTimer = timer
+    }
+
+    private func checkRest() {
+        guard !didDwell, points.count > 2, restAnchor != nil else { return }
+        let now = CACurrentMediaTime()
+        guard now - restSince >= minimumHold, now >= nextAttempt else { return }
+        if let accepted = onDwell?(points), accepted {
+            didDwell = true
+        } else {
+            // Not a shape yet. Stay armed — the pause that counts is the one that
+            // comes once the shape is closed.
+            nextAttempt = now + Self.retryInterval
+        }
     }
 }

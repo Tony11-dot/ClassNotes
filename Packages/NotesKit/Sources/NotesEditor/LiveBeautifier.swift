@@ -57,10 +57,12 @@ struct BeautifyPlan: Equatable {
 @MainActor
 @Observable
 final class LiveBeautifier {
-    /// Reads one rendered line of ink back as text. Injected so the whole pass —
-    /// grouping, planning, wiping, merging — can be driven in tests without Vision,
-    /// which is why the plumbing went unverified while it was hardwired.
-    typealias LineRecognizer = @Sendable (UIImage, String) async -> String
+    /// Reads a rendered crop of ink back as text lines, each with the normalized
+    /// box (Vision's convention: origin bottom-left) it was found in. Injected so
+    /// the whole pass — grouping, planning, wiping, merging — can be driven in
+    /// tests without Vision, which is why the plumbing went unverified while it
+    /// was hardwired.
+    typealias LineRecognizer = @Sendable (UIImage, String) async -> [OCRService.Line]
 
     /// True while a pass is recognizing, so the editor can show a hairline hint.
     private(set) var isWorking = false
@@ -90,15 +92,14 @@ final class LiveBeautifier {
     /// like beautification confidently replacing writing with the wrong words.
     static let visionRecognizer: LineRecognizer = { image, language in
         guard let lines = try? await OCRService().recognize(in: image, languages: [language])
-        else { return "" }
-        let trusted = lines.filter { $0.confidence >= LiveBeautifier.minimumConfidence }
-        return OCRService.assemble(trusted)
+        else { return [] }
+        return lines.filter { $0.confidence >= LiveBeautifier.minimumConfidence }
     }
 
     /// Below this, Vision is guessing. Handwriting rarely clears 0.9 even when it
     /// is read perfectly, so the bar is low — it exists to reject noise, not to
     /// demand printing.
-    nonisolated static let minimumConfidence: Double = 0.3
+    nonisolated static let minimumConfidence: Double = 0.2
 
     /// How the chosen face actually measures, so the box matches the type.
     static func metrics(fontName: String) -> TextMetrics {
@@ -265,6 +266,18 @@ final class LiveBeautifier {
         var askedRecognizer = false
     }
 
+    /// Reads the page's fresh ink in ONE pass and works out which strokes each
+    /// recognized line came from.
+    ///
+    /// The pass used to cut the ink into lines itself (`LineGrouper`) and send
+    /// Vision one crop per line. That is why beautification caught roughly one
+    /// word in ten: a crop of a single short word is a picture with no context,
+    /// which is the hardest thing there is to read, and any group whose box
+    /// wasn't wider than it was tall — one word, one number, a name — was
+    /// discarded before Vision ever saw it. Vision segments lines itself, far
+    /// better than a bounding-box heuristic can, and reads a whole page of
+    /// handwriting with the language model working across it. So it gets the
+    /// whole page, and the boxes it hands back are matched to the ink underneath.
     private func recognize(
         _ drawing: PKDrawing, settings: BeautifySettings, pageSize: CGSize
     ) async -> RecognitionPass {
@@ -272,42 +285,84 @@ final class LiveBeautifier {
         let boxes = strokes.map(\.renderBounds)
         var pass = RecognitionPass()
 
-        for indices in LineGrouper.lines(of: boxes) {
+        let inked = boxes.filter { !$0.isNull && !$0.isEmpty }
+        guard !inked.isEmpty else { return pass }
+        let content = inked.reduce(CGRect.null) { $0.union($1) }
+        let padding = max(12, Self.medianHeight(of: inked) * 0.5)
+        let region = content.insetBy(dx: -padding, dy: -padding)
+            .intersection(CGRect(origin: .zero, size: pageSize))
+        guard region.width > 8, region.height > 8 else { return pass }
+
+        pass.askedRecognizer = true
+        // Read at the size Vision likes; if that comes back with nothing, read it
+        // again much larger before giving up. A single fixed scale is why small or
+        // cramped writing read as nothing at all.
+        var found: [OCRService.Line] = []
+        for scale in Self.renderScales(for: content, in: region) {
+            let image = Self.recognitionImage(
+                of: drawing, region: region, scale: scale,
+                minimumInkWidth: Self.recognitionInkWidth(for: inked)
+            )
+            found = await recognizeLine(image, settings.language)
+            if !found.isEmpty { break }
+        }
+        guard !found.isEmpty else { return pass }
+
+        var claimed = Set<Int>()
+        for line in found {
+            let text = line.text
+                .replacingOccurrences(of: "\n", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { continue }
+            let rect = Self.pageRect(forVisionBox: line.boundingBox, in: region)
+            let indices = Self.strokes(boxes, inside: rect, excluding: claimed)
+            guard !indices.isEmpty else { continue }
             let bounds = indices.reduce(CGRect.null) { $0.union(boxes[$1]) }
-            guard Self.looksLikeWriting(bounds) else { continue }
-            let lineDrawing = PKDrawing(strokes: indices.map { strokes[$0] })
-            let padding = max(10, bounds.height * 0.35)
-            let region = bounds.insetBy(dx: -padding, dy: -padding)
-                .intersection(CGRect(origin: .zero, size: pageSize))
-            guard region.width > 4, region.height > 4 else { continue }
-
-            pass.askedRecognizer = true
-            // Read the line at the size Vision likes; if that comes back empty,
-            // read it again much larger before giving up. A single fixed scale is
-            // why small or cramped writing read as nothing at all — the retry
-            // costs one crop and turns most of those misses into text.
-            var cleaned = ""
-            for scale in Self.renderScales(for: bounds) {
-                let image = Self.recognitionImage(
-                    of: lineDrawing, region: region, scale: scale,
-                    minimumInkWidth: Self.recognitionInkWidth(for: bounds)
-                )
-                let text = await recognizeLine(image, settings.language)
-                cleaned = text
-                    .replacingOccurrences(of: "\n", with: " ")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if !cleaned.isEmpty { break }
-            }
-            guard !cleaned.isEmpty else { continue }
-
+            // Vision found words here, so this is writing — the only thing left to
+            // rule out is ink far too tall to be a line of it (a big diagram that
+            // happens to contain a label).
+            guard bounds.height <= Self.maximumLineHeight else { continue }
+            claimed.formUnion(indices)
             pass.lines.append(RecognizedLine(
-                text: cleaned,
+                text: text,
                 bounds: bounds,
-                strokeIndices: indices,
+                strokeIndices: indices.sorted(),
                 meanForce: Self.meanForce(of: indices.map { strokes[$0] })
             ))
         }
         return pass
+    }
+
+    /// A Vision box (normalized, origin bottom-left) as a rectangle in the page's
+    /// own logical space.
+    static func pageRect(forVisionBox box: CGRect, in region: CGRect) -> CGRect {
+        CGRect(
+            x: region.minX + box.minX * region.width,
+            y: region.minY + (1 - box.maxY) * region.height,
+            width: box.width * region.width,
+            height: box.height * region.height
+        )
+    }
+
+    /// Which strokes a recognized line is made of: the ones whose centre sits
+    /// inside its box, generously grown vertically because Vision's box hugs the
+    /// x-height and misses ascenders, descenders and the dot on an i.
+    static func strokes(
+        _ boxes: [CGRect], inside rect: CGRect, excluding claimed: Set<Int>
+    ) -> [Int] {
+        let grown = rect.insetBy(dx: -rect.height * 0.25, dy: -rect.height * 0.6)
+        return boxes.indices.filter { index in
+            guard !claimed.contains(index) else { return false }
+            let box = boxes[index]
+            guard !box.isNull, !box.isEmpty else { return false }
+            return grown.contains(CGPoint(x: box.midX, y: box.midY))
+        }
+    }
+
+    static func medianHeight(of boxes: [CGRect]) -> CGFloat {
+        guard !boxes.isEmpty else { return 0 }
+        let heights = boxes.map(\.height).sorted()
+        return heights[heights.count / 2]
     }
 
     /// The image Vision actually reads: the line's ink re-inked to solid black on
@@ -344,28 +399,38 @@ final class LiveBeautifier {
         }
     }
 
-    /// Small writing needs more pixels; huge writing needs fewer. Keeps the crop
-    /// around 180 px tall, which is Vision's sweet spot for handwriting.
-    static func renderScale(for bounds: CGRect) -> CGFloat {
-        let target: CGFloat = 180
-        let height = max(bounds.height, 1)
-        return min(max(target / height, 2), 8)
+    /// The longest side we will hand Vision. Beyond this the crop costs more time
+    /// than the extra detail buys, and a whole page of writing at a per-line scale
+    /// would run into the tens of thousands of pixels.
+    static let maximumCropSide: CGFloat = 4400
+
+    /// Small writing needs more pixels; huge writing needs fewer. Aims for a
+    /// ~46 px x-height, which is Vision's sweet spot for handwriting, then backs
+    /// off if that would make the crop enormous.
+    static func renderScale(for content: CGRect, in region: CGRect) -> CGFloat {
+        let target: CGFloat = 46
+        let height = max(content.height, 1)
+        // A block of several lines: aim at the height of ONE of them.
+        let lines = max(1, (height / max(minimumLineHeight * 2, 1)).rounded(.down))
+        let ideal = target / max(height / lines, 1)
+        let ceiling = maximumCropSide / max(region.width, region.height, 1)
+        return min(max(min(ideal, ceiling), 1), 10)
     }
 
-    /// The scales a line is attempted at, in order: the sweet spot first, then a
+    /// The scales a region is attempted at, in order: the sweet spot first, then a
     /// much larger crop for writing that came back blank.
-    static func renderScales(for bounds: CGRect) -> [CGFloat] {
-        let first = renderScale(for: bounds)
+    static func renderScales(for content: CGRect, in region: CGRect) -> [CGFloat] {
+        let first = renderScale(for: content, in: region)
         let second = min(first * 2.2, 14)
         return second > first * 1.2 ? [first, second] : [first]
     }
 
     /// A floor on how wide the ink is drawn for RECOGNITION only. A fineliner at
     /// 0.5 pt all but disappears once the crop is rasterized, and Vision reads a
-    /// disappearing letter as no letter. Scaled off the line height so big writing
-    /// doesn't turn into a solid blob.
-    static func recognitionInkWidth(for bounds: CGRect) -> CGFloat {
-        max(1.6, bounds.height * 0.07)
+    /// disappearing letter as no letter. Scaled off the typical line height so big
+    /// writing doesn't turn into a solid blob.
+    static func recognitionInkWidth(for boxes: [CGRect]) -> CGFloat {
+        max(1.6, medianHeight(of: boxes) * 0.07)
     }
 
     /// The same path with every point at least `width` across. Returns the path
@@ -414,81 +479,4 @@ final class LiveBeautifier {
         return min(1, total / Double(count) / 2.5)
     }
 
-    // MARK: - Planning (pure)
-
-    /// Turns recognized lines into element inserts/updates. Pure: no canvas, no
-    /// Vision, no model — so the placement and merge rules are pinned by tests.
-    static func plan(
-        lines: [RecognizedLine],
-        existing: [BeautifiedRun],
-        settings: BeautifySettings,
-        fontName: String,
-        colorHex: String?,
-        pageSize: CGSize,
-        metrics: TextMetrics
-    ) -> BeautifyPlan {
-        var plan = BeautifyPlan()
-        var runs = existing
-
-        for line in lines {
-            let typeSize = settings.typeSize(forInkHeight: line.bounds.height)
-            let bold = settings.dynamicBold && line.meanForce > 0.5
-            let spacing = settings.effectiveLineSpacing
-            let frame = BeautifyLayout.frame(
-                inkBounds: line.bounds,
-                text: line.text,
-                typeSize: typeSize,
-                lineSpacing: spacing,
-                metrics: metrics,
-                in: pageSize
-            )
-
-            if let index = runs.firstIndex(where: {
-                BeautifyLayout.continues(
-                    existing: $0.inkBounds.isNull ? $0.frame : $0.inkBounds,
-                    incoming: line.bounds,
-                    typeSize: typeSize
-                )
-            }) {
-                // The student kept writing on a line that's already typeset.
-                let joined = runs[index].text + " " + line.text
-                let merged = BeautifyLayout.merged(
-                    existing: runs[index].frame, incoming: frame, text: joined,
-                    typeSize: typeSize, lineSpacing: spacing,
-                    metrics: metrics, in: pageSize
-                )
-                runs[index].text = joined
-                runs[index].frame = merged
-                runs[index].inkBounds = runs[index].inkBounds.isNull
-                    ? line.bounds
-                    : runs[index].inkBounds.union(line.bounds)
-                let element = PageElement(
-                    id: runs[index].elementID, kind: .text,
-                    x: merged.minX, y: merged.minY, width: merged.width, height: merged.height,
-                    text: joined, fontName: fontName, textColorHex: colorHex,
-                    fontSize: typeSize, lineSpacing: spacing, isBold: bold
-                )
-                // One line can only join one run per pass; replace any earlier
-                // update for the same element so the text doesn't double up.
-                plan.updates.removeAll { $0.id == element.id }
-                plan.updates.append(element)
-            } else {
-                let element = PageElement(
-                    kind: .text,
-                    x: frame.minX, y: frame.minY, width: frame.width, height: frame.height,
-                    text: line.text, fontName: fontName, textColorHex: colorHex,
-                    fontSize: typeSize, lineSpacing: spacing, isBold: bold
-                )
-                plan.inserts.append(element)
-                runs.append(BeautifiedRun(
-                    elementID: element.id, frame: frame, text: line.text,
-                    inkBounds: line.bounds
-                ))
-            }
-            plan.consumedStrokes.formUnion(line.strokeIndices)
-        }
-
-        plan.runs = runs
-        return plan
-    }
 }
