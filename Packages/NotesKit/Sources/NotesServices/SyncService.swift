@@ -205,4 +205,25 @@ public final class SyncService {
         let applied = await apply(changes)
         try? await client.acknowledgeChanges(ids: applied, token: token)
     }
+
+    // MARK: - Settings
+
+    /// Sends this device's setup up to the account. Fire-and-forget, like every
+    /// other push here: settings are a convenience, and a failed one must never
+    /// interrupt what the user is doing — the next change sends the whole blob
+    /// again anyway, so nothing accumulates a backlog.
+    public func pushSettings(_ settings: DeviceSettings) {
+        guard let token = auth.token else { return }
+        Task { [client] in
+            try? await client.putSettings(settings, token: token)
+        }
+    }
+
+    /// Fetches the account's saved setup, if there is one. Returns nil when
+    /// signed out, when the account has none, or when the request fails — all
+    /// three mean "carry on with what this device already has".
+    public func fetchSettings() async -> DeviceSettings? {
+        guard let token = auth.token else { return nil }
+        return try? await client.fetchSettings(token: token)
+    }
 }

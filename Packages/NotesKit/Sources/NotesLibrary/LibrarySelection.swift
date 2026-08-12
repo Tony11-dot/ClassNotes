@@ -28,19 +28,29 @@ public final class LibrarySelection {
         ids = [id]
     }
 
+    /// Enters selection mode holding nothing — what the "Select" button does.
+    /// Starting empty is a beginning, so it does not trip the exit rule below.
+    public func beginEmpty() {
+        isActive = true
+        ids = []
+    }
+
     public func toggle(_ id: UUID) {
         if ids.contains(id) {
             ids.remove(id)
+            // Putting the last one back down ENDS selection. There is nothing to
+            // act on and every button in the bar is dead, so staying in the mode
+            // just traps the user behind a bar that does nothing.
+            if ids.isEmpty { isActive = false }
         } else {
             ids.insert(id)
         }
-        // Emptying the selection leaves the mode on: taking the last one back is
-        // a correction, not a decision to stop selecting.
     }
 
     public func selectAll(_ all: [UUID]) {
         isActive = true
         ids = Set(all)
+        if ids.isEmpty { isActive = false }
     }
 
     public func end() {
@@ -79,23 +89,24 @@ public struct LibrarySelectionBar: View {
         self.onMove = onMove
     }
 
+    /// Every control gets a real, tappable box. The bar used to lay bare `Text`
+    /// labels out at their glyph size inside a 52-point bar, so "All" and "Done"
+    /// were a few points tall in the middle of a stripe that looked pressable
+    /// everywhere — and the glass under them is `interactive`, which reacts to
+    /// the touch, so a miss still looked like a press that did nothing.
     public var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 6) {
             Text(title)
                 .font(.dsSubheadline.weight(.semibold))
                 .foregroundStyle(theme.ink.color)
-                .frame(minWidth: 96, alignment: .leading)
+                .lineLimit(1)
+                .padding(.leading, 6)
 
             Spacer(minLength: 4)
 
-            Button(selection.count == allIDs.count ? "None" : "All") {
-                if selection.count == allIDs.count {
-                    selection.selectAll([])
-                } else {
-                    selection.selectAll(allIDs)
-                }
+            barButton(allSelected ? "None" : "All") {
+                selection.selectAll(allSelected ? [] : allIDs)
             }
-            .font(.dsSubheadline.weight(.medium))
 
             Menu {
                 Button("No shelf") { onMove(nil) }
@@ -105,7 +116,7 @@ public struct LibrarySelectionBar: View {
                 }
             } label: {
                 Image(systemName: "tray.full")
-                    .frame(width: 40, height: 36)
+                    .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
             .disabled(selection.isEmpty)
@@ -114,22 +125,35 @@ public struct LibrarySelectionBar: View {
             Button(action: onDelete) {
                 Image(systemName: "trash")
                     .foregroundStyle(.red)
-                    .frame(width: 40, height: 36)
+                    .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
             .disabled(selection.isEmpty)
             .accessibilityLabel("Delete selected")
 
-            Button("Done") { selection.end() }
-                .font(.dsSubheadline.weight(.semibold))
+            barButton("Done", weight: .semibold) { selection.end() }
         }
         .buttonStyle(.plain)
         .foregroundStyle(theme.ink.color)
-        .padding(.horizontal, 16)
-        .frame(height: 52)
-        .dsGlass(in: Capsule(), interactive: true)
+        .padding(.horizontal, 10)
+        .frame(height: 56)
+        .dsGlass(in: Capsule())
         .shadow(color: .black.opacity(0.2), radius: 14, y: 6)
         .padding(.horizontal, 20)
+    }
+
+    private var allSelected: Bool { !allIDs.isEmpty && selection.count == allIDs.count }
+
+    private func barButton(
+        _ title: String, weight: Font.Weight = .medium, action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.dsSubheadline.weight(weight))
+                .padding(.horizontal, 12)
+                .frame(height: 44)
+                .contentShape(Rectangle())
+        }
     }
 
     private var title: String {

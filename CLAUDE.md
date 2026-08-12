@@ -287,7 +287,14 @@ ML feature — distinct from the shipped handwriting→text) stays a premium stu
   corners, because a loop around a big image rarely clears all four.
 - Multi-select is one model (`LibrarySelection`) shared by the iPad grid and the
   iPhone list, so "select" means the same thing in both. Emptying the selection
-  does NOT leave selection mode: taking the last one back is a correction.
+  ENDS the mode — with nothing held every button in the bar is dead, so staying
+  in it strands the user behind a bar that can't act; `beginEmpty()` is how the
+  "Select" button starts, and starting empty doesn't trip that rule. The bar is
+  a `safeAreaInset`, never a bottom `overlay`: iOS 26 puts the search field at
+  the bottom edge on iPhone and it landed on top of the bar, which is why its
+  buttons did nothing. Every control in it carries its own 44-point box — bare
+  `Text` labels in a 56-point bar are a few points tall, and the glass under
+  them reacts to the touch, so a miss looked like a press that did nothing.
   Batch delete/shelve save ONCE (`NotebookRepository.delete(_:[Notebook])`,
   `setShelf(_:for:)`) and push each id, so a mass delete clears the ClassNotes
   tab too.
@@ -297,3 +304,46 @@ ML feature — distinct from the shipped handwriting→text) stays a premium stu
   a parallel account space would mean rebuilding all of it or silently losing the
   notes made under it. Sign in with Apple and Google are NOT built: they need the
   App ID capability and a Google client ID respectively.
+
+## Architecture invariants (settings + snapshot round)
+
+- Tool settings are DURABLE and per-account. `ToolPreferences` (NotesModels) is
+  the Codable value — pens and per-instrument tuning, eraser, tape, text boxes,
+  beautification, and the Pencil gestures — owned by `SettingsStore`
+  (NotesServices) and saved into `AppPreferences.toolsJSON`. `ToolState` is a
+  live VIEW of it: every tunable property is computed over `preferences`, so a
+  slider write goes straight to the store. It used to hold all of this in memory
+  alone, which meant every adjustment the user made was forgotten the moment the
+  editor closed and there was nothing on disk for a second device to be handed.
+  Decoding is TOTAL (every field defaults, garbage decodes to the factory setup):
+  settings are a convenience and must never cost someone their app.
+- Settings travel through the account: `PUT/GET /classnotes/settings`
+  (`ClassNotesSettings`, one JSONB row per user, payload OPAQUE to the backend).
+  Which copy wins is decided by `revision`, the client's own counter, NEVER by a
+  wall clock — devices disagree about the time, and a phone an hour behind would
+  quietly write its stale copy over the iPad's on every launch. Both ends enforce
+  it: `DeviceSettings.newer` on the client, and the service refuses a lower
+  revision instead of overwriting. Launch PULLS before it pushes, same as the
+  library, for the same reason.
+- What the Apple Pencil's squeeze and double-tap do is the user's choice
+  (`PencilAction`, set in Settings, synced with everything else). `ToolState`
+  carries out what it can and RETURNS a `PencilOutcome` for what it can't (undo,
+  ruler, NOVA, colours), which `EditorScreen` handles — so the mapping stays a
+  pure function of the settings and is testable without a canvas.
+- The page's width is resolved by `pageScroll` from the container and handed
+  DOWN to each page. A `ScrollView` that scrolls horizontally offers its content
+  unbounded width, so `.frame(maxWidth:)` inside one never resolves and an
+  aspect-ratio'd page collapses to a dot — which is exactly what every page
+  became when zooming was added. The stack gets an explicit width so the
+  horizontal axis has something real to scroll.
+- Nothing in the tool rail may cross the edge of the rail's `glassEffect` while
+  animating. A view that leaves the glass's shape is promoted out of the glass
+  layer and the promotion lands a frame late — that is the selected pen appearing
+  to sit UNDER the rail and then snap above it mid-spring. The rail is ONE piece
+  of glass: no `GlassEffectContainer` (that exists to merge several) and not
+  `interactive` (that is for a control that reacts to its own touches).
+- Lasso Copy puts a PICTURE of the caught region on the pasteboard — ink,
+  photos, fills and text boxes, rendered as they look. It used to copy only the
+  text of any text boxes caught, so circling a diagram and pressing Copy reported
+  there was nothing to copy. Circling is a spatial act: the selection is a region
+  of the page, and the honest answer to "copy this" is that region.

@@ -1,19 +1,40 @@
 import Foundation
 import SwiftData
 
-/// Singleton preferences row — theme selection and paper tone live in SwiftData
-/// per spec (and ride along when iCloud sync arrives).
+/// Singleton preferences row — theme selection, paper tone and the encoded
+/// `ToolPreferences` blob live in SwiftData per spec (and ride along when iCloud
+/// sync arrives).
+///
+/// The tools are stored as encoded JSON rather than as columns on purpose: they
+/// are a value the app already has to serialise to send between a user's devices,
+/// and one blob means adding a slider does not migrate the store.
 @Model
 public final class AppPreferences {
     @Attribute(.unique) public var key: String
     public var themeSelectionRaw: String
     public var paperToneRaw: String
+    /// JSON-encoded `ToolPreferences`. `nil` on a store written before tools were
+    /// remembered at all, which decodes to the factory setup.
+    public var toolsJSON: Data?
+    /// Bumped on every change, so the newer of two devices' copies can be told
+    /// apart without trusting either one's clock.
+    public var settingsRevision: Int
+    public var settingsUpdatedAt: Date
 
     public static let singletonKey = "app-preferences"
 
-    public init(themeSelectionRaw: String = "system", paperToneRaw: String = "neutral") {
+    public init(
+        themeSelectionRaw: String = "system",
+        paperToneRaw: String = "neutral",
+        toolsJSON: Data? = nil,
+        settingsRevision: Int = 0,
+        settingsUpdatedAt: Date = .now
+    ) {
         self.key = Self.singletonKey
         self.themeSelectionRaw = themeSelectionRaw
         self.paperToneRaw = paperToneRaw
+        self.toolsJSON = toolsJSON
+        self.settingsRevision = settingsRevision
+        self.settingsUpdatedAt = settingsUpdatedAt
     }
 }

@@ -30,11 +30,13 @@ struct ToolRailView: View {
     let onBeautifyNow: () -> Void
     let onNova: () -> Void
     let onTapeVisibility: (Bool) -> Void
+    /// Bumped by the editor when something outside the rail asks for the current
+    /// pen's panel — a Pencil squeeze mapped to "show colours".
+    var openPenPanel: UUID?
 
     @State private var center: CGPoint?
     @State private var dragStart: CGPoint?
     @State private var panel: Panel?
-    @Namespace private var glassNamespace
 
     enum Panel: Hashable {
         case pen(String)
@@ -59,34 +61,40 @@ struct ToolRailView: View {
                 .position(center ?? defaultCenter(in: geo.size))
                 .gesture(dragGesture(in: geo.size))
         }
+        .onChange(of: openPenPanel) { _, request in
+            guard request != nil else { return }
+            toolState.select(.pen)
+            panel = .pen(toolState.penPresetID)
+        }
     }
 
+    // The rail is ONE piece of glass, so it needs no `GlassEffectContainer` (that
+    // exists to merge and morph several) and it is not `interactive` (that is for
+    // a control that reacts to its own touches — here it re-rendered the whole
+    // rail's material on every tap on a pen).
     private var rail: some View {
-        GlassEffectContainer {
-            VStack(spacing: 2) {
-                modeButtons
-                divider
-                penTray
-                divider
-                DSGlassIconButton("Ask NOVA", systemImage: "sparkles") { onNova() }
-                // The page owns its undo stack (`PageCanvasView.pageUndoManager`),
-                // so these reach the same manager PencilKit registers into.
-                DSGlassIconButton("Undo", systemImage: "arrow.uturn.backward") {
-                    tracker.undo()
-                }
-                .disabled(!tracker.canUndo)
-                .opacity(tracker.canUndo ? 1 : 0.35)
-                DSGlassIconButton("Redo", systemImage: "arrow.uturn.forward") {
-                    tracker.redo()
-                }
-                .disabled(!tracker.canRedo)
-                .opacity(tracker.canRedo ? 1 : 0.35)
+        VStack(spacing: 2) {
+            modeButtons
+            divider
+            penTray
+            divider
+            DSGlassIconButton("Ask NOVA", systemImage: "sparkles") { onNova() }
+            // The page owns its undo stack (`PageCanvasView.pageUndoManager`),
+            // so these reach the same manager PencilKit registers into.
+            DSGlassIconButton("Undo", systemImage: "arrow.uturn.backward") {
+                tracker.undo()
             }
-            .padding(.vertical, 8)
-            .padding(.horizontal, 5)
-            .dsGlass(in: RoundedRectangle(cornerRadius: 26, style: .continuous), interactive: true)
-            .glassEffectID("tool-rail", in: glassNamespace)
+            .disabled(!tracker.canUndo)
+            .opacity(tracker.canUndo ? 1 : 0.35)
+            DSGlassIconButton("Redo", systemImage: "arrow.uturn.forward") {
+                tracker.redo()
+            }
+            .disabled(!tracker.canRedo)
+            .opacity(tracker.canRedo ? 1 : 0.35)
         }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 5)
+        .dsGlass(in: RoundedRectangle(cornerRadius: 26, style: .continuous))
         .shadow(color: .black.opacity(0.22), radius: 16, y: 8)
         .frame(width: Self.railWidth)
     }
@@ -224,30 +232,28 @@ struct ToolRailView: View {
                 isSelected: isSelected
             )
             .frame(width: Self.glyphWidth, height: Self.glyphHeight)
-            // The instrument in your hand sits on a lit plate, pulled out of the
-            // rail toward the page and standing a little above its neighbours —
-            // the same read as a pen lifted off a desk.
-            // The instrument in your hand sits on a lit plate, pulled out of the
-            // rail toward the page — the same read as a pen lifted off a desk.
+            // The instrument in your hand sits on a lit plate — the same read as a
+            // pen lifted off a desk.
             //
-            // The plate stays INSIDE the slot the row already reserves
-            // (`glyphHeight + 10`). It used to bleed 5 pt into the rows above and
-            // below and rely on `.zIndex` to win the overlap — but that zIndex sat
-            // under the same `.animation(value: isSelected)` as everything else, so
-            // selecting a pen re-sorted the stack mid-spring and the glyph flicked
-            // behind its neighbours and back. Not overlapping at all is the fix:
-            // there is no z-order left to get wrong.
+            // Everything about that read stays INSIDE the rail's glass. The plate
+            // stays inside the slot the row reserves (`glyphHeight + 10`) so there
+            // is no vertical overlap to z-sort, and the selected glyph no longer
+            // slides out past the glass's right edge: it used to `offset(x: 9)` and
+            // scale from `.leading`, which pushed it some 17 pt beyond the rounded
+            // rect. A view crossing the boundary of a `glassEffect` gets promoted
+            // out of the glass layer, and the promotion lands a frame late — which
+            // is the pen appearing to sit UNDER the rail and then snap above it
+            // partway through the spring. Contained, there is no promotion at all.
             .background {
                 if isSelected {
                     RoundedRectangle(cornerRadius: 11, style: .continuous)
                         .fill(theme.accentMuted.color)
                         .padding(.vertical, -2)
-                        .padding(.horizontal, -6)
+                        .padding(.horizontal, -1)
                         .shadow(color: theme.accent.withAlpha(0.28).color, radius: 5, y: 2)
                 }
             }
-            .offset(x: isSelected ? 9 : 0)
-            .scaleEffect(isSelected ? 1.12 : 1, anchor: .leading)
+            .scaleEffect(isSelected ? 1.07 : 1)
             .frame(width: Self.glyphWidth, height: Self.glyphHeight + 10)
             .contentShape(Rectangle())
         }

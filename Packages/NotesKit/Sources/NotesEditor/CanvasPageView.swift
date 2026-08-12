@@ -567,7 +567,7 @@ struct CanvasPageView: UIViewRepresentable {
             _ interaction: UIPencilInteraction,
             didReceiveTap tap: UIPencilInteraction.Tap
         ) {
-            toolState.handlePencilTap(preferred: UIPencilInteraction.preferredTapAction)
+            toolState.handlePencilTap()
         }
 
         func pencilInteraction(

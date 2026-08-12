@@ -5,6 +5,7 @@ import NotesServices
 import PencilKit
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 /// A live lasso selection, and which page it belongs to. A selection only means
 /// anything on the page it was drawn on, so the page id travels with it.
@@ -132,22 +133,114 @@ extension EditorScreen {
         lassoSelection = nil
     }
 
-    /// Puts the selection's words on the pasteboard. Ink can't be text, so what
-    /// travels is whatever the selection contained that already WAS text —
-    /// anything else would be a picture pretending to be a copy.
+    /// Copy takes a PICTURE of what the lasso is holding — the ink, the photos,
+    /// the fills, whatever is in there — and puts that on the pasteboard.
+    ///
+    /// It used to copy only the *text* of any text boxes caught, which meant
+    /// circling a diagram and pressing Copy reported that there was nothing to
+    /// copy. Circling something is a spatial act: what the user has selected is a
+    /// region of the page, and the honest answer to "copy this" is that region as
+    /// it looks. Text boxes are rendered along with everything else rather than
+    /// extracted, so what lands in the other app is what was on the page.
     @MainActor
     func copySelection() {
         guard let selection = lassoSelection else { return }
-        let text = model.page(selection.pageID)?.elements
-            .filter { selection.caught.elementIDs.contains($0.id) && $0.kind == .text }
-            .compactMap(\.text)
-            .joined(separator: "\n") ?? ""
-        if text.isEmpty {
-            editorNotice = "Nothing to copy as text — try Duplicate."
-        } else {
-            UIPasteboard.general.string = text
-            editorNotice = "Copied."
+        guard let image = snapshotSelection(selection) else {
+            editorNotice = "Nothing to copy."
+            return
         }
+        // Both representations: apps that want a picture get the PNG (with its
+        // transparency intact), and the plain image satisfies everything else.
+        var item: [String: Any] = [UTType.image.identifier: image]
+        if let png = image.pngData() {
+            item[UTType.png.identifier] = png
+        }
+        UIPasteboard.general.items = [item]
+        editorNotice = "Copied."
+    }
+
+    /// Renders the caught region at its page-logical size, ink first and page
+    /// elements over it, in the order the page draws them.
+    func snapshotSelection(_ selection: PageSelection) -> UIImage? {
+        let bounds = selection.caught.bounds
+        guard !bounds.isNull, bounds.width > 1, bounds.height > 1 else { return nil }
+        guard let page = model.page(selection.pageID) else { return nil }
+
+        let scale = Self.snapshotScale(for: bounds.size)
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = scale
+        format.opaque = false
+
+        let caughtElements = page.elements.filter { selection.caught.elementIDs.contains($0.id) }
+        let strokes = selection.caught.strokeIndices
+        let drawing = tracker.drawing(for: selection.pageID)
+
+        return UIGraphicsImageRenderer(size: bounds.size, format: format).image { context in
+            context.cgContext.translateBy(x: -bounds.minX, y: -bounds.minY)
+            if let drawing, !strokes.isEmpty {
+                let caught = PKDrawing(strokes: strokes.compactMap { index in
+                    drawing.strokes.indices.contains(index) ? drawing.strokes[index] : nil
+                })
+                // `image(from:scale:)` returns the crop already positioned at the
+                // origin, so it is drawn back at the region's own place in the
+                // page — the translation above then puts it where it belongs.
+                caught.image(from: bounds, scale: scale).draw(in: bounds)
+            }
+            for element in caughtElements {
+                draw(element, in: context.cgContext, page: page)
+            }
+        }
+    }
+
+    /// One element into the snapshot. Only what can be drawn without a view
+    /// hierarchy: pictures, fills and text. A voice note or a file is a control,
+    /// not a mark on the page, so a picture of one would be a picture of an icon.
+    private func draw(_ element: PageElement, in context: CGContext, page: PageRecord) {
+        let frame = CGRect(x: element.x, y: element.y, width: element.width, height: element.height)
+        switch element.kind {
+        case .image:
+            guard let filename = element.payloadFilename else { break }
+            let image = backgroundCache.image(for: filename)
+                ?? (try? Data(contentsOf: model.mediaURL(filename: filename))).flatMap(UIImage.init(data:))
+            if let image {
+                backgroundCache.set(image, for: filename)
+                image.draw(in: frame)
+            }
+        case .fill:
+            let outline = element.points.map { CGPoint(x: $0.x, y: $0.y) }
+            guard outline.count > 2, let hex = element.colorHex,
+                  let color = ThemeColor(hex: hex) else { break }
+            context.saveGState()
+            context.setFillColor(color.uiColor.cgColor)
+            context.beginPath()
+            context.move(to: outline[0])
+            for point in outline.dropFirst() { context.addLine(to: point) }
+            context.closePath()
+            context.fillPath()
+            context.restoreGState()
+        case .text:
+            guard let text = element.text, !text.isEmpty else { break }
+            let color = element.colorHex.flatMap(ThemeColor.init(hex:))?.uiColor ?? .label
+            let font = FontResolver.uiFont(
+                named: element.fontName, size: element.fontSize ?? 20
+            )
+            let style = NSMutableParagraphStyle()
+            style.lineSpacing = element.lineSpacing ?? 0
+            (text as NSString).draw(
+                in: frame,
+                withAttributes: [.font: font, .foregroundColor: color, .paragraphStyle: style]
+            )
+        case .file, .audio, .link, .tape:
+            break
+        }
+    }
+
+    /// A snapshot is for pasting somewhere else, so it wants to be crisp — but a
+    /// lasso around half a page at 3× is a bitmap nothing wants to receive.
+    static func snapshotScale(for size: CGSize) -> CGFloat {
+        let longest = max(size.width, size.height)
+        guard longest > 0 else { return 1 }
+        return min(3, max(1, 2400 / longest))
     }
 
     @MainActor

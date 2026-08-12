@@ -155,25 +155,32 @@ struct ToolStateTests {
         #expect(state.tapeColor(theme: spec) == spec.accent)
     }
 
-    @Test("Pencil double-tap toggles eraser and honors switch-previous")
+    @Test("Pencil double-tap toggles the eraser, which is what it does by default")
     func doubleTap() {
         let state = ToolState()
+        #expect(state.preferences.pencilDoubleTap == .toggleEraser)
         #expect(state.tool == .pen)
 
-        state.handlePencilTap(preferred: .switchEraser)
+        state.handlePencilTap()
         #expect(state.tool == .eraser)
-        state.handlePencilTap(preferred: .switchEraser)
+        state.handlePencilTap()
         #expect(state.tool == .pen)
+    }
 
+    @Test("Mapped to the previous tool, double-tap swaps back and forth")
+    func doubleTapPrevious() {
+        let state = ToolState()
+        state.edit { $0.pencilDoubleTap = .previousTool }
         state.select(.eraser)
         state.select(.pen)
-        state.handlePencilTap(preferred: .switchPrevious)
+        state.handlePencilTap()
         #expect(state.tool == .eraser)
     }
 
-    @Test("Pencil squeeze cycles pen → eraser → tape → hand")
-    func squeeze() {
+    @Test("Cycle tools walks pen → eraser → tape → hand")
+    func cycleTools() {
         let state = ToolState()
+        state.edit { $0.pencilSqueeze = .cycleTools }
         let expected: [ToolState.Tool] = [.eraser, .tape, .hand, .pen]
         for tool in expected {
             state.handlePencilSqueeze()

@@ -139,105 +139,129 @@ struct PenSettingsPanel: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                PanelHeader(
-                    title: preset.displayName,
-                    leading: ("Reset", { toolState.resetPen(preset) }),
-                    trailing: (showAdvanced ? "Basic" : "Advanced", { showAdvanced.toggle() })
-                )
+        // Advanced EXPANDS the panel rather than adding rows below the fold. The
+        // extra switches used to appear under a 620-point cap that was already
+        // full, so tapping the button looked like it did nothing until you
+        // thought to scroll — and a control you have to go looking for is one
+        // most people never find.
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    PanelHeader(
+                        title: preset.displayName,
+                        leading: ("Reset", { toolState.resetPen(preset) }),
+                        trailing: (showAdvanced ? "Basic" : "Advanced", {
+                            withAnimation(.spring(duration: 0.28)) { showAdvanced.toggle() }
+                        })
+                    )
 
-                StrokePreview(
-                    color: color, width: settings.effectiveWidth,
-                    opacity: settings.concentration, stability: settings.stability,
-                    tip: settings.tip
-                )
+                    StrokePreview(
+                        color: color, width: settings.effectiveWidth,
+                        opacity: settings.concentration, stability: settings.stability,
+                        tip: settings.tip
+                    )
 
-                PanelSlider(
-                    title: "Stability",
-                    readout: "\(settings.stability)",
-                    value: binding(\.stability),
-                    range: penStabilityRange,
-                    step: 1,
-                    hint: "Smooths the line as you write. Higher settles a shaky hand."
-                )
+                    PanelSlider(
+                        title: "Stability",
+                        readout: "\(settings.stability)",
+                        value: binding(\.stability),
+                        range: penStabilityRange,
+                        step: 1,
+                        hint: "Smooths the line as you write. Higher settles a shaky hand."
+                    )
 
-                PanelSlider(
-                    title: "Tip",
-                    readout: "\(Int((settings.tip * 100).rounded()))%",
-                    value: binding(\.tip),
-                    range: 0...1,
-                    hint: "How pointed the tip is. A point tapers the stroke in at "
-                        + "each end; a blunt tip lays full width throughout."
-                )
+                    PanelSlider(
+                        title: "Tip",
+                        readout: "\(Int((settings.tip * 100).rounded()))%",
+                        value: binding(\.tip),
+                        range: 0...1,
+                        hint: "How pointed the tip is. A point tapers the stroke in at "
+                            + "each end; a blunt tip lays full width throughout."
+                    )
 
-                PanelSlider(
-                    title: "Sensitivity",
-                    readout: "\(Int((settings.sensitivity * 100).rounded()))%",
-                    value: binding(\.sensitivity),
-                    range: 0...1,
-                    hint: "How much pressure changes the stroke width. 50% is the "
-                        + "pencil's own response."
-                )
+                    PanelSlider(
+                        title: "Sensitivity",
+                        readout: "\(Int((settings.sensitivity * 100).rounded()))%",
+                        value: binding(\.sensitivity),
+                        range: 0...1,
+                        hint: "How much pressure changes the stroke width. 50% is the "
+                            + "pencil's own response."
+                    )
 
-                PanelSlider(
-                    title: "Thickness",
-                    readout: String(format: "%.1f", settings.thickness),
-                    value: binding(\.thickness),
-                    range: preset.widthRange,
-                    step: 0.2,
-                    showsSteppers: true,
-                    hint: "The width of the line, in page points."
-                )
+                    PanelSlider(
+                        title: "Thickness",
+                        readout: String(format: "%.1f", settings.thickness),
+                        value: binding(\.thickness),
+                        range: preset.widthRange,
+                        step: 0.2,
+                        showsSteppers: true,
+                        hint: "The width of the line, in page points."
+                    )
 
-                PanelSlider(
-                    title: "Concentration",
-                    readout: "\(Int((settings.concentration * 100).rounded()))%",
-                    value: binding(\.concentration),
-                    range: 0.05...1,
-                    hint: "How strongly the ink covers what's under it."
-                )
+                    PanelSlider(
+                        title: "Concentration",
+                        readout: "\(Int((settings.concentration * 100).rounded()))%",
+                        value: binding(\.concentration),
+                        range: 0.05...1,
+                        hint: "How strongly the ink covers what's under it."
+                    )
 
-                Divider().overlay(theme.separator.color)
-
-                Text("Color").font(.dsSubheadline.weight(.medium)).foregroundStyle(theme.ink.color)
-                ColorSwatchRow(
-                    swatches: toolState.inkPalette(theme: theme).map(\.hexString),
-                    selection: colorBinding
-                )
-
-                if showAdvanced {
                     Divider().overlay(theme.separator.color)
-                    Toggle(isOn: Binding(
-                        get: { toolState.scribbleToErase },
-                        set: { toolState.scribbleToErase = $0 }
-                    )) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Scribble to erase")
-                                .font(.dsSubheadline).foregroundStyle(theme.ink.color)
-                            Text("Scrub back and forth over something to rub it out.")
-                                .font(.dsCaption).foregroundStyle(theme.inkSecondary.color)
+
+                    Text("Color").font(.dsSubheadline.weight(.medium)).foregroundStyle(theme.ink.color)
+                    ColorSwatchRow(
+                        swatches: toolState.inkPalette(theme: theme).map(\.hexString),
+                        selection: colorBinding
+                    )
+
+                    if showAdvanced {
+                        Divider().overlay(theme.separator.color)
+                        Toggle(isOn: Binding(
+                            get: { toolState.scribbleToErase },
+                            set: { toolState.scribbleToErase = $0 }
+                        )) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Scribble to erase")
+                                    .font(.dsSubheadline).foregroundStyle(theme.ink.color)
+                                Text("Scrub back and forth over something to rub it out.")
+                                    .font(.dsCaption).foregroundStyle(theme.inkSecondary.color)
+                            }
                         }
-                    }
-                    Toggle(isOn: Binding(
-                        get: { toolState.snapShapes },
-                        set: { toolState.snapShapes = $0 }
-                    )) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Snap shapes")
-                                .font(.dsSubheadline).foregroundStyle(theme.ink.color)
-                            Text("Hold at the end of a stroke to straighten it into a shape.")
-                                .font(.dsCaption).foregroundStyle(theme.inkSecondary.color)
+                        Toggle(isOn: Binding(
+                            get: { toolState.snapShapes },
+                            set: { toolState.snapShapes = $0 }
+                        )) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Snap shapes")
+                                    .font(.dsSubheadline).foregroundStyle(theme.ink.color)
+                                Text("Hold at the end of a stroke to straighten it into a shape.")
+                                    .font(.dsCaption).foregroundStyle(theme.inkSecondary.color)
+                            }
                         }
+                        Color.clear.frame(height: 1).id(Self.advancedAnchor)
                     }
                 }
+                .padding(18)
             }
-            .padding(18)
+            .onChange(of: showAdvanced) { _, expanded in
+                // Grow first, then bring the new switches into view — on a short
+                // screen the panel can't always get tall enough to show them all.
+                guard expanded else { return }
+                withAnimation(.easeOut(duration: 0.25)) {
+                    proxy.scrollTo(Self.advancedAnchor, anchor: .bottom)
+                }
+            }
         }
         .frame(width: 288)
-        .frame(maxHeight: 620)
+        .frame(maxHeight: showAdvanced ? Self.expandedHeight : Self.collapsedHeight)
         .background(theme.surfaceRaised.color)
     }
+
+    private static let advancedAnchor = "pen-advanced"
+    private static let collapsedHeight: CGFloat = 620
+    /// Tall enough that Advanced's switches land on screen with the sliders still
+    /// above them, and short enough to stay a popover on an 11-inch iPad.
+    private static let expandedHeight: CGFloat = 760
 
     private var colorBinding: Binding<String?> {
         Binding(

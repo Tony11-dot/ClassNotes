@@ -1,4 +1,5 @@
 import Foundation
+import NotesModels
 
 /// The ClassMate backend contract this app depends on. Base URL and routes are
 /// the same server that powers the ClassMate app (extracted from its client),
@@ -390,6 +391,64 @@ public struct ClassMateAPIClient: Sendable {
         let (_, status) = try await send(request(path: "/classnotes/shelves/\(id)", method: "DELETE", token: token))
         try ensureSuccess(status)
     }
+
+    // MARK: - Settings (the same account on another device)
+
+    /// `PUT /classnotes/settings` — this device's setup, so signing in on a
+    /// second one hands the user the app they already configured. The server
+    /// keeps the blob opaque: it is the app's own settings, and the backend has
+    /// no business knowing what a pen's taper is.
+    public func putSettings(_ settings: DeviceSettings, token: String) async throws {
+        var req = request(path: "/classnotes/settings", method: "PUT", token: token)
+        req.httpBody = try Self.settingsEncoder.encode(settings)
+        let (_, status) = try await send(req)
+        try ensureSuccess(status)
+    }
+
+    /// `GET /classnotes/settings` — nil when the account has never saved any,
+    /// which is the normal first-run answer and not an error.
+    public func fetchSettings(token: String) async throws -> DeviceSettings? {
+        let (data, status) = try await send(
+            request(path: "/classnotes/settings", method: "GET", token: token)
+        )
+        if status == 404 { return nil }
+        try ensureSuccess(status)
+        struct Envelope: Decodable { let settings: DeviceSettings? }
+        if let envelope = try? Self.settingsDecoder.decode(Envelope.self, from: data) {
+            return envelope.settings
+        }
+        return try? Self.settingsDecoder.decode(DeviceSettings.self, from: data)
+    }
+
+    /// Dates on this route are ISO-8601 strings, not Foundation's default
+    /// seconds-since-2001 doubles — the server validates and stores a real
+    /// timestamp, and a bare number is neither readable in the database nor
+    /// something a non-Apple client could make sense of.
+    static let settingsEncoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
+    }()
+
+    /// Reading back is deliberately more forgiving than writing: Postgres hands
+    /// its timestamps out through `toISOString()`, which includes milliseconds,
+    /// and Foundation's stock `.iso8601` strategy rejects a fractional second
+    /// outright. Accepting both spellings is the difference between settings
+    /// that sync and settings that silently never arrive.
+    static let settingsDecoder: JSONDecoder = {
+        let decoder = JSONDecoder()
+        let withFraction = ISO8601DateFormatter()
+        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let plain = ISO8601DateFormatter()
+        decoder.dateDecodingStrategy = .custom { input in
+            let text = try input.singleValueContainer().decode(String.self)
+            guard let date = withFraction.date(from: text) ?? plain.date(from: text) else {
+                throw APIError.decoding
+            }
+            return date
+        }
+        return decoder
+    }()
 
     // MARK: - NOVA note assistant (Bearer)
 

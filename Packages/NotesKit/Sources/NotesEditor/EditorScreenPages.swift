@@ -95,14 +95,53 @@ extension EditorScreen {
     // MARK: - Pages
 
     var pageScroll: some View {
+        // The page width is resolved HERE, from the container, and handed down.
+        // A ScrollView that scrolls horizontally offers its content unbounded
+        // width, so `.frame(maxWidth:)` inside it never resolves to anything and
+        // an aspect-ratio'd page collapses to a dot — which is exactly what a
+        // page looked like once zooming was added. The stack is then given an
+        // explicit width so the horizontal axis has something real to scroll.
+        GeometryReader { outer in
+            let width = pageWidth(in: outer.size.width)
+            pageStack(width: width, containerWidth: outer.size.width)
+        }
+    }
+
+    /// How wide a page is drawn: as wide as the window allows up to `maximumPageWidth`,
+    /// times the zoom. Zoom past the fit and the stack scrolls sideways.
+    func pageWidth(in container: CGFloat) -> CGFloat {
+        Self.pageWidth(in: container, zoom: pageZoom)
+    }
+
+    static func pageWidth(in container: CGFloat, zoom: CGFloat) -> CGFloat {
+        let fit = min(maximumPageWidth, max(container - pageGutter * 2, minimumPageWidth))
+        return fit * clampZoom(zoom)
+    }
+
+    /// A page drawn `width` wide, given its own aspect ratio.
+    func pageSize(for page: PageRecord, width: CGFloat) -> CGSize {
+        Self.pageSize(aspectRatio: PageTemplateView.aspectRatio(of: page.style), width: width)
+    }
+
+    static func pageSize(aspectRatio: CGFloat, width: CGFloat) -> CGSize {
+        let ratio = aspectRatio > 0 ? aspectRatio : 0.75
+        return CGSize(width: width, height: width / ratio)
+    }
+
+    static let maximumPageWidth: CGFloat = 840
+    static let minimumPageWidth: CGFloat = 240
+    static let pageGutter: CGFloat = 40
+
+    func pageStack(width: CGFloat, containerWidth: CGFloat) -> some View {
         ScrollViewReader { proxy in
             ScrollView([.vertical, .horizontal]) {
                 LazyVStack(spacing: 32) {
                     ForEach(model.pages) { page in
-                        pageView(page).id(page.id)
+                        pageView(page, width: width).id(page.id)
                     }
                 }
                 .padding(.vertical, 28)
+                .frame(width: max(containerWidth, width + Self.pageGutter * 2))
             }
             // Pinch zooms the page by making it LAY OUT bigger, not by scaling a
             // rendered picture of it: `PageCanvasView` re-pins its zoom to the new
@@ -214,20 +253,20 @@ extension EditorScreen {
         PagePaperView(page: page, cover: notebook.usesCoverPage ? notebook.coverPaper : nil)
     }
 
-    func pageView(_ page: PageRecord) -> some View {
-        GeometryReader { geo in
-            ZStack {
-                pagePaper(page)
-                if let bg = backgroundImage(for: page) {
-                    Image(uiImage: bg).resizable().scaledToFit()
-                }
-                canvasStack(page, displaySize: geo.size, allowsZoom: false)
+    func pageView(_ page: PageRecord, width: CGFloat) -> some View {
+        // Both dimensions are concrete: the page's own aspect ratio turns the
+        // resolved width into a height, so nothing downstream has to guess.
+        let size = pageSize(for: page, width: width)
+        return ZStack {
+            pagePaper(page)
+            if let bg = backgroundImage(for: page) {
+                Image(uiImage: bg).resizable().scaledToFit()
             }
-            .contentShape(Rectangle())
-            .onTapGesture { model.focusedPageID = page.id }
+            canvasStack(page, displaySize: size, allowsZoom: false)
         }
-        .aspectRatio(PageTemplateView.aspectRatio(of: page.style), contentMode: .fit)
-        .frame(maxWidth: 840 * pageZoom)
+        .contentShape(Rectangle())
+        .onTapGesture { model.focusedPageID = page.id }
+        .frame(width: size.width, height: size.height)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -237,7 +276,6 @@ extension EditorScreen {
                 )
         )
         .shadow(color: .black.opacity(0.16), radius: 16, y: 8)
-        .padding(.horizontal, 40)
         .onGeometryChange(for: CGRect.self) { proxy in
             proxy.frame(in: .named("editor"))
         } action: { frame in

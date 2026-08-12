@@ -28,6 +28,7 @@ public struct SettingsScreen: View {
                 presetSection(title: "Dark themes", presets: ThemePreset.darkFamily, includeSystem: false)
                 customThemesSection
                 paperSection
+                PencilGestureSection()
                 AboutSettingsSection { helpSheet = $0 }
                 #if DEBUG
                 debugSection

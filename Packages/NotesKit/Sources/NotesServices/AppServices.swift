@@ -1,4 +1,6 @@
+import ClassMateTheme
 import Foundation
+import NotesModels
 import Observation
 import SwiftData
 
@@ -24,6 +26,9 @@ public final class AppServices {
     public let sync: SyncService
     /// Saved NOVA conversations, per notebook.
     public let novaChats: NovaChatStore
+    /// How the tools are tuned and what the Pencil's gestures do — saved, and
+    /// carried between the user's own devices.
+    public let settings: SettingsStore
 
     public init(modelContainer: ModelContainer, documentsRootURL: URL? = nil) {
         self.modelContainer = modelContainer
@@ -40,6 +45,7 @@ public final class AppServices {
         self.sync = sync
         self.themeService = ThemeService(context: context, entitlements: entitlements)
         self.novaChats = NovaChatStore(context: context)
+        self.settings = SettingsStore(context: context)
         self.repository = NotebookRepository(
             context: context, store: store, entitlements: entitlements, sync: sync
         )
@@ -71,10 +77,17 @@ public final class AppServices {
     /// Kick off async work after launch: entitlements, products, and restoring
     /// the ClassMate session.
     public func start() {
+        // Every settled settings change goes up to the account, so the user's
+        // other device gets it. Wired before the first pull so a change made
+        // during launch isn't dropped.
+        settings.onChange = { [sync] snapshot in
+            sync.pushSettings(snapshot)
+        }
         Task {
             await auth.restore()
             await entitlements.refreshEntitlements()
             await entitlements.loadProducts()
+            await syncSettings()
             // PULL first: notebooks the user deleted or renamed in the ClassMate
             // ClassNotes tab. Pushing first would send this device's stale copy
             // back over those edits and undo them.
@@ -86,6 +99,35 @@ public final class AppServices {
             // (SyncService checks the token).
             let snapshot = repository.fullSnapshot()
             sync.pushAll(notebooks: snapshot.notebooks, shelves: snapshot.shelves)
+        }
+    }
+
+    /// Reconciles this device's setup with the account's.
+    ///
+    /// Same shape as the library: PULL first, and let the newer revision win. A
+    /// second device that pushed first would send its factory defaults over the
+    /// setup the user spent an evening on — which is the one outcome that would
+    /// make the whole feature worse than not having it.
+    private func syncSettings() async {
+        let mine = settings.snapshot(
+            themeSelection: themeService.selection.rawValue,
+            paperTone: themeService.paperTone.rawValue
+        )
+        guard let remote = await sync.fetchSettings() else {
+            sync.pushSettings(mine)
+            return
+        }
+        if settings.apply(remote: remote) {
+            // The theme travels with the tools: "everything I set up" includes
+            // which theme and paper the user chose, not just their pens.
+            if let selection = ThemeSelection(rawValue: remote.themeSelection) {
+                themeService.selection = selection
+            }
+            if let tone = PaperTone(rawValue: remote.paperTone) {
+                themeService.paperTone = tone
+            }
+        } else if DeviceSettings.newer(mine, remote) == mine {
+            sync.pushSettings(mine)
         }
     }
 }

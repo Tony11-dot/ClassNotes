@@ -28,16 +28,25 @@ struct LibrarySelectionTests {
         #expect(!selection.contains(a))
     }
 
-    @Test("Putting the last one down keeps selection mode on")
-    func staysActiveWhenEmptied() {
-        // Taking the last notebook back is a correction, not a decision to leave
-        // selection mode — dropping out from under the user would be a trap.
+    @Test("Putting the last one down leaves selection mode")
+    func endsWhenEmptied() {
+        // Nothing selected means every button in the bar is dead, so staying in
+        // the mode strands the user behind a bar that can't do anything.
         let selection = LibrarySelection()
         let only = UUID()
         selection.begin(with: only)
         selection.toggle(only)
         #expect(selection.isEmpty)
-        #expect(selection.isActive)
+        #expect(!selection.isActive)
+    }
+
+    @Test("Deselecting all from the bar leaves the mode too")
+    func selectingNoneEnds() {
+        let selection = LibrarySelection()
+        selection.selectAll([UUID(), UUID()])
+        selection.selectAll([])
+        #expect(selection.isEmpty)
+        #expect(!selection.isActive)
     }
 
     @Test("Select all takes everything; Done clears both the set and the mode")
@@ -53,11 +62,12 @@ struct LibrarySelectionTests {
         #expect(!selection.isActive)
     }
 
-    @Test("Selecting nothing still enters the mode, so the bar can appear")
-    func selectAllOfNothing() {
+    @Test("Select starts the mode holding nothing, so the bar can appear")
+    func beginsEmpty() {
         // This is how the iPhone's "Select" button starts: mode on, nothing held.
+        // Starting empty is a beginning, so it must not trip the exit rule.
         let selection = LibrarySelection()
-        selection.selectAll([])
+        selection.beginEmpty()
         #expect(selection.isActive)
         #expect(selection.isEmpty)
     }

@@ -40,6 +40,10 @@ public struct EditorScreen: View {
     @State var zoomAnchor: CGFloat = 1
     /// What the lasso is currently holding, and on which page.
     @State var lassoSelection: PageSelection?
+    /// Bumped when something outside the rail asks for the current pen's panel —
+    /// a Pencil squeeze mapped to "show colours". A fresh id each time, so asking
+    /// twice in a row still opens it the second time.
+    @State var penPanelRequest: UUID?
 
     // Insertion sheets/state
     @State var photoItem: PhotosPickerItem?
@@ -137,7 +141,8 @@ public struct EditorScreen: View {
                 onNova: { openNova() },
                 onTapeVisibility: { hidden in
                     Task { await model.setAllTape(hidden: hidden, on: model.focusedPageID) }
-                }
+                },
+                openPenPanel: penPanelRequest
             )
             .zIndex(3)
         }
@@ -156,6 +161,20 @@ public struct EditorScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent }
         .task {
+            // The tools read and write the SAVED settings from here on, so every
+            // slider the user moves outlives the editor and reaches their other
+            // devices. Pencil gestures the tools can't carry out alone come back
+            // through `onPencilOutcome`.
+            toolState.bind(to: services.settings)
+            toolState.onPencilOutcome = { outcome in
+                switch outcome {
+                case .handled: break
+                case .showColors: penPanelRequest = UUID()
+                case .toggleRuler: rulerVisible.toggle()
+                case .undo: tracker.undo()
+                case .askNova: openNova()
+                }
+            }
             model = NotebookEditorModel(notebookID: notebook.id, store: services.documentStore)
             // A notebook that should have a cover page gets one here if it was
             // made before covers were pages — once, then never again.
@@ -163,6 +182,9 @@ public struct EditorScreen: View {
         }
         .onDisappear {
             beautifier.reset()
+            // Settle any tuning the user was still adjusting: leaving the editor
+            // is exactly when the debounce would otherwise be cancelled.
+            services.settings.flush()
             // The cover render has to be written BEFORE the row is touched: the
             // library reloads its thumbnail off `updatedAt`, and `touch` is also
             // what pushes the new cover up to ClassMate.

@@ -59,6 +59,12 @@ public struct LibraryGridScreen<Destination: View>: View {
                 destination(notebook)
             }
             .overlay(alignment: .bottom) {
+                if !selection.isActive { floatingToolbar }
+            }
+            // The bar is a safe-area INSET, not an overlay: it reserves its own
+            // room instead of floating over whatever the system has already put
+            // at the bottom edge, so nothing lands on top of its buttons.
+            .safeAreaInset(edge: .bottom) {
                 if selection.isActive {
                     LibrarySelectionBar(
                         selection: selection,
@@ -72,10 +78,8 @@ public struct LibraryGridScreen<Destination: View>: View {
                             selection.end()
                         }
                     )
-                    .padding(.bottom, 16)
+                    .padding(.bottom, 10)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
-                } else {
-                    floatingToolbar
                 }
             }
             .animation(.spring(duration: 0.28), value: selection.isActive)

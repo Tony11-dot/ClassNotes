@@ -1,5 +1,6 @@
 import ClassMateTheme
 import NotesModels
+import NotesServices
 import Observation
 import PencilKit
 import UIKit
@@ -59,21 +60,44 @@ public final class ToolState {
         }
     }
 
-    /// Eraser precision: pixel (accurate, adjustable size) or whole-stroke, plus
-    /// tape-only so a strip can be removed without touching the ink under it.
-    public enum EraserMode: String, CaseIterable, Sendable, Identifiable {
-        case pixel
-        case stroke
-        case tapeOnly
+    /// Eraser precision. The type itself lives in `NotesModels` now, because it
+    /// is part of what gets saved and carried between devices — but it is still
+    /// spelled `ToolState.EraserMode` everywhere it is used.
+    public typealias EraserMode = NotesModels.EraserMode
 
-        public var id: String { rawValue }
+    // MARK: - Where the settings actually live
 
-        public var displayName: String {
-            switch self {
-            case .pixel: "Pixel"
-            case .stroke: "Stroke"
-            case .tapeOnly: "Tape only"
-            }
+    /// The durable copy. Everything below that a user can tune is a live view of
+    /// it, so moving a slider is saved and carried to their other devices — it
+    /// used to live in this object alone, which meant every adjustment was
+    /// forgotten the moment the editor closed.
+    ///
+    /// Optional so previews and tests can drive a `ToolState` without a store,
+    /// and bound after init because the editor only meets `AppServices` through
+    /// the environment. Ignored by observation on purpose — what views need to
+    /// watch is the store's own `tools`, which it publishes itself.
+    @ObservationIgnored private var store: SettingsStore?
+    /// Stands in for the store when there isn't one.
+    private var detached = ToolPreferences()
+
+    /// Points this state at the saved settings. Anything tuned before the store
+    /// arrived comes along, so a change made on the very first frame isn't lost.
+    public func bind(to store: SettingsStore) {
+        guard self.store == nil else { return }
+        self.store = store
+        let pending = detached
+        if pending != ToolPreferences() {
+            store.update { $0 = pending }
+        }
+    }
+
+    public var preferences: ToolPreferences { store?.tools ?? detached }
+
+    func edit(_ mutate: (inout ToolPreferences) -> Void) {
+        if let store {
+            store.update(mutate)
+        } else {
+            mutate(&detached)
         }
     }
 
@@ -86,30 +110,33 @@ public final class ToolState {
     // MARK: - Pen tray
 
     /// The instrument currently in hand.
-    public var penPresetID: String = PenLibrary.default.id
-    /// Per-instrument tuning, so switching pens keeps each one's own settings.
-    private var tuning: [String: PenSettings] = [:]
+    public var penPresetID: String {
+        get { preferences.penPresetID }
+        set { edit { $0.penPresetID = newValue } }
+    }
 
     public var pen: PenPreset { PenLibrary.preset(id: penPresetID) }
 
     public func settings(for preset: PenPreset) -> PenSettings {
-        (tuning[preset.id] ?? preset.defaults).normalized(in: preset.widthRange)
+        (preferences.tuning[preset.id] ?? preset.defaults).normalized(in: preset.widthRange)
     }
 
     public var penSettings: PenSettings {
         get { settings(for: pen) }
-        set { tuning[pen.id] = newValue.normalized(in: pen.widthRange) }
+        set { setSettings(newValue, for: pen) }
     }
 
     /// Stores one instrument's tuning. Panels edit whichever pen they were opened
     /// for, which is normally — but not necessarily — the one in hand.
     public func setSettings(_ settings: PenSettings, for preset: PenPreset) {
-        tuning[preset.id] = settings.normalized(in: preset.widthRange)
+        let normalized = settings.normalized(in: preset.widthRange)
+        edit { $0.tuning[preset.id] = normalized }
     }
 
     /// Restores one instrument to its catalog defaults ("Reset" in its panel).
     public func resetPen(_ preset: PenPreset) {
-        tuning[preset.id] = preset.defaults
+        let defaults = preset.defaults
+        edit { $0.tuning[preset.id] = defaults }
     }
 
     /// Selects a tray instrument. Returns `true` when it was ALREADY selected —
@@ -124,11 +151,26 @@ public final class ToolState {
 
     // MARK: - Tape
 
-    public var tapeShape: TapeShape = .draw
-    public var tapePattern: TapePattern = .stripes
-    public var tapeThickness: Double = TapeGeometry.defaultThickness
+    public var tapeShape: TapeShape {
+        get { preferences.tapeShape }
+        set { edit { $0.tapeShape = newValue } }
+    }
+
+    public var tapePattern: TapePattern {
+        get { preferences.tapePattern }
+        set { edit { $0.tapePattern = newValue } }
+    }
+
+    public var tapeThickness: Double {
+        get { preferences.tapeThickness }
+        set { edit { $0.tapeThickness = newValue } }
+    }
+
     /// `nil` = follow the theme accent.
-    public var tapeColorHex: String?
+    public var tapeColorHex: String? {
+        get { preferences.tapeColorHex }
+        set { edit { $0.tapeColorHex = newValue } }
+    }
 
     public func tapeColor(theme: ThemeSpec) -> ThemeColor {
         tapeColorHex.flatMap(ThemeColor.init(hex:)) ?? theme.accentMuted
@@ -136,23 +178,52 @@ public final class ToolState {
 
     // MARK: - Eraser
 
-    public var eraserMode: EraserMode = .pixel
-    public var eraserWidth: Double = 20
+    public var eraserMode: EraserMode {
+        get { preferences.eraserMode }
+        set { edit { $0.eraserMode = newValue } }
+    }
+
+    public var eraserWidth: Double {
+        get { preferences.eraserWidth }
+        set { edit { $0.eraserWidth = newValue } }
+    }
+
     /// Scribble to erase: a quick back-and-forth scrub removes what it crosses
     /// instead of leaving a stroke. Works with any pen selected.
-    public var scribbleToErase: Bool = false
+    public var scribbleToErase: Bool {
+        get { preferences.scribbleToErase }
+        set { edit { $0.scribbleToErase = newValue } }
+    }
+
     /// Hold at the end of a stroke to straighten it into a clean shape.
-    public var snapShapes: Bool = true
+    public var snapShapes: Bool {
+        get { preferences.snapShapes }
+        set { edit { $0.snapShapes = newValue } }
+    }
 
     // MARK: - Text boxes
 
-    public var textFontID: String = FontLibrary.default.id
-    public var textSize: Double = 20
-    public var textColorHex: String?
+    public var textFontID: String {
+        get { preferences.textFontID }
+        set { edit { $0.textFontID = newValue } }
+    }
+
+    public var textSize: Double {
+        get { preferences.textSize }
+        set { edit { $0.textSize = newValue } }
+    }
+
+    public var textColorHex: String? {
+        get { preferences.textColorHex }
+        set { edit { $0.textColorHex = newValue } }
+    }
 
     // MARK: - Real-time beautification
 
-    public var beautify = BeautifySettings()
+    public var beautify: BeautifySettings {
+        get { preferences.beautify }
+        set { edit { $0.beautify = newValue } }
+    }
 
     // MARK: - Focus mode
 
@@ -162,7 +233,9 @@ public final class ToolState {
     /// you reach for when you're reading rather than writing.
     public var focusMode = false
 
-    public init() {}
+    public init(store: SettingsStore? = nil) {
+        self.store = store
+    }
 
     /// The pen draws unless we're moving things, laying tape, or placing text —
     /// those modes own the pencil themselves.
@@ -175,27 +248,85 @@ public final class ToolState {
         tool = newTool
     }
 
-    /// Apple Pencil double-tap: honor the system preference where it maps to
-    /// tool switching; anything else falls back to eraser toggle.
-    public func handlePencilTap(preferred: UIPencilPreferredAction) {
-        switch preferred {
-        case .switchPrevious:
+    // MARK: - Apple Pencil gestures
+
+    /// What the editor has to do about a Pencil gesture that `ToolState` can't
+    /// carry out on its own — the rail's undo stack, the ruler, NOVA, the colour
+    /// swatches. Returned rather than fired through a delegate so the mapping
+    /// stays a pure function of the settings and can be tested without a canvas.
+    public enum PencilOutcome: Equatable, Sendable {
+        case handled
+        case showColors
+        case toggleRuler
+        case undo
+        case askNova
+    }
+
+    /// Apple Pencil double-tap. What it does is the user's choice; the system's
+    /// own preference is only consulted when they haven't expressed one.
+    @discardableResult
+    public func handlePencilTap() -> PencilOutcome {
+        perform(preferences.pencilDoubleTap)
+    }
+
+    /// Apple Pencil squeeze — the second gesture, with its own mapping.
+    @discardableResult
+    public func handlePencilSqueeze() -> PencilOutcome {
+        perform(preferences.pencilSqueeze)
+    }
+
+    @discardableResult
+    public func perform(_ action: PencilAction) -> PencilOutcome {
+        switch action {
+        case .toggleEraser:
+            toggleEraser()
+        case .previousTool:
             let target = previousDrawingTool == tool ? Tool.pen : previousDrawingTool
             previousDrawingTool = tool
             tool = target
-        default:
-            toggleEraser()
+        case .cyclePens:
+            cyclePens()
+        case .cycleTools:
+            let order: [Tool] = [.pen, .eraser, .tape, .hand]
+            let index = order.firstIndex(of: tool)
+            select(index.map { order[($0 + 1) % order.count] } ?? .pen)
+        case .selectTool:
+            select(tool == .lasso ? previousDrawingTool : .lasso)
+        case .none:
+            break
+        case .showColors:
+            return escalate(.showColors)
+        case .toggleRuler:
+            return escalate(.toggleRuler)
+        case .undo:
+            return escalate(.undo)
+        case .askNova:
+            return escalate(.askNova)
         }
+        return .handled
     }
 
-    /// Apple Pencil squeeze: cycle pen → eraser → tape → hand.
-    public func handlePencilSqueeze() {
-        let order: [Tool] = [.pen, .eraser, .tape, .hand]
-        guard let index = order.firstIndex(of: tool) else {
-            select(.pen)
+    /// Hands an outcome this object can't carry out to whoever owns the screen.
+    /// Set by `EditorScreen`; nil everywhere else, so the mapping itself stays
+    /// testable without a canvas.
+    @ObservationIgnored
+    public var onPencilOutcome: ((PencilOutcome) -> Void)?
+
+    private func escalate(_ outcome: PencilOutcome) -> PencilOutcome {
+        onPencilOutcome?(outcome)
+        return outcome
+    }
+
+    /// Steps to the next instrument in the tray, picking the pen up if the user
+    /// was holding something that isn't one.
+    public func cyclePens() {
+        let all = PenLibrary.all
+        guard !all.isEmpty else { return }
+        guard tool == .pen, let index = all.firstIndex(where: { $0.id == penPresetID }) else {
+            selectPen(all[0])
             return
         }
-        select(order[(index + 1) % order.count])
+        selectPen(all[(index + 1) % all.count])
     }
 
     private func toggleEraser() {

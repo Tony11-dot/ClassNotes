@@ -63,13 +63,16 @@ public struct LibraryListScreen<Destination: View>: View {
                             if selection.isActive {
                                 selection.end()
                             } else {
-                                selection.selectAll([])
+                                selection.beginEmpty()
                             }
                         }
                     }
                 }
             }
-            .overlay(alignment: .bottom) {
+            // An INSET, not an overlay: iOS 26 puts the search field at the bottom
+            // edge on iPhone, and it was landing on top of this bar — which is
+            // why its buttons did nothing.
+            .safeAreaInset(edge: .bottom) {
                 if selection.isActive {
                     LibrarySelectionBar(
                         selection: selection,
@@ -78,7 +81,7 @@ public struct LibraryListScreen<Destination: View>: View {
                         onDelete: { confirmBulkDelete = true },
                         onMove: { _ in }
                     )
-                    .padding(.bottom, 12)
+                    .padding(.bottom, 8)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
