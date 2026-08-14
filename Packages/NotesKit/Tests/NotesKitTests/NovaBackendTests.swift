@@ -151,7 +151,7 @@ struct LaunchSceneThemingTests {
         // A miniature composition with one fill of each baked colour.
         var doc: [String: Any] = [
             "layers": [
-                ["ty": "fl", "c": ["k": [0.047, 0.098, 0.576, 1]]] as [String: Any],
+                ["ty": "fl", "c": ["k": LaunchScene.navy + [1.0]]] as [String: Any],
                 ["ty": "fl", "c": ["k": [1.0, 1.0, 1.0, 1]]] as [String: Any],
                 // An unrelated colour must be left alone.
                 ["ty": "st", "c": ["k": [0.5, 0.2, 0.1, 1]]] as [String: Any]
@@ -176,6 +176,39 @@ struct LaunchSceneThemingTests {
         #expect(try components(0).count == 4)
         // The colour that matched neither is exactly as it was.
         #expect(abs(try components(2)[0] - 0.5) < 0.001)
+    }
+
+    @Test("The blue in the shipped artwork is the blue the recolourer looks for")
+    func shippedColoursAreRecognised() throws {
+        // Re-export the scene and its brand blue moves a digit or two. Miss it and
+        // the recolouring silently does nothing — the artwork still plays, so the
+        // only symptom is a launch that ignores the theme, which is exactly the
+        // kind of failure nobody notices until it ships.
+        let json = try #require(LaunchScene.rawJSON)
+        let doc = try #require(
+            try JSONSerialization.jsonObject(with: json) as? [String: Any]
+        )
+        var found = false
+        func walk(_ value: Any) {
+            if let map = value as? [String: Any] {
+                for (key, child) in map {
+                    if key == "k", let components = child as? [Any], components.count >= 3 {
+                        let values = components.prefix(3).compactMap { $0 as? Double }
+                        if values.count == 3,
+                           zip(values, LaunchScene.navy).allSatisfy({
+                               abs($0 - $1) <= LaunchScene.colourTolerance
+                           }) {
+                            found = true
+                        }
+                    }
+                    walk(child)
+                }
+            } else if let list = value as? [Any] {
+                list.forEach(walk)
+            }
+        }
+        walk(doc)
+        #expect(found, "no colour in LaunchScene.json matches LaunchScene.navy")
     }
 
     @Test("The shipped scene recolours for every preset without falling over")

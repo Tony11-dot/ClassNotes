@@ -38,7 +38,11 @@ extension CanvasPageView.Coordinator {
             self.hideSnapPreview()
             self.liveSnap = nil
             self.isOnDetent = false
-            if !held { self.pendingSnapPath = nil }
+            if !held {
+                self.pendingSnapPath = nil
+                self.strokeCountAtSnap = nil
+            }
+            self.finishHeldStroke()
         }
         canvas.addGestureRecognizer(watcher)
         dwellWatcher = watcher
@@ -53,10 +57,14 @@ extension CanvasPageView.Coordinator {
               // under the pencil would beat the eraser to the same ink.
               !(toolState.scribbleToErase && ScribbleDetector.isErasureScribble(points)),
               let snap = ShapeSnapper.liveSnap(points),
-              let path = ShapeSnapper.path(for: snap, handle: snap.handle) else { return false }
+              let settled = ShapeSnapper.resolve(snap, handle: snap.handle) else { return false }
         liveSnap = snap
-        pendingSnapPath = path
-        drawSnapPreview(path)
+        pendingSnapPath = settled.path
+        // Take the wandering ink out from under the shape. From here the shape
+        // IS the stroke: the pencil sizes it, and the page gets it on the lift.
+        suppressLiveInk()
+        drawSnapPreview(settled.path)
+        isOnDetent = settled.isDetent
         // The shape landing under your pencil should feel like it clicked.
         UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
         return true
@@ -66,27 +74,30 @@ extension CanvasPageView.Coordinator {
     /// end, so redraw the SAME shape at the new size or angle.
     private func adjustSnap(to point: CGPoint) {
         guard var snap = liveSnap,
-              let path = ShapeSnapper.path(for: snap, handle: point) else { return }
+              let settled = ShapeSnapper.resolve(snap, handle: point) else { return }
         snap.handle = point
         liveSnap = snap
-        pendingSnapPath = path
-        drawSnapPreview(path)
+        pendingSnapPath = settled.path
+        drawSnapPreview(settled.path)
 
-        // A line that has just clicked onto level or upright taps the hand, so
-        // a perfectly straight edge is something you can feel for rather than
-        // squint at. Only on the way IN — a detent that buzzes for every
-        // sample it stays inside is a rattle, not a cue.
-        if case .line = snap.shape {
-            let landed = ShapeSnapper.detented(point, from: snap.anchor).isDetent
-            if landed, !isOnDetent {
-                UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-            }
-            isOnDetent = landed
+        // A line that has just clicked onto level or upright — or a box that has
+        // just clicked square — taps the hand, so a perfect edge is something you
+        // can feel for rather than squint at. Only on the way IN: a detent that
+        // buzzes for every sample it stays inside is a rattle, not a cue.
+        if settled.isDetent, !isOnDetent {
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
         }
+        isOnDetent = settled.isDetent
     }
 
     private func drawSnapPreview(_ path: [CGPoint]) {
         guard let canvas else { return }
+        // Back on top. PencilKit adds and re-orders its own layers as it draws,
+        // and a preview that ends up underneath them is a shape the user is told
+        // has settled but cannot see.
+        if canvas.layer.sublayers?.last !== snapPreviewLayer {
+            canvas.layer.addSublayer(snapPreviewLayer)
+        }
         let scale = canvas.zoomScale
         let bezier = UIBezierPath()
         for (index, point) in path.enumerated() {

@@ -318,6 +318,56 @@ struct ShapeSnapperTests {
         #expect(abs((path?.last?.y ?? 0) - 100) < 0.01, "the line that clicked flat is drawn flat")
     }
 
+    @Test("Near the axis the line resists leaving it, without clicking onto it")
+    func detentResists() {
+        // Between the snap zone and the magnet's edge the pencil is followed, but
+        // not exactly: the line is eased back toward level. A detent with no pull
+        // is a cliff — dead until it suddenly grabs — and a straight-edge you can
+        // feel for is the whole point of having one.
+        let anchor = CGPoint(x: 100, y: 100)
+        let eightDegrees = CGPoint(
+            x: anchor.x + cos(.pi / 180 * 8) * 200,
+            y: anchor.y + sin(.pi / 180 * 8) * 200
+        )
+        let pulled = ShapeSnapper.detented(eightDegrees, from: anchor)
+        #expect(!pulled.isDetent, "it hasn't clicked on yet")
+        let pulledAngle = atan2(pulled.point.y - anchor.y, pulled.point.x - anchor.x)
+        #expect(pulledAngle < .pi / 180 * 8, "and it has been drawn back toward level")
+        #expect(pulledAngle > 0, "but not all the way")
+        // Length is never touched: it straightens, it doesn't also shorten.
+        #expect(abs(hypot(pulled.point.x - anchor.x, pulled.point.y - anchor.y) - 200) < 0.01)
+    }
+
+    @Test("A nearly-square box clicks square, so a circle you meant is a circle")
+    func squareDetent() {
+        let anchor = CGPoint(x: 0, y: 0)
+        let nearly = CGRect(x: 0, y: 0, width: 200, height: 192)
+        let settled = ShapeSnapper.squared(nearly, anchoredAt: anchor)
+        #expect(settled.isDetent)
+        #expect(abs(settled.box.width - settled.box.height) < 0.001)
+        #expect(settled.box.origin == anchor, "the corner the pencil isn't holding stays put")
+
+        // An oblong is left an oblong.
+        let oblong = CGRect(x: 0, y: 0, width: 300, height: 120)
+        #expect(!ShapeSnapper.squared(oblong, anchoredAt: anchor).isDetent)
+        #expect(ShapeSnapper.squared(oblong, anchoredAt: anchor).box == oblong)
+    }
+
+    @Test("A shape can be inked with no stroke to copy")
+    func inksAShapeFromTheToolAlone() {
+        // The live preview takes the wandering ink off the page, so by the time the
+        // shape is committed PencilKit may have discarded the stroke it was
+        // drawing. The shape still has to reach the page.
+        let path = [CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 0)]
+        let built = ShapeSnapper.stroke(
+            from: path, ink: PKInk(.pen, color: .red), width: 6
+        )
+        let points = Array(built.path)
+        #expect(points.count == 2)
+        #expect(points.first?.size.width == 6)
+        #expect(built.ink.color.cgColor.alpha > 0)
+    }
+
     @Test("An open stroke that is neither straight nor a single bend is left alone")
     func leavesFreehandAlone() {
         // A squiggle: three reversals, no clean primitive in it.
@@ -466,6 +516,26 @@ struct LiveBeautifierPassTests {
 
         #expect(recorder.plans.isEmpty)
         #expect(recorder.drawing.strokes.count == 1)
+    }
+
+    @Test("Writing at the page's own size is read, not thrown away for being big")
+    func acceptsWritingAtPageScale() async {
+        // The bug this pins. Zooming in lays the page out bigger WITHOUT changing
+        // its logical size, so the same hand covers fewer logical points — and
+        // only then did a line fit under the old flat 130-point ceiling. At the
+        // page's natural size a comfortable hand is well over it, so every line
+        // was read perfectly and then discarded: "it only works zoomed in".
+        let tall = stroke(line(
+            from: CGPoint(x: 90, y: 300), to: CGPoint(x: 520, y: 460)
+        ))
+        let recorder = Recorder(PKDrawing(strokes: [tall]))
+        let beautifier = LiveBeautifier(recognizer: { _, _ in [wholeCrop("big handwriting")] })
+
+        #expect(tall.renderBounds.height > LiveBeautifier.maximumLineHeight)
+        #expect(LiveBeautifier.isWritingLine(tall.renderBounds, pageSize: pageSize))
+
+        await run(beautifier, recorder)
+        #expect(recorder.plans.count == 1, "a line written at page scale is still a line")
     }
 
     @Test("The language the panel is set to is the one Vision is asked for")

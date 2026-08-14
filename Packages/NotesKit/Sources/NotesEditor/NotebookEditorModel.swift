@@ -154,14 +154,17 @@ public final class NotebookEditorModel {
     /// Commits one beautification pass: new typeset runs are added, runs the
     /// student continued are rewritten, all in a single manifest write.
     ///
-    /// Returns the page's elements as they were BEFORE the pass, which is what
-    /// Undo restores. A pass both inserts and rewrites, so "remove what was
-    /// inserted" is not enough to take one back — the rewritten runs have to go
-    /// back to the words they held before the student carried on writing.
+    /// Returns the page's elements either side of the pass. A pass both inserts
+    /// new runs and rewrites existing ones, so "remove what was inserted" is not
+    /// enough to take one back — the rewritten runs have to go back to the words
+    /// they held before the student carried on writing, and Redo has to be able
+    /// to put the whole pass back.
     @discardableResult
-    func apply(plan: BeautifyPlan, to pageID: UUID) async -> [PageElement] {
+    func apply(plan: BeautifyPlan, to pageID: UUID) async -> BeautifyElements {
         guard !plan.isEmpty, var current = manifest,
-              let index = current.pages.firstIndex(where: { $0.id == pageID }) else { return [] }
+              let index = current.pages.firstIndex(where: { $0.id == pageID }) else {
+            return BeautifyElements()
+        }
         var elements = current.pages[index].elements
         let before = elements
         for updated in plan.updates {
@@ -175,7 +178,7 @@ public final class NotebookEditorModel {
         current.pages[index].elements = elements
         manifest = current
         _ = try? await store.setElements(elements, notebook: notebookID, page: pageID)
-        return before
+        return BeautifyElements(before: before, after: elements)
     }
 
     /// Puts a page's elements back exactly as they were — the undo half of

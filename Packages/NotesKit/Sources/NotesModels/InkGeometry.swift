@@ -127,6 +127,122 @@ public enum ScribbleDetector {
     }
 }
 
+/// The straight-edge, as geometry: where it lies on the page and what it does to
+/// a stroke drawn along it.
+///
+/// A ruler you can only look at is a decoration. A real one is a wall — you run
+/// the pen down its edge and the line comes out straight however much your hand
+/// wanders. That is what this does: ink drawn along either long edge is projected
+/// onto that edge, so the stroke is exactly as straight as the ruler is.
+///
+/// Pure so the rule can be tested without a canvas; the editor's only job is to
+/// say where the ruler is in the page's own logical space.
+public struct RulerGuide: Sendable, Equatable {
+    /// The ruler's centre line, in page-logical points.
+    public var start: CGPoint
+    public var end: CGPoint
+    /// Half the ruler's width — the distance from the centre line to either edge.
+    public var halfWidth: CGFloat
+
+    public init(start: CGPoint, end: CGPoint, halfWidth: CGFloat) {
+        self.start = start
+        self.end = end
+        self.halfWidth = halfWidth
+    }
+
+    /// How far from an edge ink may be drawn and still be guided by it. Wide
+    /// enough that a hand resting against the ruler is caught, narrow enough that
+    /// writing further down the page is left alone.
+    public static let snapBand: CGFloat = 30
+    /// How much longer along the edge than across it a stroke has to be before it
+    /// counts as "drawn along the ruler" rather than merely near it.
+    public static let minimumAspect: CGFloat = 2.2
+    /// Shorter than this and there is no direction to speak of.
+    public static let minimumLength: CGFloat = 12
+
+    /// The two long edges of the ruler, as centre-line offsets along its normal.
+    public var edges: [(start: CGPoint, end: CGPoint)] {
+        let dx = end.x - start.x, dy = end.y - start.y
+        let length = hypot(dx, dy)
+        guard length > 0.0001 else { return [] }
+        let normal = CGVector(dx: -dy / length, dy: dx / length)
+        return [halfWidth, -halfWidth].map { offset in
+            (
+                CGPoint(x: start.x + normal.dx * offset, y: start.y + normal.dy * offset),
+                CGPoint(x: end.x + normal.dx * offset, y: end.y + normal.dy * offset)
+            )
+        }
+    }
+
+    /// `points` projected onto whichever edge they were drawn along, or nil when
+    /// the stroke wasn't drawn against the ruler at all.
+    ///
+    /// The result is the two ends of the straightened run: every sample is
+    /// projected onto the edge's infinite line, and the extremes of those
+    /// projections are the line the user actually meant to draw.
+    public func straightened(_ points: [CGPoint]) -> [CGPoint]? {
+        guard points.count >= 2 else { return nil }
+        var best: (edge: (start: CGPoint, end: CGPoint), distance: CGFloat)?
+        for edge in edges {
+            let mean = meanDistance(points, from: edge)
+            if best == nil || mean < best!.distance { best = (edge, mean) }
+        }
+        guard let chosen = best, chosen.distance <= Self.snapBand else { return nil }
+
+        let axis = CGVector(
+            dx: chosen.edge.end.x - chosen.edge.start.x,
+            dy: chosen.edge.end.y - chosen.edge.start.y
+        )
+        let length = hypot(axis.dx, axis.dy)
+        guard length > 0.0001 else { return nil }
+        let unit = CGVector(dx: axis.dx / length, dy: axis.dy / length)
+
+        var lowest = CGFloat.greatestFiniteMagnitude
+        var highest = -CGFloat.greatestFiniteMagnitude
+        var widest: CGFloat = 0
+        for point in points {
+            let dx = point.x - chosen.edge.start.x
+            let dy = point.y - chosen.edge.start.y
+            let along = dx * unit.dx + dy * unit.dy
+            lowest = min(lowest, along)
+            highest = max(highest, along)
+            widest = max(widest, abs(dx * -unit.dy + dy * unit.dx))
+        }
+        let span = highest - lowest
+        guard span >= Self.minimumLength else { return nil }
+        // Near the ruler but drawn ACROSS it (a tick, a crossed t) is not a line
+        // being ruled, and straightening it would flatten it into the edge.
+        guard span >= widest * Self.minimumAspect else { return nil }
+
+        func point(at along: CGFloat) -> CGPoint {
+            CGPoint(
+                x: chosen.edge.start.x + unit.dx * along,
+                y: chosen.edge.start.y + unit.dy * along
+            )
+        }
+        // Drawn right-to-left? Keep the direction the hand went, so the stroke's
+        // taper and pressure profile still run the way it was drawn.
+        let forward = points[points.count - 1].x * unit.dx + points[points.count - 1].y * unit.dy
+            >= points[0].x * unit.dx + points[0].y * unit.dy
+        return forward
+            ? [point(at: lowest), point(at: highest)]
+            : [point(at: highest), point(at: lowest)]
+    }
+
+    private func meanDistance(_ points: [CGPoint], from edge: (start: CGPoint, end: CGPoint)) -> CGFloat {
+        let dx = edge.end.x - edge.start.x, dy = edge.end.y - edge.start.y
+        let length = hypot(dx, dy)
+        guard length > 0.0001 else { return .greatestFiniteMagnitude }
+        var total: CGFloat = 0
+        for point in points {
+            total += abs(
+                dy * point.x - dx * point.y + edge.end.x * edge.start.y - edge.end.y * edge.start.x
+            ) / length
+        }
+        return total / CGFloat(points.count)
+    }
+}
+
 /// Groups stroke bounding boxes into lines of writing — the unit real-time
 /// beautification recognizes and replaces. Pure geometry so it can be tested
 /// without a canvas.

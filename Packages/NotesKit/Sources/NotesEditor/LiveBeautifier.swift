@@ -44,6 +44,14 @@ struct BeautifyPlan: Equatable {
     var isEmpty: Bool { inserts.isEmpty && updates.isEmpty }
 }
 
+/// A page's elements either side of a beautification pass. Undo needs the first,
+/// Redo the second — a pass both inserts new runs and rewrites existing ones, so
+/// "remove what was added" describes neither direction.
+struct BeautifyElements: Equatable {
+    var before: [PageElement] = []
+    var after: [PageElement] = []
+}
+
 /// Real-time handwriting beautification.
 ///
 /// While the setting is on, every stroke resets a short settle timer. When the
@@ -321,7 +329,7 @@ final class LiveBeautifier {
             // Vision found words here, so this is writing — the only thing left to
             // rule out is ink far too tall to be a line of it (a big diagram that
             // happens to contain a label).
-            guard bounds.height <= Self.maximumLineHeight else { continue }
+            guard Self.isWritingLine(bounds, pageSize: pageSize) else { continue }
             claimed.formUnion(indices)
             pass.lines.append(RecognizedLine(
                 text: text,
@@ -350,7 +358,12 @@ final class LiveBeautifier {
     static func strokes(
         _ boxes: [CGRect], inside rect: CGRect, excluding claimed: Set<Int>
     ) -> [Int] {
-        let grown = rect.insetBy(dx: -rect.height * 0.25, dy: -rect.height * 0.6)
+        // Grown enough for ascenders, descenders and the dot on an i — and no
+        // further. A band 120% taller than the line reached into the lines above
+        // and below and claimed their ink; those lines were then left with no
+        // strokes of their own and dropped, which is most of what "about half of
+        // it gets read" was.
+        let grown = rect.insetBy(dx: -rect.height * 0.25, dy: -rect.height * 0.45)
         return boxes.indices.filter { index in
             guard !claimed.contains(index) else { return false }
             let box = boxes[index]
@@ -463,6 +476,33 @@ final class LiveBeautifier {
         guard !bounds.isNull, bounds.height >= minimumLineHeight,
               bounds.height <= maximumLineHeight else { return false }
         return bounds.width >= bounds.height * 0.55
+    }
+
+    /// Whether ink that Vision read words out of really is a line of writing.
+    ///
+    /// This test used to be a fixed height in page points, and that is exactly why
+    /// beautification "only worked zoomed in". Zooming lays the page out bigger
+    /// without changing its logical size, so the same hand covers FEWER logical
+    /// points — and only then did a line fit under a flat 130-point ceiling. At
+    /// the page's natural size a comfortable hand is well over it, and every line
+    /// was thrown away after being read perfectly.
+    ///
+    /// A line is judged against the page it is on instead, and tall ink is judged
+    /// on its shape: writing runs across the page, a diagram runs down it.
+    static func isWritingLine(_ bounds: CGRect, pageSize: CGSize) -> Bool {
+        guard !bounds.isNull, !bounds.isEmpty, bounds.height >= minimumLineHeight else {
+            return false
+        }
+        guard bounds.height <= lineHeightCeiling(pageSize: pageSize) else { return false }
+        // Comfortably small: no line of writing that fits in a fifth of a page
+        // needs defending against.
+        guard bounds.height > maximumLineHeight else { return true }
+        return bounds.width >= bounds.height * 0.55
+    }
+
+    /// The tallest a single line may be on this page.
+    static func lineHeightCeiling(pageSize: CGSize) -> CGFloat {
+        max(maximumLineHeight, pageSize.height * 0.22)
     }
 
     static func meanForce(of strokes: [PKStroke]) -> Double {

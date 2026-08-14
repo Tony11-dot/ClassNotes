@@ -38,19 +38,37 @@ struct FillGeometryTests {
         #expect(!region[35, 35])
     }
 
-    @Test("A shape with a gap in it lets the colour out, so the fill is refused")
-    func refusesToFloodThePage() {
-        // The colour escapes through the gap and reaches the whole page. Filling
-        // the page is never what anybody meant and it buries their notes.
+    @Test("A shape with a gap in it fills everything the colour can reach")
+    func openShapeFillsWhatItReaches() throws {
+        // The paint escapes through the gap and washes the page. That is what the
+        // user asked for by tapping there — the fill draws UNDER the ink, so a
+        // page-wide wash costs them nothing, whereas refusing meant the bucket did
+        // nothing at all on any shape drawn slightly open.
         let leaky = boxMask(gapAtTop: true)
-        #expect(FillGeometry.region(in: leaky, from: (20, 20)) == nil)
+        let region = try #require(FillGeometry.region(in: leaky, from: (20, 20)))
+        #expect(region[20, 20], "the inside is filled")
+        #expect(region[2, 2], "and so is the page outside it, through the gap")
+        #expect(!region[8, 8], "the ink is still a wall")
     }
 
-    @Test("Tapping on the ink itself fills nothing")
-    func tapOnInkIsRefused() {
+    @Test("A caller that wants to refuse a runaway fill still can")
+    func coverageLimitIsHonoured() {
+        let leaky = boxMask(gapAtTop: true)
+        #expect(FillGeometry.region(in: leaky, from: (20, 20), coverageLimit: 0.5) == nil)
+    }
+
+    @Test("A tap on the ink is nudged to the space beside it")
+    func tapOnInkFindsTheSpace() throws {
+        // Aiming the bucket at a line is a miss by a pixel or two, not a change of
+        // mind: the region the tap was aimed at is the one right beside it.
         let mask = boxMask()
-        #expect(FillGeometry.region(in: mask, from: (8, 8)) == nil)
+        #expect(FillGeometry.region(in: mask, from: (8, 8)) == nil, "the seed itself is ink")
+        let nudged = try #require(FillGeometry.freePixel(near: (8, 8), in: mask))
+        #expect(!mask[nudged.x, nudged.y])
         #expect(FillGeometry.region(in: mask, from: (-1, 5)) == nil, "and off the page")
+        // Buried in ink with nothing near it, there is genuinely nothing to fill.
+        let solid = FillGeometry.Mask(width: 8, height: 8, repeating: true)
+        #expect(FillGeometry.freePixel(near: (4, 4), in: solid) == nil)
     }
 
     @Test("The traced outline wraps the region it came from")

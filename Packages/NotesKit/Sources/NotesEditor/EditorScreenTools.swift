@@ -47,9 +47,9 @@ extension EditorScreen {
         guard let outline = FillTool.outline(
             in: drawing, at: point, pageSize: page.logicalSize
         ) else {
-            // The two ways a fill fails are worth telling apart: a tap on the ink
-            // itself, and a shape with a gap in it that let the colour escape.
-            editorNotice = "Nothing closed to fill there — check the shape for a gap."
+            // An open shape is no longer a failure — the paint simply goes as far
+            // as it can reach, under the ink. What's left is a tap buried in ink.
+            editorNotice = "That's all ink — tap in the space you want filled."
             return
         }
         let colour = toolState.currentColor(theme: theme)
@@ -156,7 +156,28 @@ extension EditorScreen {
             item[UTType.png.identifier] = png
         }
         UIPasteboard.general.items = [item]
-        editorNotice = "Copied."
+        // Kept in hand as well, so the Paste chip can put it straight back onto
+        // the page. A Copy you can only spend in another app is half a Copy.
+        withAnimation(.spring(duration: 0.3)) { copiedSnip = image }
+        editorNotice = "Copied — press Paste to place it."
+    }
+
+    /// Drops the copied region back onto the page as a picture you can move and
+    /// resize, and hands the pencil to Move so it is adjustable straight away.
+    @MainActor
+    func pasteSnip() async {
+        guard let snip = copiedSnip ?? UIPasteboard.general.image,
+              let data = snip.pngData() else {
+            editorNotice = "Nothing to paste."
+            return
+        }
+        lassoSelection = nil
+        await model.insertImage(data, fileExtension: "png")
+        // Drag and pinch only work when the pencil isn't drawing, so the mode that
+        // makes the paste adjustable is the mode it should arrive in.
+        toolState.select(.hand)
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        editorNotice = "Pasted — drag to move, pinch to resize."
     }
 
     /// Renders the caught region at its page-logical size, ink first and page
@@ -177,6 +198,10 @@ extension EditorScreen {
 
         return UIGraphicsImageRenderer(size: bounds.size, format: format).image { context in
             context.cgContext.translateBy(x: -bounds.minX, y: -bounds.minY)
+            // Same order as the page: paint under the ink, everything else over it.
+            for element in caughtElements where element.kind == .fill {
+                draw(element, in: context.cgContext, page: page)
+            }
             if let drawing, !strokes.isEmpty {
                 let caught = PKDrawing(strokes: strokes.compactMap { index in
                     drawing.strokes.indices.contains(index) ? drawing.strokes[index] : nil
@@ -186,7 +211,7 @@ extension EditorScreen {
                 // page — the translation above then puts it where it belongs.
                 caught.image(from: bounds, scale: scale).draw(in: bounds)
             }
-            for element in caughtElements {
+            for element in caughtElements where element.kind != .fill {
                 draw(element, in: context.cgContext, page: page)
             }
         }

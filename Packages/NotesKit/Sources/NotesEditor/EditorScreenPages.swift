@@ -289,6 +289,13 @@ extension EditorScreen {
     func canvasStack(
         _ page: PageRecord, displaySize: CGSize, allowsZoom: Bool
     ) -> some View {
+        // The bucket's colour goes UNDER the ink, so a fill can reach as far as
+        // the paint does without burying the writing on top of it.
+        PageFillLayer(
+            elements: page.elements,
+            displaySize: displaySize,
+            logicalSize: page.logicalSize
+        )
         CanvasPageView(
             notebookID: notebook.id,
             page: page,
@@ -297,6 +304,7 @@ extension EditorScreen {
             beautifier: beautifier,
             beautifyFontName: beautifyFontName,
             allowsZoom: allowsZoom,
+            rulerGuide: rulerGuide(for: page, displaySize: displaySize),
             onFocus: { model.focusedPageID = $0 },
             onBeautified: { plan in await model.apply(plan: plan, to: page.id) },
             onReverted: { elements in await model.restoreElements(elements, on: page.id) }
@@ -367,6 +375,28 @@ extension EditorScreen {
                 }
             }
         }
+    }
+
+    /// Where the straight-edge lies on this page, in the page's own logical
+    /// points — so ink drawn along it can be ruled straight.
+    ///
+    /// The ruler floats over the whole editor and the page scrolls underneath it,
+    /// so the conversion is through the page's own frame in the editor's
+    /// coordinate space. No frame, no guide: a page that hasn't been laid out yet
+    /// can't say where the ruler is sitting on it.
+    func rulerGuide(for page: PageRecord, displaySize: CGSize) -> RulerGuide? {
+        guard rulerVisible, let line = rulerLine, let frame = pageFrames[page.id],
+              frame.width > 1, page.logicalSize.width > 0 else { return nil }
+        let scale = frame.width / page.logicalSize.width
+        guard scale > 0 else { return nil }
+        func onPage(_ point: CGPoint) -> CGPoint {
+            CGPoint(x: (point.x - frame.minX) / scale, y: (point.y - frame.minY) / scale)
+        }
+        return RulerGuide(
+            start: onPage(line.start),
+            end: onPage(line.end),
+            halfWidth: RulerOverlay.thickness / 2 / scale
+        )
     }
 
     /// The PostScript name of the beautification font, custom uploads included.

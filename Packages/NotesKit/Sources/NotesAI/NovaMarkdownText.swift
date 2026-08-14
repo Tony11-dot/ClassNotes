@@ -57,14 +57,48 @@ public struct NovaMarkdownText: View {
                 Capsule().fill(theme.accent.color).frame(width: 3)
                 inline(body).foregroundStyle(theme.inkSecondary.color)
             }
-        case .code(let body):
-            ScrollView(.horizontal, showsIndicators: false) {
-                Text(body)
-                    .font(.system(.footnote, design: .monospaced))
-                    .padding(10)
+        case .code(let language, let body):
+            VStack(alignment: .leading, spacing: 0) {
+                if let language, !language.isEmpty {
+                    Text(language.uppercased())
+                        .font(.dsSystem(size: 10, weight: .heavy))
+                        .foregroundStyle(theme.inkSecondary.color)
+                        .padding(.horizontal, 10)
+                        .padding(.top, 8)
+                }
+                // Code scrolls inside its own box. Wrapping it would break the
+                // one thing about code that has to survive: its line structure.
+                ScrollView(.horizontal, showsIndicators: false) {
+                    Text(body)
+                        .font(.system(.footnote, design: .monospaced))
+                        .foregroundStyle(theme.ink.color)
+                        .textSelection(.enabled)
+                        .padding(10)
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 theme.surfaceRaised.color,
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(theme.separator.color, lineWidth: 0.5)
+            )
+        case .math(let body):
+            // An equation on its own line, set as one: centred, a size up, and
+            // scrolling sideways rather than wrapping mid-expression.
+            ScrollView(.horizontal, showsIndicators: false) {
+                Text(body)
+                    .font(.dsBody.weight(.medium))
+                    .foregroundStyle(theme.ink.color)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity)
+            }
+            .background(
+                theme.accentMuted.withAlpha(0.35).color,
                 in: RoundedRectangle(cornerRadius: 10, style: .continuous)
             )
         case .rule:
@@ -75,7 +109,12 @@ public struct NovaMarkdownText: View {
     /// One run of inline Markdown. `AttributedString` handles emphasis, code spans
     /// and links; if the line isn't valid Markdown it renders verbatim rather than
     /// disappearing.
-    private func inline(_ body: String) -> Text {
+    ///
+    /// Maths is rendered FIRST, because it is not Markdown: `$x^2$` means nothing
+    /// to the Markdown parser, which passes the dollar signs and the caret through
+    /// to the screen exactly as the model wrote them.
+    private func inline(_ raw: String) -> Text {
+        let body = NovaMath.renderInline(raw)
         if let attributed = try? AttributedString(
             markdown: body,
             options: AttributedString.MarkdownParsingOptions(
@@ -98,13 +137,21 @@ public enum NovaMarkdownBlock: Equatable, Sendable {
     case bullet(depth: Int, String)
     case numbered(Int, String)
     case quote(String)
-    case code(String)
+    /// A fenced code block, with the language from the fence's info string.
+    case code(language: String?, String)
+    /// Display maths — an equation the model put on a line of its own.
+    case math(String)
     case rule
 
     public static func parse(_ text: String) -> [NovaMarkdownBlock] {
         var blocks: [NovaMarkdownBlock] = []
         var paragraph: [String] = []
         var codeLines: [String]?
+        var codeLanguage: String?
+        /// The delimiter that opened a display-maths block running over several
+        /// lines, and the lines it has taken so far.
+        var mathOpener: String?
+        var mathLines: [String] = []
 
         func flushParagraph() {
             let joined = paragraph.joined(separator: " ")
@@ -120,16 +167,43 @@ public enum NovaMarkdownBlock: Equatable, Sendable {
             // Fenced code: everything between ``` markers is kept verbatim.
             if trimmed.hasPrefix("```") {
                 if let open = codeLines {
-                    blocks.append(.code(open.joined(separator: "\n")))
+                    blocks.append(.code(language: codeLanguage, open.joined(separator: "\n")))
                     codeLines = nil
+                    codeLanguage = nil
                 } else {
                     flushParagraph()
                     codeLines = []
+                    let info = trimmed.dropFirst(3).trimmingCharacters(in: .whitespaces)
+                    codeLanguage = info.isEmpty ? nil : info
                 }
                 continue
             }
             if codeLines != nil {
                 codeLines?.append(line)
+                continue
+            }
+
+            // Display maths spread over several lines, `$$` … `$$`.
+            if let opener = mathOpener {
+                mathLines.append(line)
+                if NovaMath.closesDisplayMath(trimmed, opener: opener) {
+                    let body = mathLines.joined(separator: "\n")
+                    let closer = opener == "$$" ? "$$" : "\\]"
+                    blocks.append(.math(NovaMath.render(String(body.dropLast(closer.count)))))
+                    mathOpener = nil
+                    mathLines = []
+                }
+                continue
+            }
+            if let rendered = NovaMath.displayMath(in: trimmed) {
+                flushParagraph()
+                blocks.append(.math(rendered))
+                continue
+            }
+            if let opener = NovaMath.opensDisplayMath(trimmed) {
+                flushParagraph()
+                mathOpener = opener
+                mathLines = [String(trimmed.dropFirst(opener.count))]
                 continue
             }
 
@@ -169,9 +243,12 @@ public enum NovaMarkdownBlock: Equatable, Sendable {
             paragraph.append(trimmed)
         }
 
-        // An unterminated fence (still streaming) still shows what's arrived.
+        // Unterminated blocks (still streaming) still show what's arrived.
         if let open = codeLines, !open.isEmpty {
-            blocks.append(.code(open.joined(separator: "\n")))
+            blocks.append(.code(language: codeLanguage, open.joined(separator: "\n")))
+        }
+        if mathOpener != nil, !mathLines.isEmpty {
+            blocks.append(.math(NovaMath.render(mathLines.joined(separator: "\n"))))
         }
         flushParagraph()
         return blocks

@@ -192,15 +192,20 @@ Universal app, Swift 6 (strict concurrency), SwiftUI-first, Liquid Glass design 
   in flight. `dataRepresentation()` runs inside the debounced save, never per
   stroke. `PenShaper` no-ops inside a wide sensitivity deadband so the default pen
   never triggers a rewrite at all.
-- Undo/redo belong to the PAGE: `PageCanvasView` overrides `undoManager` with its
-  own `pageUndoManager`. `UIResponder.undoManager` walks the responder chain, and
-  a PKCanvasView that is never first responder resolves to nothing — so PencilKit
-  registered its stroke undos somewhere the rail's buttons could not reach and
-  both buttons did nothing. Programmatic rewrites go through `replace(_:on:
-  undoName:)`: a refinement of the stroke just drawn (pen shaping, shape snap)
-  passes nil so one line isn't two presses to take back; scribble-erase and
-  beautification register their own entry, and beautification's restores the ink
-  AND the elements together (`apply(plan:)` returns the elements as they were).
+- The page OWNS its history; it does not borrow PencilKit's.
+  `PageCanvasView.pageUndoManager` is the stack the rail drives, and the
+  coordinator pushes a whole-drawing snapshot step whenever a change settles
+  (`commitUndoStep`). PencilKit is handed a separate `inkSink` manager that
+  nothing ever drives. Handing PencilKit the real manager and hoping it would
+  register there is what made Undo and Redo dead buttons for the editor's whole
+  life: `UIResponder.undoManager` walks the responder chain, a PKCanvasView
+  inside SwiftUI is never first responder, and whatever it resolved to was not
+  ours. Snapshots (not deltas) because a page of ink is tens of kilobytes and a
+  step happens when the hand rests — and because "Undo puts the page back the way
+  it was" is then exactly true. A rewrite (`replace`) never opens its own step, so
+  refining the stroke just drawn — pen shaping, the ruler, a shape snap — is one
+  press to take back; beautification pushes a step carrying the ink AND the
+  elements in both directions (`apply(plan:)` returns `BeautifyElements`).
 - Which closed shape the ink meant is decided by FIT RESIDUAL
   (`ShapeSnapper.bestClosedShape`), not by counting corners. A hand-drawn square's
   corners are rounded, its sides bow, and the down-sample that stops sampling
@@ -346,4 +351,58 @@ ML feature — distinct from the shipped handwriting→text) stays a premium stu
   photos, fills and text boxes, rendered as they look. It used to copy only the
   text of any text boxes caught, so circling a diagram and pressing Copy reported
   there was nothing to copy. Circling is a spatial act: the selection is a region
-  of the page, and the honest answer to "copy this" is that region.
+  of the page, and the honest answer to "copy this" is that region. The snip is
+  also kept in hand (`copiedSnip`), so the Paste chip can put it straight back on
+  the page as an image element; pasting switches to `.hand` because drag and
+  pinch only work when the pencil isn't drawing.
+
+## Architecture invariants (snapping, ruler, fill round)
+
+- A held shape TAKES OVER the pencil. When `previewSnap` accepts a dwell it calls
+  `suppressLiveInk`, which disables `drawingGestureRecognizer` — the stroke in
+  flight belongs to PencilKit and can only be cancelled, and leaving it meant the
+  raw wandering ink kept drawing on top of the clean shape for as long as the hand
+  moved. That is why the snap only ever *looked* like it happened on release. The
+  shape is committed on the lift by `commitSettledShape`, which replaces the last
+  stroke if PencilKit kept it and otherwise inks the shape from the tool in hand
+  (`ShapeSnapper.stroke(from:ink:width:)`). `updateUIView` must not re-enable
+  drawing while `isSuppressingLiveInk`, and the ink pass and history steps both
+  wait on `isPencilDown`.
+- The assists have RESISTANCE, not just a click. `ShapeSnapper.detented` eases the
+  free end back toward level/upright between `detentAngle` and `detentPull`
+  instead of following the pencil exactly, and `squared` pulls a nearly-square box
+  square (which is what turns a drawn ellipse into a circle). `resolve` returns
+  whether an assist landed so the haptic fires on the way IN only.
+- The ruler is a WALL, not a picture of one. `RulerGuide` (pure, in NotesModels)
+  projects ink drawn along either long edge onto that edge; `RulerOverlay`
+  publishes its endpoints in the editor's coordinate space and each page converts
+  them through its own frame. The overlay must NOT `ignoresSafeArea`, or the line
+  the ink is ruled against sits a safe area away from the one on screen. Ink drawn
+  ACROSS the edge (a crossed t) is left alone by the aspect test.
+- The paint bucket fills as far as the paint reaches, and the colour goes UNDER
+  the ink (`PageFillLayer`, below `CanvasPageView`). Fills were in
+  `PageElementsLayer` before, which was wrong twice: an element is drawn inside a
+  frame at its own box but a fill's outline is in absolute page coordinates, so
+  the colour landed offset by its own origin; and drawing over the ink is the only
+  reason an open shape ever had to be refused. `FillGeometry.freePixel` nudges a
+  tap that landed on a line into the space beside it. `PageContentView` (the
+  iPhone viewer and the ClassMate render) draws fills the same way.
+- Beautification judges a line against the PAGE, never against a fixed number of
+  points. `isWritingLine(_:pageSize:)` allows up to `pageSize.height * 0.22` and
+  rules out tall ink by shape (writing runs across, a diagram runs down). The old
+  flat 130-point ceiling is exactly why it "only worked zoomed in": zooming lays
+  the page out bigger without changing its logical size, so the same hand covers
+  fewer logical points and only then fitted. The claim band around a Vision box is
+  0.45 of the line height, not 0.6 — a wider band reached into the lines above and
+  below, leaving them with no ink of their own to typeset.
+- NOVA renders LaTeX itself (`NovaMath`). Every model answers a maths question in
+  LaTeX, and Markdown passes `$x^2$` and `\frac{a}{b}` straight through to the
+  screen. There is no LaTeX engine and there doesn't need to be one: the markup is
+  parsed with matched braces and rendered to Unicode (`x²`, `√2`, `(x + 1)/2`),
+  inline and as display blocks. A lone `$` is left alone — a price is not an
+  equation. Fenced code carries its language.
+- Page settings never target the COVER. A cover's paper is the notebook's
+  artwork, so a template or a rule colour chosen for it changes nothing you can
+  see — and the cover is the first page, focused by default, which is why the
+  sheet appeared to do nothing at all. `settingsTargetPage` skips it, and the
+  sheet says which page it is editing and offers "Apply to every page".

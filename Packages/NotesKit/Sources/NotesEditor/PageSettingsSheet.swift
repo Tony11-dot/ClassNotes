@@ -11,19 +11,52 @@ struct PageSettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let page: PageRecord
+    /// Which page this is, 1-based — so it's obvious what the sheet is editing.
+    let index: Int?
     let onApply: (PageStyle) -> Void
+    let onApplyToAll: () -> Void
 
     @State private var style: PageStyle
+    @State private var appliedToAll = false
 
-    init(page: PageRecord, onApply: @escaping (PageStyle) -> Void) {
+    init(
+        page: PageRecord,
+        index: Int? = nil,
+        onApply: @escaping (PageStyle) -> Void,
+        onApplyToAll: @escaping () -> Void = {}
+    ) {
         self.page = page
+        self.index = index
         self.onApply = onApply
+        self.onApplyToAll = onApplyToAll
         _style = State(initialValue: page.style)
     }
 
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    // A notebook can be dozens of pages long and these settings
+                    // are per page. Saying which one stops "nothing changed" from
+                    // meaning "you were changing a different page".
+                    Button {
+                        onApplyToAll()
+                        appliedToAll = true
+                    } label: {
+                        Label(
+                            appliedToAll ? "Applied to every page" : "Apply to every page",
+                            systemImage: appliedToAll ? "checkmark.circle.fill" : "square.on.square"
+                        )
+                        .foregroundStyle(theme.accent.color)
+                    }
+                    .disabled(appliedToAll)
+                } header: {
+                    Text(index.map { "Page \($0)" } ?? "This page")
+                } footer: {
+                    Text("These settings change this page only, unless you apply them to every page.")
+                        .font(.dsCaption)
+                }
+
                 Section("Preview") {
                     PageTemplateView(style: style)
                         .aspectRatio(PageTemplateView.aspectRatio(of: style), contentMode: .fit)
@@ -100,7 +133,10 @@ struct PageSettingsSheet: View {
                     Button("Done") { dismiss() }
                 }
             }
-            .onChange(of: style) { _, updated in onApply(updated) }
+            .onChange(of: style) { _, updated in
+                appliedToAll = false
+                onApply(updated)
+            }
         }
     }
 

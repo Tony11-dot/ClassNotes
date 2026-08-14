@@ -681,3 +681,75 @@ struct LiveBeautifierPlanTests {
         #expect(unified.typeSize(forInkHeight: 80) == 31)
     }
 }
+
+/// The straight-edge does a real ruler's job: ink drawn down its side comes out
+/// straight however much the hand wandered.
+@Suite("Ruler guide")
+struct RulerGuideTests {
+    /// A ruler lying flat across the page, 44 points wide.
+    private let guide = RulerGuide(
+        start: CGPoint(x: 100, y: 400), end: CGPoint(x: 600, y: 400), halfWidth: 22
+    )
+
+    /// A wobbly hand running along the ruler's lower edge (y = 422).
+    private func alongLowerEdge(wobble: CGFloat = 6) -> [CGPoint] {
+        (0...40).map { index in
+            let t = CGFloat(index) / 40
+            return CGPoint(x: 120 + t * 400, y: 428 + sin(t * .pi * 3) * wobble)
+        }
+    }
+
+    @Test("A wobbly line drawn down the edge comes out exactly straight")
+    func straightensAlongTheEdge() throws {
+        let ruled = try #require(guide.straightened(alongLowerEdge()))
+        #expect(ruled.count == 2)
+        // Both ends sit on the ruler's lower edge, and the wobble is gone.
+        #expect(abs(ruled[0].y - 422) < 0.001)
+        #expect(abs(ruled[1].y - 422) < 0.001)
+        // It keeps the length it was drawn at, and the direction of the hand.
+        #expect(ruled[0].x < ruled[1].x)
+        #expect(abs(ruled[1].x - ruled[0].x - 400) < 1)
+    }
+
+    @Test("Drawn right to left, it stays right to left")
+    func keepsTheDirection() throws {
+        let backwards = Array(alongLowerEdge().reversed())
+        let ruled = try #require(guide.straightened(backwards))
+        #expect(ruled[0].x > ruled[1].x)
+    }
+
+    @Test("Each long edge guides, so it works on both sides")
+    func bothEdgesGuide() throws {
+        let above = (0...30).map { index -> CGPoint in
+            let t = CGFloat(index) / 30
+            return CGPoint(x: 150 + t * 300, y: 372 + sin(t * .pi * 2) * 5)
+        }
+        let ruled = try #require(guide.straightened(above))
+        #expect(abs(ruled[0].y - 378) < 0.001, "the upper edge, not the lower one")
+    }
+
+    @Test("Writing elsewhere on the page is left completely alone")
+    func ignoresInkAwayFromTheRuler() {
+        let elsewhere = (0...30).map { index -> CGPoint in
+            let t = CGFloat(index) / 30
+            return CGPoint(x: 120 + t * 300, y: 700 + sin(t * .pi * 2) * 8)
+        }
+        #expect(guide.straightened(elsewhere) == nil)
+    }
+
+    @Test("A mark drawn ACROSS the ruler is not flattened into it")
+    func ignoresStrokesAcrossTheEdge() {
+        // Crossing a t against the ruler's edge must stay a crossed t, not become
+        // another line down the edge.
+        let tick = (0...10).map { index -> CGPoint in
+            CGPoint(x: 300, y: 410 + CGFloat(index) * 3)
+        }
+        #expect(guide.straightened(tick) == nil)
+    }
+
+    @Test("A dot beside the ruler is not a ruled line")
+    func ignoresTinyMarks() {
+        let dot = [CGPoint(x: 300, y: 424), CGPoint(x: 302, y: 425)]
+        #expect(guide.straightened(dot) == nil)
+    }
+}

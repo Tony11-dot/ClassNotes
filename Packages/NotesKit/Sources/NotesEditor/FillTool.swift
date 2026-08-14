@@ -35,10 +35,11 @@ enum FillTool {
               CGRect(origin: .zero, size: pageSize).contains(point) else { return nil }
         guard let mask = inkMask(of: drawing, pageSize: pageSize) else { return nil }
 
-        let seed = (
-            x: Int(point.x * maskScale),
-            y: Int(point.y * maskScale)
-        )
+        // Tapping on the line itself is a miss by a pixel or two, not a change of
+        // mind: the paint belongs in the region the tap was aimed at.
+        guard let seed = FillGeometry.freePixel(
+            near: (x: Int(point.x * maskScale), y: Int(point.y * maskScale)), in: mask
+        ) else { return nil }
         guard let region = FillGeometry.region(in: mask, from: seed) else { return nil }
         let traced = FillGeometry.outline(of: region)
         guard traced.count > 8 else { return nil }

@@ -2,17 +2,35 @@ import ClassMateTheme
 import NotesDesignSystem
 import SwiftUI
 
+/// Where the straight-edge is sitting, in the editor's own coordinate space.
+/// Published upwards so the ink pass can rule the strokes drawn along it.
+struct RulerLine: Equatable {
+    var start: CGPoint
+    var end: CGPoint
+}
+
 /// A translucent straight-edge you position with two draggable ends — one per
 /// hand — while drawing a line against it with the Pencil. Each endpoint is its
 /// own handle, so two fingers adjust each side independently (rotation + length
 /// fall out of moving the two ends). Honors Reduce Transparency via the theme
 /// glass helper.
+///
+/// It is a real straight-edge, not a picture of one: ink drawn along either long
+/// edge is projected onto that edge (`RulerGuide`), so the line comes out exactly
+/// straight however much the hand wandered up and down it.
 struct RulerOverlay: View {
     @Environment(\.theme) private var theme
 
     @Binding var isVisible: Bool
+    /// Reported up so the pages can convert it into their own space.
+    @Binding var line: RulerLine?
+
     @State private var start: CGPoint?
     @State private var end: CGPoint?
+
+    /// How wide the straight-edge is. Both long edges guide, so this is also how
+    /// far apart the two guides are.
+    static let thickness: CGFloat = 44
 
     var body: some View {
         GeometryReader { geo in
@@ -28,10 +46,21 @@ struct RulerOverlay: View {
             .onAppear {
                 if start == nil { start = a }
                 if end == nil { end = b }
+                publish(a, b)
+            }
+            .onChange(of: RulerLine(start: a, end: b)) { _, updated in
+                line = isVisible ? updated : nil
+            }
+            .onChange(of: isVisible) { _, visible in
+                line = visible ? RulerLine(start: a, end: b) : nil
             }
         }
         .allowsHitTesting(isVisible)
         .opacity(isVisible ? 1 : 0)
+    }
+
+    private func publish(_ a: CGPoint, _ b: CGPoint) {
+        line = isVisible ? RulerLine(start: a, end: b) : nil
     }
 
     private func rulerBody(from a: CGPoint, to b: CGPoint) -> some View {
@@ -58,7 +87,7 @@ struct RulerOverlay: View {
                 .overlay(
                     Rectangle().stroke(theme.accent.color.opacity(0.7), lineWidth: 1)
                 )
-                .frame(width: length, height: 44)
+                .frame(width: length, height: Self.thickness)
                 .rotationEffect(.radians(angle))
                 .position(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
         }

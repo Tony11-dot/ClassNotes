@@ -48,7 +48,18 @@ public struct PageContentView: View {
 
     public var body: some View {
         ZStack(alignment: .topLeading) {
-            ForEach(elements) { element in
+            // Fills first and whole-page: their outlines are in absolute page
+            // coordinates, so putting one inside a frame at its own box offsets
+            // the colour by that box a second time and it lands nowhere near the
+            // shape it was flooded out of.
+            ForEach(elements.filter { $0.kind == .fill }) { element in
+                FillRegionView(
+                    points: element.points.map { CGPoint(x: $0.x * scale, y: $0.y * scale) },
+                    color: element.colorHex.flatMap(ThemeColor.init(hex:)) ?? theme.accentMuted
+                )
+                .frame(width: displaySize.width, height: displaySize.height, alignment: .topLeading)
+            }
+            ForEach(elements.filter { $0.kind != .fill }) { element in
                 view(for: element)
                     .frame(width: element.width * scale, height: element.height * scale)
                     .rotationEffect(.degrees(element.rotation))
@@ -66,10 +77,8 @@ public struct PageContentView: View {
     private func view(for element: PageElement) -> some View {
         switch element.kind {
         case .fill:
-            FillRegionView(
-                points: element.points.map { CGPoint(x: $0.x * scale, y: $0.y * scale) },
-                color: element.colorHex.flatMap(ThemeColor.init(hex:)) ?? theme.accentMuted
-            )
+            // Drawn whole-page above; never reached.
+            Color.clear
         case .image:
             imageView(element)
         case .text:

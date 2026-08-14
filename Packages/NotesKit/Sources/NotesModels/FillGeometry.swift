@@ -41,18 +41,26 @@ public enum FillGeometry {
         }
     }
 
-    /// How far a fill may spread before we call it "the whole page" and refuse.
-    /// A tap in the margin of an open shape floods everywhere; filling the entire
-    /// page with colour is never what anybody meant, and it buries their notes.
-    public static let maximumCoverage = 0.92
+    /// How far a fill may spread before it is refused, as a fraction of the page.
+    ///
+    /// The default is 1: a fill goes wherever the paint can reach. It used to stop
+    /// at 92% on the theory that a shape with a gap in it had leaked and filling
+    /// the page would bury the notes — but "I meant that one" and "the outline
+    /// wasn't quite closed" look identical from here, and refusing meant the
+    /// bucket did nothing at all on any shape drawn slightly open. The colour goes
+    /// UNDER the ink now (`PageFillLayer`), so a page-wide fill is a background
+    /// wash and the writing stays exactly as legible as it was.
+    public static let maximumCoverage = 1.0
 
     /// The region reachable from `origin` without crossing ink.
     ///
     /// Scanline flood fill (runs, not per-pixel recursion) so a full page is a
     /// few thousand spans rather than a few hundred thousand stack frames.
-    /// Returns nil when the tap landed ON the ink, or when the fill escaped and
-    /// swallowed the page.
-    public static func region(in ink: Mask, from origin: (x: Int, y: Int)) -> Mask? {
+    /// Returns nil when the tap landed ON the ink, or when the fill spread past
+    /// `coverageLimit` of the page.
+    public static func region(
+        in ink: Mask, from origin: (x: Int, y: Int), coverageLimit: Double = maximumCoverage
+    ) -> Mask? {
         guard ink.contains(origin.x, origin.y), !ink[origin.x, origin.y] else { return nil }
         var filled = Mask(width: ink.width, height: ink.height)
         var stack: [(x: Int, y: Int)] = [origin]
@@ -85,9 +93,32 @@ public enum FillGeometry {
         }
 
         let area = Double(ink.width * ink.height)
-        guard area > 0, Double(count) / area <= maximumCoverage else { return nil }
+        guard area > 0, Double(count) / area <= coverageLimit else { return nil }
         guard count > 0 else { return nil }
         return filled
+    }
+
+    /// The nearest free pixel to `origin`, searched outward in rings.
+    ///
+    /// Tapping the bucket exactly on a line is a miss by a pixel or two, not a
+    /// change of mind — the fill belongs in the region beside the stroke, which is
+    /// what the tap was aiming at. Returns nil when the tap is buried in ink.
+    public static func freePixel(
+        near origin: (x: Int, y: Int), in ink: Mask, radius: Int = 12
+    ) -> (x: Int, y: Int)? {
+        if ink.contains(origin.x, origin.y), !ink[origin.x, origin.y] { return origin }
+        guard radius > 0 else { return nil }
+        for ring in 1...radius {
+            for dy in -ring...ring {
+                for dx in -ring...ring where abs(dx) == ring || abs(dy) == ring {
+                    let candidate = (x: origin.x + dx, y: origin.y + dy)
+                    if ink.contains(candidate.x, candidate.y), !ink[candidate.x, candidate.y] {
+                        return candidate
+                    }
+                }
+            }
+        }
+        return nil
     }
 
     /// The outline of a filled region, traced clockwise from its top-left pixel.

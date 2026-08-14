@@ -46,7 +46,10 @@ struct PageElementsLayer: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            ForEach(elements) { element in
+            // Fills are not in here: their outlines are in absolute page
+            // coordinates and they belong underneath the ink, so `PageFillLayer`
+            // draws them below the canvas instead.
+            ForEach(elements.filter { $0.kind != .fill }) { element in
                 let live = draggingID == element.id ? dragOffset : .zero
                 elementView(element)
                     .frame(width: element.width * scale, height: element.height * scale)
@@ -165,10 +168,8 @@ struct PageElementsLayer: View {
     private func elementView(_ element: PageElement) -> some View {
         switch element.kind {
         case .fill:
-            FillRegionView(
-                points: element.points.map { CGPoint(x: $0.x * scale, y: $0.y * scale) },
-                color: element.colorHex.flatMap(ThemeColor.init(hex:)) ?? theme.accentMuted
-            )
+            // Drawn by `PageFillLayer`, under the ink. Never reached.
+            Color.clear
         case .image:
             if let filename = element.payloadFilename,
                let data = try? Data(contentsOf: model.mediaURL(filename: filename)),

@@ -28,6 +28,12 @@ public struct EditorScreen: View {
     @State var beautifier = LiveBeautifier()
 
     @State var rulerVisible = false
+    /// Where the straight-edge lies, in the editor's coordinate space, so each
+    /// page can work out where it crosses that page and rule the ink along it.
+    @State var rulerLine: RulerLine?
+    /// The last region the lasso copied, kept so it can be pasted back onto the
+    /// page rather than only into another app.
+    @State var copiedSnip: UIImage?
     @State var explainMode = false
     @State var showPages = false
     @State var addingBottom = false
@@ -104,7 +110,10 @@ public struct EditorScreen: View {
                 BrandLoader(size: 56).frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             if rulerVisible {
-                RulerOverlay(isVisible: $rulerVisible).ignoresSafeArea()
+                // NOT `ignoresSafeArea`: the ruler's own coordinates have to be
+                // the editor's, or the line the ink is ruled against sits a safe
+                // area's worth away from the one on screen.
+                RulerOverlay(isVisible: $rulerVisible, line: $rulerLine)
             }
             if explainMode {
                 SnipOverlay(
@@ -153,6 +162,7 @@ public struct EditorScreen: View {
         .overlay(alignment: .top) { noticeBanner }
         .overlay(alignment: .top) { liveBeautifyIndicator }
         .overlay(alignment: .bottom) { zoomIndicator }
+        .overlay(alignment: .bottomLeading) { pasteChip }
         .overlay { beautifyingOverlay }
         .animation(.spring(duration: 0.3), value: showPages)
         .animation(.spring(duration: 0.3), value: showNova)
@@ -221,10 +231,30 @@ public struct EditorScreen: View {
             }
         }
         .sheet(item: $pageSettings) { page in
-            PageSettingsSheet(page: page) { style in
-                Task { await model.updatePageSettings(pageID: page.id, style: style) }
-            }
+            PageSettingsSheet(
+                page: page,
+                index: (model.pages.firstIndex { $0.id == page.id }).map { $0 + 1 },
+                onApply: { style in
+                    Task { await model.updatePageSettings(pageID: page.id, style: style) }
+                },
+                onApplyToAll: {
+                    Task { await model.applyStyleToAllPages(from: page.id) }
+                }
+            )
         }
+    }
+
+    /// Which page "Page settings" edits.
+    ///
+    /// The focused page, unless that's the cover — a cover's paper IS the
+    /// notebook's artwork, so a template, a rule colour or a line spacing chosen
+    /// for it changes nothing you can see. The library's own first page is
+    /// the cover, and it is focused by default, which is why the sheet looked
+    /// like it did nothing at all.
+    var settingsTargetPage: PageRecord? {
+        let focused = model.page(model.focusedPageID)
+        if let focused, !focused.isCover { return focused }
+        return model.pages.first { !$0.isCover } ?? focused ?? model.pages.first
     }
 
     // MARK: - NOVA
@@ -366,7 +396,7 @@ public struct EditorScreen: View {
                     Label("Handwriting → text", systemImage: "text.viewfinder")
                 }
                 Button {
-                    pageSettings = model.page(model.focusedPageID) ?? model.pages.first
+                    pageSettings = settingsTargetPage
                 } label: {
                     Label("Page settings", systemImage: "slider.horizontal.3")
                 }
@@ -529,6 +559,12 @@ extension EditorScreen {
         let content = ZStack {
             pagePaper(page)
             if let bg = backgroundImage(for: page) { Image(uiImage: bg).resizable().scaledToFit() }
+            // Paint under the ink, exactly as the page draws it.
+            PageFillLayer(
+                elements: page.elements,
+                displaySize: logicalSize,
+                logicalSize: logicalSize
+            )
             if let ink { Image(uiImage: ink).resizable().scaledToFit() }
             PageElementsLayer(
                 pageID: page.id, elements: page.elements, model: model,

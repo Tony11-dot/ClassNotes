@@ -19,9 +19,18 @@ import UIKit
 /// separately with the alpha preserved. On the plain light theme this is close to
 /// identity, so the original blue splash survives.
 public enum LaunchScene {
-    /// The two colours baked into the artwork: the navy mark and the white canvas.
-    static let navy: [Double] = [0.047, 0.098, 0.576]
+    /// The two colours baked into the artwork: the brand blue of the mark and the
+    /// white canvas behind it.
+    ///
+    /// These have to match the shipped `LaunchScene.json` exactly enough to fall
+    /// inside `colourTolerance`. Re-export the scene and the blue moves; miss it
+    /// and the recolouring silently does nothing, so the launch plays in last
+    /// season's blue on every theme.
+    static let navy: [Double] = [0.059, 0.169, 0.714]
     static let white: [Double] = [1, 1, 1]
+    /// How far an exported colour may sit from the value above and still be
+    /// recognised. Exporters round, and a re-export nudges the last digit.
+    static let colourTolerance: Double = 0.06
 
     static var rawJSON: Data? {
         guard let url = Bundle.module.url(forResource: "LaunchScene", withExtension: "json")
@@ -93,7 +102,7 @@ public enum LaunchScene {
             guard components.count >= 3 else { return false }
             for index in 0..<3 {
                 guard let value = components[index] as? Double,
-                      abs(value - from[index]) <= 0.03 else { return false }
+                      abs(value - from[index]) <= colourTolerance else { return false }
             }
             return true
         }

@@ -27,6 +27,11 @@ final class StrokeDwellRecognizer: UIGestureRecognizer {
     /// The path so far, in the canvas's own logical coordinates.
     private(set) var points: [CGPoint] = []
 
+    /// Whether the pencil is still on the glass. The ink pass reads this: a shape
+    /// held under a live pencil is still being sized, so committing it — or
+    /// closing a history step around it — has to wait for the lift.
+    private(set) var isTouching = false
+
     /// Fired when the pencil has rested long enough, with the path drawn up to the
     /// rest. Returns whether the rest was USED — a pause over ink that isn't a
     /// shape yet (halfway round a circle) must leave the stroke exactly as it was,
@@ -75,6 +80,7 @@ final class StrokeDwellRecognizer: UIGestureRecognizer {
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
         super.touchesBegan(touches, with: event)
         guard let touch = touches.first, let map = logicalPoint else { return }
+        isTouching = true
         points = [map(touch)]
         restAnchor = points[0]
         restSince = CACurrentMediaTime()
@@ -137,6 +143,7 @@ final class StrokeDwellRecognizer: UIGestureRecognizer {
     private func finish() {
         dwellTimer?.invalidate()
         dwellTimer = nil
+        isTouching = false
         onEnd?(didDwell)
         didDwell = false
         restAnchor = nil
