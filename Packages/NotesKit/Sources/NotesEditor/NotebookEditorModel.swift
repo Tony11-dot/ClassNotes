@@ -107,6 +107,27 @@ public final class NotebookEditorModel {
         if focusedPageID == pageID { focusedPageID = manifest?.pages.first?.id }
     }
 
+    /// Flags or unflags a page. A duplicate of a bookmarked page is deliberately
+    /// NOT bookmarked — the flag marks a place, and a copy isn't that place.
+    public func toggleBookmark(_ pageID: UUID, name: String? = nil) async {
+        guard let page = page(pageID) else { return }
+        manifest = try? await store.setBookmark(
+            notebook: notebookID, page: pageID, isBookmarked: !page.isBookmarked, name: name
+        )
+    }
+
+    /// The flagged pages in page order, for the bookmark jump menu.
+    public var bookmarkedPages: [PageRecord] { manifest?.bookmarkedPages ?? [] }
+
+    /// What a bookmark is called in the jump list: the name the user gave it, or
+    /// the page's own number.
+    public func bookmarkLabel(for page: PageRecord) -> String {
+        if let name = page.bookmarkName, !name.isEmpty { return name }
+        if page.isCover { return "Cover" }
+        guard let index = pages.firstIndex(where: { $0.id == page.id }) else { return "Page" }
+        return "Page \(pages.prefix(index + 1).filter { !$0.isCover }.count)"
+    }
+
     public func duplicatePage(_ pageID: UUID) async {
         manifest = try? await store.duplicatePage(notebook: notebookID, page: pageID)
     }

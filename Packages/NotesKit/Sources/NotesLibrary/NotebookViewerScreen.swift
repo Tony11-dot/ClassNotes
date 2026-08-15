@@ -18,27 +18,42 @@ public struct NotebookViewerScreen: View {
     @Environment(\.paperTone) private var paperTone
 
     private let notebook: Notebook
+    /// The page to scroll to on open — a search hit, or a bookmark.
+    private let openingPage: UUID?
 
     @State private var manifest: NotebookManifest?
     @State private var inkImages: [UUID: UIImage] = [:]
     @State private var backgrounds: [UUID: UIImage] = [:]
     @State private var zoomedPage: PageRecord?
 
-    public init(notebook: Notebook) {
+    public init(notebook: Notebook, openingPage: UUID? = nil) {
         self.notebook = notebook
+        self.openingPage = openingPage
     }
 
     public var body: some View {
         Group {
             if let manifest {
-                ScrollView {
-                    LazyVStack(spacing: 20) {
-                        ForEach(Array(manifest.pages.enumerated()), id: \.element.id) { index, page in
-                            pageView(page, label: pageLabel(at: index))
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 20) {
+                            ForEach(Array(manifest.pages.enumerated()), id: \.element.id) { index, page in
+                                pageView(page, label: pageLabel(at: index))
+                                    .id(page.id)
+                            }
                         }
+                        .padding(.vertical, 20)
+                        .padding(.horizontal, 12)
                     }
-                    .padding(.vertical, 20)
-                    .padding(.horizontal, 12)
+                    .onAppear {
+                        // Only once the pages exist — scrolling to an id that
+                        // isn't in the list yet is a no-op, and this view starts
+                        // out with no manifest at all.
+                        guard let openingPage,
+                              manifest.pages.contains(where: { $0.id == openingPage })
+                        else { return }
+                        proxy.scrollTo(openingPage, anchor: .top)
+                    }
                 }
             } else {
                 BrandLoader(size: 52)

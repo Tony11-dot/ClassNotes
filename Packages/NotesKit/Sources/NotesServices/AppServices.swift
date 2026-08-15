@@ -29,6 +29,9 @@ public final class AppServices {
     /// How the tools are tuned and what the Pencil's gestures do — saved, and
     /// carried between the user's own devices.
     public let settings: SettingsStore
+    /// Reads handwriting into text so notebooks can be searched by what's
+    /// written in them, not only by what they're called.
+    public let searchIndexer: SearchIndexer
 
     public init(modelContainer: ModelContainer, documentsRootURL: URL? = nil) {
         self.modelContainer = modelContainer
@@ -51,6 +54,7 @@ public final class AppServices {
         )
         self.aiProvider = NovaProviderRouter(keychain: keychain)
         self.fontStore = CustomFontStore()
+        self.searchIndexer = SearchIndexer(store: store)
     }
 
     // MARK: - Groq key (entered in Settings, stored in Keychain)
@@ -100,6 +104,22 @@ public final class AppServices {
             let snapshot = repository.fullSnapshot()
             sync.pushAll(notebooks: snapshot.notebooks, shelves: snapshot.shelves)
         }
+        Task { await runMaintenance() }
+    }
+
+    /// Housekeeping that has nothing to do with the account, kept off the sync
+    /// task so a signed-out device still does it.
+    ///
+    /// Reading the library for search runs LAST and at low priority: it is the
+    /// most expensive thing the app does at launch and the least urgent, and it
+    /// must never be what makes the first page slow to open.
+    private func runMaintenance() async {
+        await repository.purgeExpiredTrash()
+        let targets = repository.searchTargets()
+        guard !targets.isEmpty else { return }
+        await Task(priority: .background) { [searchIndexer] in
+            await searchIndexer.indexAll(targets)
+        }.value
     }
 
     /// Reconciles this device's setup with the account's.

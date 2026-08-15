@@ -9,12 +9,15 @@ import SwiftData
 @MainActor
 @Observable
 public final class NotebookRepository {
-    private let context: ModelContext
-    private let store: DocumentStore
+    // Internal rather than private because the trash and favourites half of the
+    // repository lives in `NotebookRepositoryTrash.swift`, and `private` in Swift
+    // is file-scoped. Still invisible outside the module.
+    let context: ModelContext
+    let store: DocumentStore
     private let entitlements: EntitlementService
     /// Optional so tests / previews can omit it; when present, every mutation
     /// mirrors up to the ClassMate backend for the ClassNotes tab.
-    private let sync: SyncService?
+    let sync: SyncService?
 
     public init(
         context: ModelContext,
@@ -30,7 +33,7 @@ public final class NotebookRepository {
 
     // MARK: - Sync snapshots (built on @MainActor from the SwiftData rows)
 
-    private func snapshot(_ n: Notebook) -> NotebookSnapshot {
+    func snapshot(_ n: Notebook) -> NotebookSnapshot {
         NotebookSnapshot(
             id: n.id, title: n.title, coverColorHex: n.coverColorHex,
             template: n.defaultTemplateRaw, shelfID: n.shelfID,
@@ -46,10 +49,20 @@ public final class NotebookRepository {
     }
 
     /// A snapshot of the ENTIRE local library, for the launch full-sync.
+    ///
+    /// Trashed notebooks are left out: they are not in the library any more, and
+    /// pushing one would put it straight back into the ClassNotes tab.
     public func fullSnapshot() -> (notebooks: [NotebookSnapshot], shelves: [ShelfSnapshot]) {
         let notebooks = (try? context.fetch(FetchDescriptor<Notebook>())) ?? []
         let shelves = (try? context.fetch(FetchDescriptor<Shelf>())) ?? []
-        return (notebooks.map(snapshot), shelves.map(snapshot))
+        return (notebooks.filter { !$0.isTrashed }.map(snapshot), shelves.map(snapshot))
+    }
+
+    /// The live library, reduced to what search needs. Trashed notebooks are left
+    /// out — searching turns up things you can open, and you can't open those.
+    public func searchTargets() -> [SearchTarget] {
+        let all = (try? context.fetch(FetchDescriptor<Notebook>())) ?? []
+        return all.filter { !$0.isTrashed }.map { SearchTarget(id: $0.id, title: $0.title) }
     }
 
     public func canCreateNotebook(currentCount: Int) -> Bool {
@@ -222,6 +235,8 @@ public final class NotebookRepository {
         try context.save()
         sync?.pushNotebook(snapshot(notebook))
     }
+
+    // MARK: - Destructive delete (used by remote changes and the trash)
 
     public func delete(_ notebook: Notebook) async throws {
         let id = notebook.id // capture before the row is deleted

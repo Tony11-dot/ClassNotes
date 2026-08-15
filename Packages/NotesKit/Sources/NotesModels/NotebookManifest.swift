@@ -13,10 +13,20 @@ public struct NotebookManifest: Codable, Sendable, Equatable {
     /// v6 adds page size + orientation, the line color and the line spacing, so a
     /// notebook can be A4 landscape with blue rules. v7 adds `PageRecord.isCover`:
     /// the notebook's cover is page one and is drawn on like any other page.
-    /// Older manifests decode fine — every added field is optional / defaulted,
-    /// and `DocumentStore.ensureCoverPage` is what gives a pre-v7 notebook its
-    /// cover page, exactly once.
-    public static let currentVersion = 7
+    /// v8 adds `PageRecord.isBookmarked` — a flagged page, jumped to from the page
+    /// manager. Older manifests decode fine — every added field is optional /
+    /// defaulted, and `DocumentStore.ensureCoverPage` is what gives a pre-v7
+    /// notebook its cover page, exactly once.
+    public static let currentVersion = 8
+
+    /// The version at which the cover became page one.
+    ///
+    /// `ensureCoverPage` keys off THIS, never off `currentVersion`. Those were the
+    /// same number for exactly as long as v7 was the newest manifest, and the
+    /// moment another field was added every v7 notebook would have looked
+    /// "pre-cover" again — handing a cover back to everyone who had deliberately
+    /// deleted theirs, on the next launch after the upgrade.
+    public static let coverPageVersion = 7
 
     public var version: Int
     public var pages: [PageRecord]
@@ -29,6 +39,10 @@ public struct NotebookManifest: Codable, Sendable, Equatable {
     /// The cover page, if this notebook has one.
     public var coverPage: PageRecord? { pages.first { $0.isCover } }
     public var hasCoverPage: Bool { coverPage != nil }
+
+    /// The flagged pages, in page order — what the page manager's bookmark filter
+    /// and the "jump to a bookmark" list are built from.
+    public var bookmarkedPages: [PageRecord] { pages.filter(\.isBookmarked) }
 }
 
 public struct PageRecord: Codable, Sendable, Equatable, Identifiable {
@@ -55,6 +69,12 @@ public struct PageRecord: Codable, Sendable, Equatable, Identifiable {
     /// (`CoverPaper`, from the notebook's design + color + title) instead of a
     /// paper template, and it takes ink exactly like every other page.
     public var isCover: Bool
+    /// Flagged by the user to come back to. Shown as a ribbon on the page
+    /// manager's thumbnail and listed in the bookmark jump menu.
+    public var isBookmarked: Bool
+    /// What the user called this bookmark. `nil` = just the page number, which is
+    /// what a bookmark dropped with one tap gets.
+    public var bookmarkName: String?
 
     public init(
         id: UUID = UUID(),
@@ -68,7 +88,9 @@ public struct PageRecord: Codable, Sendable, Equatable, Identifiable {
         orientation: PageOrientation = .portrait,
         lineColorHex: String? = nil,
         lineSpacingSteps: Int = PageLineSpacing.default,
-        isCover: Bool = false
+        isCover: Bool = false,
+        isBookmarked: Bool = false,
+        bookmarkName: String? = nil
     ) {
         self.id = id
         self.template = template
@@ -82,6 +104,8 @@ public struct PageRecord: Codable, Sendable, Equatable, Identifiable {
         self.lineColorHex = lineColorHex
         self.lineSpacingSteps = lineSpacingSteps
         self.isCover = isCover
+        self.isBookmarked = isBookmarked
+        self.bookmarkName = bookmarkName
     }
 
     /// The ink coordinate space for this page.
@@ -100,7 +124,7 @@ public struct PageRecord: Codable, Sendable, Equatable, Identifiable {
     private enum CodingKeys: String, CodingKey {
         case id, template, createdAt, elements, margin, paperColorHex
         case backgroundPayloadFilename, pageSize, orientation, lineColorHex, lineSpacingSteps
-        case isCover
+        case isCover, isBookmarked, bookmarkName
     }
 
     // Custom decode so older manifests (missing later keys) load without loss —
@@ -126,6 +150,8 @@ public struct PageRecord: Codable, Sendable, Equatable, Identifiable {
             Int.self, forKey: .lineSpacingSteps
         ) ?? PageLineSpacing.default
         isCover = try container.decodeIfPresent(Bool.self, forKey: .isCover) ?? false
+        isBookmarked = try container.decodeIfPresent(Bool.self, forKey: .isBookmarked) ?? false
+        bookmarkName = try container.decodeIfPresent(String.self, forKey: .bookmarkName)
     }
 }
 

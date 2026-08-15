@@ -449,8 +449,75 @@ ML feature — distinct from the shipped handwriting→text) stays a premium stu
   parsed with matched braces and rendered to Unicode (`x²`, `√2`, `(x + 1)/2`),
   inline and as display blocks. A lone `$` is left alone — a price is not an
   equation. Fenced code carries its language.
+
 - Page settings never target the COVER. A cover's paper is the notebook's
   artwork, so a template or a rule colour chosen for it changes nothing you can
   see — and the cover is the first page, focused by default, which is why the
   sheet appeared to do nothing at all. `settingsTargetPage` skips it, and the
   sheet says which page it is editing and offers "Apply to every page".
+
+## Architecture invariants (library round: search, export, trash, bookmarks)
+
+- Deleting a notebook does NOT destroy it. `Notebook.deletedAt` is the only thing
+  a delete sets; the row and the whole document package stay exactly as they
+  were, and `NotebookRepository.purge` is the single step that removes ink.
+  `TrashPolicy` (pure, in NotesModels) owns the thirty days, and
+  `purgeExpiredTrash(now:)` takes a clock so the rule is testable without waiting
+  a month. `deletedAt == nil` means LIVE and must never read as "deleted at the
+  epoch" — that reading would purge the entire library on the next launch.
+  Re-trashing an already-trashed notebook must not re-stamp the date, or the
+  grace period silently restarts every time anything touches the row and nothing
+  is ever actually purged. Every list of notebooks filters `isTrashed` — the
+  grid, the phone list, "add books to shelf", the untitled-name counter,
+  `fullSnapshot` (pushing one would put it straight back in the ClassNotes tab)
+  and `searchTargets` (a result you can't open is not a result).
+- Search is CACHED RECOGNITION, never live recognition. `SearchIndexer` reads a
+  page once — text elements plus Vision over the ink — and stores the result in
+  `search.json` inside the package (`SearchIndex`); a page is re-read only when
+  its ink is newer than the reading (`needsReindex`). The index is DERIVED data:
+  a missing or corrupt one is an empty index, never an error and never a repair,
+  because the worst it can cost is a notebook matching on its title until it's
+  read again. Typing never blocks on recognition — `search(_:across:)` reads only
+  indexes that already exist, and building runs in the background (at launch, and
+  when someone first searches). Ink is rasterised for Vision by `InkRasterizer`,
+  the SAME code beautification uses: black on opaque white, because
+  `PKDrawing.image` is the pen's own colour on transparency and recognises
+  nothing. Two readers of the same ink must not disagree about what it looks
+  like, which is why `LiveBeautifier.recognitionImage` delegates rather than
+  keeping its own copy.
+- `NoteSearch` is pure and total. All terms must appear (AND), matching folds
+  case and accents (handwriting spells neither reliably), and an EMPTY query
+  matches NOTHING — reading "no terms" as "no filter" would make an empty search
+  box return the whole library. Snippets are cut around the earliest matching
+  term by searching INSIDE the displayed string with `.caseInsensitive,
+  .diacriticInsensitive` options: folding to a separate string and re-applying
+  the offset slides the window off the match, because folding can change a
+  string's length.
+- Export renders from DISK, not from the canvas. `NotebookExporter` reads the
+  manifest and the ink blobs, so exporting works from the library without opening
+  the editor and doesn't depend on which pages happen to be on screen. Every page
+  keeps its OWN size in the PDF (`beginPage(withBounds:)`) — a notebook with an
+  A4 scan in the middle must not have that page cropped to page one's geometry.
+  Exporting from INSIDE the editor flushes the live canvases to disk first, or
+  the PDF is missing the last thing the user wrote. `PageCompositeView` is the
+  one page-as-it-looks stack (paper, background, ink, elements), shared by the
+  viewer and the exporter, so a layer added in one is not missing from the other.
+- `NotebookManifest.coverPageVersion` exists because `ensureCoverPage` must key
+  off the version covers ARRIVED at, never off `currentVersion`. Those were the
+  same number only while v7 was newest; keying off the latter means the first
+  time any later field is added (v8: `PageRecord.isBookmarked`), every v7
+  notebook reads as "pre-cover" again and is handed a cover back — including
+  everyone who deliberately deleted theirs.
+- Jumping to a page is a SCROLL, not a highlight. `EditorScreen.jump(to:)` sets
+  `focusedPageID` AND `pageJumpTarget`, which the page stack's `ScrollViewReader`
+  acts on. Setting the focus alone is what "Go to page" used to do: the thumbnail
+  lit up in the page manager and the stack stayed exactly where it was.
+  Bookmarks (`PageRecord.isBookmarked`, manifest v8) and search hits both open a
+  notebook through this, via `EditorScreen(notebook:openingPage:)` — checked
+  after loading, since the id came from an index written earlier and the page it
+  names may since have been deleted.
+- The Beautify button commits through the page's own history
+  (`ActiveCanvasTracker.applyBeautified`), the same step the live pass registers.
+  It used to write the result straight onto the canvas with `setDrawing`, which
+  changes the page without telling its undo stack anything — so the one action
+  most likely to be regretted was the one action that couldn't be taken back.

@@ -160,7 +160,24 @@ extension EditorScreen {
             } action: { _, over in
                 handleOverscroll(over, proxy: proxy)
             }
+            // Jumping to a page is a SCROLL, not a highlight. Setting
+            // `focusedPageID` alone is what "Go to page" used to do: the thumbnail
+            // lit up in the page manager and the page stack stayed exactly where
+            // it was, which reads as a button that does nothing.
+            .onChange(of: pageJumpTarget) { _, target in
+                guard let target else { return }
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    proxy.scrollTo(target, anchor: .top)
+                }
+                pageJumpTarget = nil
+            }
         }
+    }
+
+    /// Focuses a page AND brings it on screen.
+    func jump(to pageID: UUID) {
+        model.focusedPageID = pageID
+        pageJumpTarget = pageID
     }
 
     /// Pinch-to-zoom over the page stack. Clamped so a stray pinch can't leave

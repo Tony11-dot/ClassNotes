@@ -36,6 +36,20 @@ public final class Notebook {
     public var lineColorHex: String?
     public var lineSpacingSteps: Int = PageLineSpacing.default
 
+    // MARK: Added in Milestone 2, round 6
+
+    /// Starred. Favourites sort to the front of the library and have their own
+    /// shelf chip.
+    public var isFavorite: Bool = false
+    /// When this notebook was moved to the trash. `nil` = live.
+    ///
+    /// Deletion is a two-step here, the way it is in every app people trust with
+    /// their coursework: the row and the package stay exactly as they were and
+    /// only stop being listed, so "I deleted the wrong notebook" is survivable
+    /// for `TrashPolicy.retention` instead of being final the instant the finger
+    /// lifts. `NotebookRepository.purge` is the step that actually removes ink.
+    public var deletedAt: Date?
+
     public init(
         id: UUID = UUID(),
         title: String,
@@ -93,6 +107,9 @@ public final class Notebook {
         get { PageOrientation(rawValue: orientationRaw) ?? .portrait }
         set { orientationRaw = newValue.rawValue }
     }
+
+    /// In the trash rather than in the library.
+    public var isTrashed: Bool { deletedAt != nil }
 
     /// Whether this document has a cover PAGE — page one, drawn on like any
     /// other. Only paged notebooks with the cover switch on: a whiteboard is one

@@ -87,6 +87,51 @@ struct CoverPageTests {
         #expect(!reopened.hasCoverPage)
     }
 
+    @Test("A deleted cover stays deleted even after the manifest format moves on")
+    func deletedCoverSurvivesAFormatBump() async throws {
+        // The migration used to be guarded on `version < currentVersion`. That
+        // was indistinguishable from the right rule for exactly as long as v7 was
+        // the newest format — and the moment any later field was added, every v7
+        // notebook read as "pre-cover" again and had a cover handed back to it,
+        // including everyone who had deliberately deleted theirs.
+        let (store, root) = makeStore()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let id = UUID()
+        // A notebook migrated by the build where covers shipped, whose owner then
+        // deleted the cover: stamped v7, and deliberately coverless.
+        let v7 = NotebookManifest(version: 7, pages: [
+            PageRecord(template: .ruled), PageRecord(template: .ruled),
+        ])
+        try FileManager.default.createDirectory(
+            at: store.documentURL(for: id), withIntermediateDirectories: true
+        )
+        try await store.writeManifest(v7, for: id)
+
+        let opened = try await store.ensureCoverPage(notebook: id, style: PageStyle())
+
+        #expect(!opened.hasCoverPage)
+        #expect(opened.pages.count == 2)
+        // ...and it is brought up to today's format, so it isn't re-examined.
+        #expect(opened.version == NotebookManifest.currentVersion)
+    }
+
+    @Test("A notebook older than covers is still migrated after a format bump")
+    func genuinelyOldNotebooksStillGetCovers() async throws {
+        let (store, root) = makeStore()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let id = UUID()
+        let old = NotebookManifest(version: 5, pages: [PageRecord(template: .ruled)])
+        try FileManager.default.createDirectory(
+            at: store.documentURL(for: id), withIntermediateDirectories: true
+        )
+        try await store.writeManifest(old, for: id)
+
+        let migrated = try await store.ensureCoverPage(notebook: id, style: PageStyle())
+
+        #expect(migrated.hasCoverPage)
+        #expect(migrated.pages[0].isCover)
+    }
+
     @Test("The cover flag survives a manifest round trip")
     func coverFlagPersists() async throws {
         let (store, root) = makeStore()

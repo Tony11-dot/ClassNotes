@@ -18,7 +18,7 @@ struct AddBooksToShelfSheet: View {
     let shelfID: UUID
 
     private var candidates: [Notebook] {
-        notebooks.filter { $0.shelfID != shelfID }
+        notebooks.filter { $0.shelfID != shelfID && !$0.isTrashed }
     }
 
     var body: some View {

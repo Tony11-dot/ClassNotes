@@ -10,29 +10,55 @@ import SwiftUI
 public struct LibraryListScreen<Destination: View>: View {
     @Environment(AppServices.self) private var services
     @Environment(\.theme) private var theme
+    @Environment(\.paperTone) private var paperTone
     @Query(sort: \Notebook.updatedAt, order: .reverse) private var notebooks: [Notebook]
 
-    private let destination: (Notebook) -> Destination
+    /// The viewer, given the notebook and the page a search hit pointed at.
+    private let destination: (Notebook, UUID?) -> Destination
 
     @State private var searchText = ""
     @State private var showSettings = false
+    @State private var showTrash = false
     @State private var selection = LibrarySelection()
     @State private var confirmBulkDelete = false
+    @State private var search = LibrarySearchModel()
+    @State private var sharedPDF: SharedFile?
+    @State private var opened: OpenRequest?
 
-    public init(@ViewBuilder destination: @escaping (Notebook) -> Destination) {
+    public init(@ViewBuilder destination: @escaping (Notebook, UUID?) -> Destination) {
         self.destination = destination
     }
 
+    private struct OpenRequest: Identifiable, Hashable {
+        let notebook: Notebook
+        let pageID: UUID?
+        var id: UUID { notebook.id }
+    }
+
+    /// The library proper — never anything in the trash.
+    private var liveNotebooks: [Notebook] {
+        notebooks.filter { !$0.isTrashed }
+    }
+
+    private var trashCount: Int { notebooks.filter(\.isTrashed).count }
+
+    /// Favourites first, then everything else — both already in most-recent
+    /// order, because that's how the query arrives.
     private var filtered: [Notebook] {
-        let query = searchText.trimmingCharacters(in: .whitespaces)
-        guard !query.isEmpty else { return notebooks }
-        return notebooks.filter { $0.title.localizedCaseInsensitiveContains(query) }
+        let live = liveNotebooks
+        return live.filter(\.isFavorite) + live.filter { !$0.isFavorite }
     }
 
     public var body: some View {
         NavigationStack {
             Group {
-                if notebooks.isEmpty {
+                if search.hasQuery || search.isSearching {
+                    LibrarySearchResultsView(
+                        model: search, notebooks: liveNotebooks
+                    ) { notebook, pageID in
+                        opened = OpenRequest(notebook: notebook, pageID: pageID)
+                    }
+                } else if liveNotebooks.isEmpty {
                     EmptyStateView(
                         systemImage: "book.closed",
                         title: "No notebooks yet",
@@ -47,19 +73,34 @@ public struct LibraryListScreen<Destination: View>: View {
             .navigationTitle("Library")
             .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: Notebook.self) { notebook in
-                destination(notebook)
+                destination(notebook, nil)
+            }
+            .navigationDestination(item: $opened) { request in
+                destination(request.notebook, request.pageID)
             }
             .toolbar {
                 BrandTitle()
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showSettings = true
+                    Menu {
+                        Button {
+                            showSettings = true
+                        } label: {
+                            Label("Settings", systemImage: "gearshape")
+                        }
+                        Button {
+                            showTrash = true
+                        } label: {
+                            Label(
+                                trashCount > 0 ? "Recently Deleted (\(trashCount))" : "Recently Deleted",
+                                systemImage: "trash"
+                            )
+                        }
                     } label: {
-                        Image(systemName: "gearshape")
+                        Image(systemName: "ellipsis.circle")
                     }
-                    .accessibilityLabel("Settings")
+                    .accessibilityLabel("More")
                 }
-                if !notebooks.isEmpty {
+                if !liveNotebooks.isEmpty {
                     ToolbarItem(placement: .topBarLeading) {
                         Button(selection.isActive ? "Done" : "Select") {
                             if selection.isActive {
@@ -90,22 +131,51 @@ public struct LibraryListScreen<Destination: View>: View {
             .animation(.spring(duration: 0.28), value: selection.isActive)
             .confirmationDialog(
                 selection.count == 1
-                    ? "Delete 1 notebook from this iPhone?"
-                    : "Delete \(selection.count) notebooks from this iPhone?",
+                    ? "Delete 1 notebook? You can get it back from Recently Deleted for 30 days."
+                    : "Delete \(selection.count) notebooks? You can get them back from Recently Deleted for 30 days.",
                 isPresented: $confirmBulkDelete,
                 titleVisibility: .visible
             ) {
                 Button("Delete", role: .destructive) {
                     let doomed = selection.selected(from: filtered)
                     selection.end()
-                    Task { try? await services.repository.delete(doomed) }
+                    try? services.repository.moveToTrash(doomed)
                 }
                 Button("Cancel", role: .cancel) {}
             }
         }
         // iOS 26 places search at the bottom edge on iPhone automatically.
-        .searchable(text: $searchText, prompt: "Search notebooks")
+        .searchable(text: $searchText, prompt: "Search notebooks and pages")
+        .onChange(of: searchText) { _, query in
+            search.search(
+                query, targets: services.repository.searchTargets(),
+                indexer: services.searchIndexer
+            )
+            if !query.trimmingCharacters(in: .whitespaces).isEmpty {
+                search.indexLibrary(
+                    targets: services.repository.searchTargets(),
+                    indexer: services.searchIndexer,
+                    thenRepeat: query
+                )
+            }
+        }
         .sheet(isPresented: $showSettings) { SettingsScreen() }
+        .sheet(isPresented: $showTrash) { TrashScreen() }
+        .sheet(item: $sharedPDF) { file in
+            ShareSheet(items: [file.url])
+        }
+    }
+
+    /// Renders a notebook to a PDF and hands it to the share sheet. The phone is
+    /// a reading device for these notebooks, and reading them somewhere else —
+    /// printing, emailing to a teacher — is most of what a phone is for here.
+    private func exportPDF(_ notebook: Notebook) {
+        Task { @MainActor in
+            let exporter = NotebookExporter(
+                store: services.documentStore, theme: theme, paperTone: paperTone
+            )
+            sharedPDF = await exporter.pdfFile(notebook: notebook).map(SharedFile.init(url:))
+        }
     }
 
     private var list: some View {
@@ -138,6 +208,24 @@ public struct LibraryListScreen<Destination: View>: View {
                 } label: {
                     Label("Select", systemImage: "checkmark.circle")
                 }
+                Button {
+                    try? services.repository.toggleFavorite(notebook)
+                } label: {
+                    Label(
+                        notebook.isFavorite ? "Remove from favourites" : "Add to favourites",
+                        systemImage: notebook.isFavorite ? "star.slash" : "star"
+                    )
+                }
+                Button {
+                    exportPDF(notebook)
+                } label: {
+                    Label("Export as PDF", systemImage: "square.and.arrow.up")
+                }
+                Button(role: .destructive) {
+                    try? services.repository.moveToTrash(notebook)
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
             }
         }
     }
@@ -159,6 +247,13 @@ public struct LibraryListScreen<Destination: View>: View {
                         Text(notebook.updatedAt, format: .dateTime.day().month().year())
                             .font(.dsCaption)
                             .foregroundStyle(theme.inkSecondary.color)
+            }
+            Spacer(minLength: 8)
+            if notebook.isFavorite {
+                Image(systemName: "star.fill")
+                    .font(.dsFootnote)
+                    .foregroundStyle(theme.accent.color)
+                    .accessibilityLabel("Favourite")
             }
         }
     }

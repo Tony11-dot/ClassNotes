@@ -19,7 +19,7 @@ import SwiftUI
 /// section is full width, every label is one line, and the whole page moves.
 struct NewNotebookSheet: View {
     @Environment(AppServices.self) private var services
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) var theme
     @Environment(\.dismiss) private var dismiss
     @Query private var existing: [Notebook]
 
@@ -30,13 +30,13 @@ struct NewNotebookSheet: View {
     /// Called with the notebook once it exists, so the library can open it.
     let onCreated: (Notebook) -> Void
 
-    @State private var title = ""
-    @State private var coverHex = ""
-    @State private var coverDesign: CoverDesign = .default
-    @State private var showsCover = true
-    @State private var style = PageStyle(template: .ruled, pageSize: .a4)
+    @State var title = ""
+    @State var coverHex = ""
+    @State var coverDesign: CoverDesign = .default
+    @State var showsCover = true
+    @State var style = PageStyle(template: .ruled, pageSize: .a4)
     @State private var creating = false
-    @State private var showCoverPicker = false
+    @State var showCoverPicker = false
 
     init(
         shelfID: UUID? = nil,
@@ -53,14 +53,18 @@ struct NewNotebookSheet: View {
             : PageStyle(template: .ruled, pageSize: .a4))
     }
 
-    private var coverColor: ThemeColor {
+    var coverColor: ThemeColor {
         ThemeColor(hex: coverHex) ?? theme.coverPalette.first ?? theme.accent
     }
 
+    /// Trashed notebooks don't count. Otherwise deleting five books and making a
+    /// new one names it "Untitled Notebook 6" against a library showing one.
+    private var liveCount: Int { existing.filter { !$0.isTrashed }.count }
+
     private var placeholderTitle: String {
         kind == .whiteboard
-            ? "Untitled Whiteboard \(existing.count + 1)"
-            : "Untitled Notebook \(existing.count + 1)"
+            ? "Untitled Whiteboard \(liveCount + 1)"
+            : "Untitled Notebook \(liveCount + 1)"
     }
 
     var body: some View {
@@ -93,7 +97,7 @@ struct NewNotebookSheet: View {
         }
     }
 
-    private var previewTitle: String {
+    var previewTitle: String {
         title.isEmpty ? placeholderTitle : title
     }
 
@@ -129,89 +133,6 @@ struct NewNotebookSheet: View {
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 14)
-    }
-
-    // MARK: - Previews (two big rectangles, side by side)
-
-    private var previewRow: some View {
-        HStack(alignment: .top, spacing: 16) {
-            if kind != .whiteboard { coverPreview }
-            paperPreview
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    /// The cover, in the same big rectangular card as the paper preview — the two
-    /// entry buttons now match instead of the cover floating loose beside it.
-    private var coverPreview: some View {
-        Button {
-            showCoverPicker = true
-        } label: {
-            previewCard(
-                title: coverDesign.displayName,
-                caption: "Cover",
-                accessory: "chevron.right"
-            ) {
-                NotebookCoverView(
-                    title: previewTitle, coverColor: coverColor,
-                    design: coverDesign, showsTitle: showsCover
-                )
-                .shadow(color: .black.opacity(0.18), radius: 10, y: 5)
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Cover: \(coverDesign.displayName). Tap to change.")
-    }
-
-    private var paperPreview: some View {
-        previewCard(title: style.template.displayName, caption: "Template") {
-            PageTemplateView(style: style)
-                .aspectRatio(PageTemplateView.aspectRatio(of: style), contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .strokeBorder(theme.separator.color, lineWidth: 0.5)
-                )
-                .shadow(color: .black.opacity(0.12), radius: 8, y: 4)
-        }
-    }
-
-    /// One preview rectangle: the art centred in a fixed-height well, then a
-    /// single-line name and caption. Both cards are the same size whatever they
-    /// hold, and long names shrink rather than wrapping onto a second line.
-    private func previewCard<Content: View>(
-        title: String,
-        caption: String,
-        accessory: String? = nil,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(spacing: 10) {
-            content()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .frame(height: 190)
-            HStack(spacing: 6) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title)
-                        .font(.dsSubheadline.weight(.semibold))
-                        .foregroundStyle(theme.ink.color)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
-                    Text(caption)
-                        .font(.dsCaption)
-                        .foregroundStyle(theme.inkSecondary.color)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 0)
-                if let accessory {
-                    Image(systemName: accessory)
-                        .font(.dsCaption.weight(.bold))
-                        .foregroundStyle(theme.inkSecondary.color)
-                }
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity)
-        .background(theme.surfaceRaised.color, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     private var detailsCard: some View {

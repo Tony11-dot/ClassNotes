@@ -41,6 +41,11 @@ public struct EditorScreen: View {
     /// Each page's frame in the editor coordinate space, so the magic pen can
     /// map a circled region back to page-logical coordinates for cropping.
     @State var pageFrames: [UUID: CGRect] = [:]
+    /// A page the stack has been asked to scroll to. Cleared once the jump has
+    /// been made, so asking for the same page twice works the second time.
+    @State var pageJumpTarget: UUID?
+    /// The rendered PDF waiting on the share sheet.
+    @State var sharedPDF: SharedFile?
     /// Pinch zoom over the page stack, and the value it started the pinch at.
     @State var pageZoom: CGFloat = 1
     @State var zoomAnchor: CGFloat = 1
@@ -68,8 +73,13 @@ public struct EditorScreen: View {
     /// re-decode the PNG on every frame.
     @State var backgroundCache = PageImageCache()
 
-    public init(notebook: Notebook) {
+    /// The page to land on, when the notebook was opened from somewhere that
+    /// knows which page was wanted — a search result, or a bookmark.
+    let openingPage: UUID?
+
+    public init(notebook: Notebook, openingPage: UUID? = nil) {
         self.notebook = notebook
+        self.openingPage = openingPage
         // Model is created against the shared store when the view appears; a
         // throwaway store here is replaced in `.task`.
         self._model = State(initialValue: NotebookEditorModel(
@@ -130,7 +140,7 @@ public struct EditorScreen: View {
                     cover: notebook.usesCoverPage ? notebook.coverPaper : nil,
                     isVisible: $showPages
                 ) { id in
-                    model.focusedPageID = id
+                    jump(to: id)
                 }
                 .transition(.move(edge: .leading))
                 .zIndex(2)
@@ -189,6 +199,12 @@ public struct EditorScreen: View {
             // A notebook that should have a cover page gets one here if it was
             // made before covers were pages — once, then never again.
             await model.load(coverStyle: notebook.usesCoverPage ? notebook.pageStyle : nil)
+            // Land on the page that was asked for, if it's still there. Checked
+            // AFTER loading: the id came from an index or a bookmark written
+            // earlier, and the page it names may since have been deleted.
+            if let openingPage, model.pages.contains(where: { $0.id == openingPage }) {
+                jump(to: openingPage)
+            }
         }
         .onDisappear {
             beautifier.reset()
@@ -203,11 +219,22 @@ public struct EditorScreen: View {
                 services.repository.touch(notebook)
             }
             syncPageContent()
+            // Re-read the pages that changed, so what was just written is
+            // findable from the library. Backgrounded and fire-and-forget: this
+            // is the moment the user is leaving, and nothing here may hold that
+            // up. Only changed pages are re-read (`SearchIndex.needsReindex`).
+            let notebookID = notebook.id
+            Task(priority: .background) { [indexer = services.searchIndexer] in
+                await indexer.index(notebook: notebookID)
+            }
         }
         .photosPicker(isPresented: $showPhotoPicker, selection: $photoItem, matching: .images)
         .onChange(of: photoItem) { _, item in Task { await handlePickedPhoto(item) } }
         .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.item]) { result in
             handleImportedFile(result)
+        }
+        .sheet(item: $sharedPDF) { file in
+            ShareSheet(items: [file.url])
         }
         .sheet(isPresented: $showRecorder) {
             VoiceRecorderSheet { url, duration in
@@ -380,54 +407,37 @@ public struct EditorScreen: View {
 
     // MARK: - Toolbar
 
-    @ToolbarContentBuilder
-    var toolbarContent: some ToolbarContent {
-        ToolbarItemGroup(placement: .topBarTrailing) {
-            Button {
-                explainMode.toggle()
-            } label: {
-                Image(systemName: "lasso.badge.sparkles")
-            }
-            .tint(explainMode ? theme.accent.color : theme.ink.color)
-            .accessibilityLabel("Circle something for NOVA to explain")
-
-            Menu {
-                Button { Task { await recognizeHandwriting() } } label: {
-                    Label("Handwriting → text", systemImage: "text.viewfinder")
-                }
-                Button {
-                    pageSettings = settingsTargetPage
-                } label: {
-                    Label("Page settings", systemImage: "slider.horizontal.3")
-                }
-                Button { showFileImporter = true } label: {
-                    Label("Import PDF / file", systemImage: "doc.badge.plus")
-                }
-                Button { showScanner = true } label: {
-                    Label("Scan a document", systemImage: "doc.viewfinder")
-                }
-                Divider()
-                Button {
-                    Task { await model.setAllTape(hidden: true, on: nil) }
-                } label: {
-                    Label("Reveal all tape", systemImage: "eye")
-                }
-                Button {
-                    Task { await model.setAllTape(hidden: false, on: nil) }
-                } label: {
-                    Label("Cover all tape", systemImage: "eye.slash")
-                }
-            } label: {
-                Image(systemName: "ellipsis.circle")
-            }
-            .accessibilityLabel("More")
-        }
-    }
 }
 
 // MARK: - Actions
 
 extension EditorScreen {
+    /// Renders the notebook to a PDF and offers it to the share sheet.
+    ///
+    /// The ink is flushed first: the exporter reads the pages off DISK, and
+    /// whatever is on the live canvas right now hasn't necessarily been written
+    /// there yet — exporting straight away would hand out a PDF missing the last
+    /// thing the user wrote, which is the one page they were exporting it for.
+    func exportPDF() {
+        Task { @MainActor in
+            await flushInkForExport()
+            let exporter = NotebookExporter(
+                store: services.documentStore, theme: theme, paperTone: paperTone
+            )
+            sharedPDF = await exporter.pdfFile(notebook: notebook).map(SharedFile.init(url:))
+        }
+    }
+
+    /// Writes every live canvas's ink to disk so an export sees it.
+    private func flushInkForExport() async {
+        for page in model.pages {
+            guard let drawing = tracker.drawing(for: page.id) else { continue }
+            try? await services.documentStore.savePageData(
+                drawing.dataRepresentation(), notebook: notebook.id, page: page.id
+            )
+        }
+    }
+
     /// Beautifies the focused page right now: the same engine the real-time pass
     /// uses, run on demand from the ✨ panel.
     func beautifyFocusedPage() async {
@@ -450,8 +460,16 @@ extension EditorScreen {
             pageSize: pageSize,
             drawing: { tracker.drawing(for: pageID) },
             apply: { plan, remaining in
-                tracker.setDrawing(remaining, for: pageID)
-                await model.apply(plan: plan, to: pageID)
+                // Elements first, so the step registered below carries both
+                // halves of the change: the ink that went away and the type that
+                // appeared in its place. One press takes back the whole pass.
+                let elements = await model.apply(plan: plan, to: pageID)
+                tracker.applyBeautified(
+                    ink: remaining,
+                    elementsBefore: elements.before,
+                    elementsAfter: elements.after,
+                    for: pageID
+                )
                 didChange = !plan.isEmpty
                 // Tapping Beautify is an explicit request, so it always commits.
                 return true

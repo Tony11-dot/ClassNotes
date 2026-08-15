@@ -123,11 +123,22 @@ public actor DocumentStore {
     /// goes in front of page one and the manifest is stamped current, so a cover
     /// the user later deletes stays deleted instead of growing back on every open.
     ///
+    /// The guard is `coverPageVersion`, NOT `currentVersion`: those were the same
+    /// number only while v7 was newest, and keying off the latter would hand a
+    /// cover back to every v7 notebook the first time any later field was added.
+    ///
     /// Returns the manifest either way, so the caller can just use the result.
     @discardableResult
     public func ensureCoverPage(notebook id: UUID, style: PageStyle) throws -> NotebookManifest {
         var current = try manifest(for: id)
-        guard current.version < NotebookManifest.currentVersion else { return current }
+        guard current.version < NotebookManifest.coverPageVersion else {
+            // Already past the cover migration, but possibly stamped older than
+            // today's format — bring the stamp forward so it's read as current.
+            guard current.version < NotebookManifest.currentVersion else { return current }
+            current.version = NotebookManifest.currentVersion
+            try writeManifest(current, for: id)
+            return current
+        }
         if !current.hasCoverPage {
             current.pages.insert(style.makeCoverPage(), at: 0)
         }
@@ -258,6 +269,39 @@ public actor DocumentStore {
         try? Data(contentsOf: coverImageURL(for: id))
     }
 
+    // MARK: - Search index
+
+    /// The searchable text for this notebook's pages, cached beside the ink.
+    ///
+    /// Derived data: a missing or unreadable index is an EMPTY index, never an
+    /// error and never a repair. The worst a lost `search.json` can do is make a
+    /// notebook match on its title until it's read again.
+    public nonisolated func searchIndexURL(for id: UUID) -> URL {
+        documentURL(for: id).appendingPathComponent("search.json")
+    }
+
+    public func searchIndex(for id: UUID) -> SearchIndex {
+        guard let data = try? Data(contentsOf: searchIndexURL(for: id)),
+              let index = try? decoder.decode(SearchIndex.self, from: data)
+        else { return SearchIndex() }
+        return index
+    }
+
+    public func saveSearchIndex(_ index: SearchIndex, for id: UUID) throws {
+        try FileManager.default.createDirectory(
+            at: documentURL(for: id), withIntermediateDirectories: true
+        )
+        let data = try encoder.encode(index)
+        try data.write(to: searchIndexURL(for: id), options: .atomic)
+    }
+
+    /// When a page's ink was last written, so the indexer can skip pages that
+    /// haven't changed since it last read them.
+    public func pageModifiedAt(notebook: UUID, page: UUID) -> Date? {
+        try? pageURL(notebook: notebook, page: page)
+            .resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+    }
+
     // MARK: - Media payloads + page elements
 
     /// Stores an image/file/audio payload and returns the filename to reference
@@ -321,6 +365,25 @@ public actor DocumentStore {
         }
         if let pageSize { current.pages[index].pageSize = pageSize }
         if let orientation { current.pages[index].orientation = orientation }
+        try writeManifest(current, for: notebook)
+        return current
+    }
+
+    /// Flags (or unflags) a page so it can be jumped straight back to.
+    ///
+    /// Clearing the flag also clears the name: an unbookmarked page with a
+    /// leftover title would put the old name back the next time it was flagged.
+    @discardableResult
+    public func setBookmark(
+        notebook: UUID, page: UUID, isBookmarked: Bool, name: String? = nil
+    ) throws -> NotebookManifest {
+        var current = try manifest(for: notebook)
+        guard let index = current.pages.firstIndex(where: { $0.id == page }) else { return current }
+        current.pages[index].isBookmarked = isBookmarked
+        let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        current.pages[index].bookmarkName = isBookmarked
+            ? (trimmed?.isEmpty == false ? trimmed : current.pages[index].bookmarkName)
+            : nil
         try writeManifest(current, for: notebook)
         return current
     }

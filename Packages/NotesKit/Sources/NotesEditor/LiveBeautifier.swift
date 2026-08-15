@@ -407,30 +407,15 @@ final class LiveBeautifier {
     /// alpha can put dark ink on a dark field (and on a dark theme the ink is light
     /// to begin with), so passes came back with no text at all and nothing was ever
     /// typeset. Forcing black-on-white is what makes beautification fire reliably.
+    /// The one implementation lives in `InkRasterizer`, shared with the search
+    /// indexer — two readers of the same ink must not disagree about what it
+    /// looks like.
     static func recognitionImage(
         of drawing: PKDrawing, region: CGRect, scale: CGFloat, minimumInkWidth: CGFloat = 0
     ) -> UIImage {
-        let inked = PKDrawing(strokes: drawing.strokes.map { stroke in
-            PKStroke(
-                // Always the PEN, whatever wrote it. A marker or a highlighter
-                // renders as a wide translucent band whose letters bleed into each
-                // other — legible to a person, unreadable to Vision.
-                ink: PKInk(.pen, color: .black),
-                path: Self.thickened(stroke.path, to: minimumInkWidth),
-                transform: stroke.transform,
-                mask: stroke.mask
-            )
-        })
-        let format = UIGraphicsImageRendererFormat.default()
-        format.scale = scale
-        format.opaque = true
-        let size = region.size
-        return UIGraphicsImageRenderer(size: size, format: format).image { context in
-            UIColor.white.setFill()
-            context.fill(CGRect(origin: .zero, size: size))
-            inked.image(from: region, scale: scale)
-                .draw(in: CGRect(origin: .zero, size: size))
-        }
+        InkRasterizer.recognitionImage(
+            of: drawing, region: region, scale: scale, minimumInkWidth: minimumInkWidth
+        )
     }
 
     /// The longest side we will hand Vision. Beyond this the crop costs more time
@@ -470,25 +455,7 @@ final class LiveBeautifier {
     /// The same path with every point at least `width` across. Returns the path
     /// untouched when it's already thick enough, or when no floor was asked for.
     static func thickened(_ path: PKStrokePath, to width: CGFloat) -> PKStrokePath {
-        guard width > 0 else { return path }
-        let points = Array(path)
-        guard points.contains(where: { $0.size.width < width || $0.size.height < width })
-        else { return path }
-        let widened = points.map { point in
-            PKStrokePoint(
-                location: point.location,
-                timeOffset: point.timeOffset,
-                size: CGSize(
-                    width: max(point.size.width, width),
-                    height: max(point.size.height, width)
-                ),
-                opacity: max(point.opacity, 1),
-                force: point.force,
-                azimuth: point.azimuth,
-                altitude: point.altitude
-            )
-        }
-        return PKStrokePath(controlPoints: widened, creationDate: path.creationDate)
+        InkRasterizer.thickened(path, to: width)
     }
 
     /// Rejects diagrams and doodles: a line of writing is neither a hairline nor

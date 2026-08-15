@@ -10,42 +10,87 @@ import SwiftUI
 /// The editor destination is injected by the routing layer — this module never
 /// imports NotesEditor, so the iPhone build path can't reach editing code.
 public struct LibraryGridScreen<Destination: View>: View {
-    @Environment(AppServices.self) private var services
-    @Environment(\.theme) private var theme
+    @Environment(AppServices.self) var services
+    @Environment(\.theme) var theme
+    @Environment(\.paperTone) private var paperTone
     @Query(sort: \Notebook.updatedAt, order: .reverse) private var notebooks: [Notebook]
-    @Query(sort: \Shelf.sortIndex) private var shelves: [Shelf]
+    @Query(sort: \Shelf.sortIndex) var shelves: [Shelf]
 
-    private let destination: (Notebook) -> Destination
+    /// The editor, given the notebook and — when the user came from a search hit
+    /// or a bookmark — the page they were actually looking for.
+    private let destination: (Notebook, UUID?) -> Destination
 
-    @State private var opened: Notebook?
-    @State private var addChoice: AddContentChoice?
-    @State private var showSettings = false
-    @State private var renameTarget: Notebook?
-    @State private var renameText = ""
-    @State private var deleteTarget: Notebook?
-    @State private var selectedShelf: UUID?
-    @State private var showNewShelf = false
-    @State private var showAddBooks = false
-    @State private var selection = LibrarySelection()
-    @State private var confirmBulkDelete = false
+    @State var opened: OpenRequest?
+    @State var addChoice: AddContentChoice?
+    @State var showSettings = false
+    @State var renameTarget: Notebook?
+    @State var renameText = ""
+    @State var deleteTarget: Notebook?
+    @State var selectedShelf: ShelfFilter = .all
+    @State var showNewShelf = false
+    @State var showAddBooks = false
+    @State var selection = LibrarySelection()
+    @State var confirmBulkDelete = false
+    @State var showTrash = false
+    @State var searchText = ""
+    @State var search = LibrarySearchModel()
+    @State var sharedPDF: SharedFile?
+    @State var exporting = false
 
-    public init(@ViewBuilder destination: @escaping (Notebook) -> Destination) {
+    public init(@ViewBuilder destination: @escaping (Notebook, UUID?) -> Destination) {
         self.destination = destination
     }
 
-    private var visibleNotebooks: [Notebook] {
-        guard let selectedShelf else { return notebooks }
-        return notebooks.filter { $0.shelfID == selectedShelf }
+    /// Which notebook to open, and where in it. A struct rather than a bare
+    /// `Notebook?` so `navigationDestination(item:)` carries the page too.
+    struct OpenRequest: Identifiable, Hashable {
+        let notebook: Notebook
+        let pageID: UUID?
+        var id: UUID { notebook.id }
     }
+
+    /// What the shelf bar is filtering by. Favourites is a filter, not a shelf —
+    /// a notebook can be starred and still live on a shelf.
+    enum ShelfFilter: Hashable {
+        case all
+        case favorites
+        case shelf(UUID)
+    }
+
+    /// Everything in the library: never anything in the trash.
+    var liveNotebooks: [Notebook] {
+        notebooks.filter { !$0.isTrashed }
+    }
+
+    var visibleNotebooks: [Notebook] {
+        switch selectedShelf {
+        case .all:
+            return liveNotebooks
+        case .favorites:
+            return liveNotebooks.filter(\.isFavorite)
+        case .shelf(let id):
+            return liveNotebooks.filter { $0.shelfID == id }
+        }
+    }
+
+    var favoritesCount: Int { liveNotebooks.filter(\.isFavorite).count }
+    private var trashCount: Int { notebooks.filter(\.isTrashed).count }
 
     public var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                if !shelves.isEmpty {
+                if !shelves.isEmpty || favoritesCount > 0 {
                     shelfBar
                 }
                 Group {
-                    if visibleNotebooks.isEmpty {
+                    if search.hasQuery || search.isSearching {
+                        LibrarySearchResultsView(
+                            model: search, notebooks: liveNotebooks
+                        ) { notebook, pageID in
+                            services.repository.touch(notebook)
+                            opened = OpenRequest(notebook: notebook, pageID: pageID)
+                        }
+                    } else if visibleNotebooks.isEmpty {
                         emptyState
                     } else {
                         grid
@@ -56,9 +101,36 @@ public struct LibraryGridScreen<Destination: View>: View {
             .background(theme.surface.color)
             .navigationTitle("Library")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { BrandTitle() }
-            .navigationDestination(item: $opened) { notebook in
-                destination(notebook)
+            .toolbar {
+                BrandTitle()
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showTrash = true
+                    } label: {
+                        Image(systemName: trashCount > 0 ? "trash.fill" : "trash")
+                    }
+                    .accessibilityLabel("Recently deleted")
+                }
+            }
+            .searchable(text: $searchText, prompt: "Search notebooks and pages")
+            .onChange(of: searchText) { _, query in
+                search.search(
+                    query, targets: services.repository.searchTargets(),
+                    indexer: services.searchIndexer
+                )
+                // A library that has never been read matches on titles only, and
+                // "it can't find my notes" is the impression that leaves. Reading
+                // starts the moment someone actually searches.
+                if !query.trimmingCharacters(in: .whitespaces).isEmpty {
+                    search.indexLibrary(
+                        targets: services.repository.searchTargets(),
+                        indexer: services.searchIndexer,
+                        thenRepeat: query
+                    )
+                }
+            }
+            .navigationDestination(item: $opened) { request in
+                destination(request.notebook, request.pageID)
             }
             .overlay(alignment: .bottom) {
                 if !selection.isActive { floatingToolbar }
@@ -86,13 +158,17 @@ public struct LibraryGridScreen<Destination: View>: View {
             }
             .animation(.spring(duration: 0.28), value: selection.isActive)
         }
-        .addContentFlows(choice: $addChoice, shelfID: selectedShelf) { notebook in
-            opened = notebook
+        .addContentFlows(choice: $addChoice, shelfID: activeShelfID) { notebook in
+            opened = OpenRequest(notebook: notebook, pageID: nil)
         }
         .sheet(isPresented: $showSettings) { SettingsScreen() }
         .sheet(isPresented: $showNewShelf) { NewShelfSheet() }
+        .sheet(isPresented: $showTrash) { TrashScreen() }
+        .sheet(item: $sharedPDF) { file in
+            ShareSheet(items: [file.url])
+        }
         .sheet(isPresented: $showAddBooks) {
-            if let selectedShelf { AddBooksToShelfSheet(shelfID: selectedShelf) }
+            if let activeShelfID { AddBooksToShelfSheet(shelfID: activeShelfID) }
         }
         .alert("Rename notebook", isPresented: renameAlertBinding) {
             TextField("Title", text: $renameText)
@@ -105,13 +181,13 @@ public struct LibraryGridScreen<Destination: View>: View {
             }
         }
         .confirmationDialog(
-            "Delete “\(deleteTarget?.title ?? "")”? Its pages will be removed from this iPad.",
+            "Delete “\(deleteTarget?.title ?? "")”? You can get it back from Recently Deleted for 30 days.",
             isPresented: deleteDialogBinding,
             titleVisibility: .visible
         ) {
             Button("Delete Notebook", role: .destructive) {
                 if let target = deleteTarget {
-                    Task { try? await services.repository.delete(target) }
+                    try? services.repository.moveToTrash(target)
                 }
                 deleteTarget = nil
             }
@@ -119,17 +195,38 @@ public struct LibraryGridScreen<Destination: View>: View {
         }
         .confirmationDialog(
             selection.count == 1
-                ? "Delete 1 notebook? Its pages will be removed from this iPad."
-                : "Delete \(selection.count) notebooks? Their pages will be removed from this iPad.",
+                ? "Delete 1 notebook? You can get it back from Recently Deleted for 30 days."
+                : "Delete \(selection.count) notebooks? You can get them back from Recently Deleted for 30 days.",
             isPresented: $confirmBulkDelete,
             titleVisibility: .visible
         ) {
             Button("Delete", role: .destructive) {
                 let doomed = selection.selected(from: visibleNotebooks)
                 selection.end()
-                Task { try? await services.repository.delete(doomed) }
+                try? services.repository.moveToTrash(doomed)
             }
             Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    /// The shelf a new notebook lands on: only a real shelf counts. "Favourites"
+    /// is a filter, so creating a book while it's selected must not try to file
+    /// the book onto a shelf that doesn't exist.
+    var activeShelfID: UUID? {
+        if case .shelf(let id) = selectedShelf { return id }
+        return nil
+    }
+
+    /// Renders a notebook to a PDF and hands it to the share sheet.
+    func exportPDF(_ notebook: Notebook) {
+        guard !exporting else { return }
+        exporting = true
+        Task { @MainActor in
+            let exporter = NotebookExporter(
+                store: services.documentStore, theme: theme, paperTone: paperTone
+            )
+            sharedPDF = await exporter.pdfFile(notebook: notebook).map(SharedFile.init(url:))
+            exporting = false
         }
     }
 
@@ -149,120 +246,15 @@ public struct LibraryGridScreen<Destination: View>: View {
         }
     }
 
-    private var shelfBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                shelfChip(title: "All", symbol: "square.grid.2x2", color: theme.accent, isSelected: selectedShelf == nil) {
-                    selectedShelf = nil
-                }
-                ForEach(shelves) { shelf in
-                    shelfChip(
-                        title: shelf.name,
-                        symbol: shelf.symbolName,
-                        color: ThemeColor(hex: shelf.colorHex) ?? theme.accent,
-                        isSelected: selectedShelf == shelf.id
-                    ) {
-                        selectedShelf = shelf.id
-                    }
-                    .contextMenu {
-                        Button(role: .destructive) {
-                            if selectedShelf == shelf.id { selectedShelf = nil }
-                            try? services.repository.deleteShelf(shelf)
-                        } label: {
-                            Label("Delete shelf", systemImage: "trash")
-                        }
-                    }
-                }
-            }
-            .padding(.horizontal, 28)
-            .padding(.vertical, 10)
-        }
-    }
-
-    private func shelfChip(
-        title: String,
-        symbol: String,
-        color: ThemeColor,
-        isSelected: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: symbol)
-                .font(.dsSubheadline.weight(.medium))
-                .foregroundStyle(isSelected ? theme.contrastingInk(on: color).color : theme.ink.color)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(
-                    isSelected ? color.color : theme.surfaceRaised.color,
-                    in: Capsule()
-                )
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func coverCell(_ notebook: Notebook) -> some View {
-        Button {
-            // While selecting, a tap picks up and puts down instead of opening.
-            if selection.isActive {
-                selection.toggle(notebook.id)
-                return
-            }
-            services.repository.touch(notebook)
-            opened = notebook
-        } label: {
-            VStack(alignment: .leading, spacing: 8) {
-                NotebookCoverTile(notebook: notebook)
-                    .shadow(color: .black.opacity(0.18), radius: 14, y: 8)
-                HStack(spacing: 5) {
-                    // A board / import reads as itself, not as "just a notebook".
-                    if notebook.kind != .notebook {
-                        Image(systemName: notebook.kind.symbolName)
-                            .font(.dsCaption2)
-                            .foregroundStyle(theme.accent.color)
-                    }
-                    Text(notebook.showsCover ? notebook.title : "Untitled cover off")
-                        .font(.dsSubheadline.weight(.medium))
-                        .foregroundStyle(theme.ink.color)
-                        .lineLimit(1)
-                }
-                Text(notebook.updatedAt, format: .dateTime.day().month().year())
-                    .font(.dsCaption)
-                    .foregroundStyle(theme.inkSecondary.color)
-            }
-        }
-        .buttonStyle(.plain)
-        .librarySelectable(isActive: selection.isActive, isSelected: selection.contains(notebook.id))
-        .contextMenu {
-            Button {
-                selection.begin(with: notebook.id)
-            } label: {
-                Label("Select", systemImage: "checkmark.circle")
-            }
-            Button {
-                renameText = notebook.title
-                renameTarget = notebook
-            } label: {
-                Label("Rename", systemImage: "pencil")
-            }
-            Menu {
-                Button("None") { services.repository.assign(notebook, toShelf: nil) }
-                ForEach(shelves) { shelf in
-                    Button(shelf.name) { services.repository.assign(notebook, toShelf: shelf.id) }
-                }
-            } label: {
-                Label("Move to shelf", systemImage: "tray.full")
-            }
-            Button(role: .destructive) {
-                deleteTarget = notebook
-            } label: {
-                Label("Delete", systemImage: "trash")
-            }
-        }
-    }
-
     @ViewBuilder
     private var emptyState: some View {
-        if selectedShelf != nil {
+        if selectedShelf == .favorites {
+            EmptyStateView(
+                systemImage: "star",
+                title: "No favourites yet",
+                message: "Press and hold a notebook to star it, and it'll wait for you here."
+            )
+        } else if activeShelfID != nil {
             VStack(spacing: 20) {
                 EmptyStateView(
                     systemImage: "tray",
@@ -307,7 +299,7 @@ public struct LibraryGridScreen<Destination: View>: View {
                 DSGlassIconButton("New shelf", systemImage: "tray.and.arrow.down") {
                     showNewShelf = true
                 }
-                if selectedShelf != nil {
+                if activeShelfID != nil {
                     DSGlassIconButton("Add books to shelf", systemImage: "plus.rectangle.on.folder") {
                         showAddBooks = true
                     }

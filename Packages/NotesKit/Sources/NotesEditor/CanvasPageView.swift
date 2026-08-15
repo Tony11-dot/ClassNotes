@@ -84,6 +84,33 @@ public final class ActiveCanvasTracker {
         canvases[pageID]?.view?.drawing = drawing
     }
 
+    /// Commits a whole beautification pass through the page's OWN history.
+    ///
+    /// The Beautify button used to write the result straight onto the canvas with
+    /// `setDrawing`, which changes the page without telling its undo stack
+    /// anything — so the one action most likely to be regretted was the one
+    /// action that couldn't be taken back. The live pass had always registered a
+    /// proper step; this makes the button use the same one.
+    public func applyBeautified(
+        ink: PKDrawing,
+        elementsBefore: [PageElement],
+        elementsAfter: [PageElement],
+        for pageID: UUID
+    ) {
+        guard let canvas = canvases[pageID]?.view as? PageCanvasView,
+              let coordinator = canvas.delegate as? CanvasPageView.Coordinator else {
+            // No live canvas to own a history — the page still has to change.
+            canvases[pageID]?.view?.drawing = ink
+            return
+        }
+        coordinator.registerBeautifyStep(
+            inkBefore: canvas.drawing, elementsBefore: elementsBefore,
+            inkAfter: ink, elementsAfter: elementsAfter,
+            on: canvas
+        )
+        coordinator.replace(ink, on: canvas)
+    }
+
     public func canvas(for pageID: UUID) -> PKCanvasView? {
         canvases[pageID]?.view
     }

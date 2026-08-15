@@ -58,12 +58,12 @@ struct RootView: View {
     @ViewBuilder
     private var deviceRoot: some View {
         if UIDevice.current.userInterfaceIdiom == .pad {
-            LibraryGridScreen { notebook in
-                EditorScreen(notebook: notebook)
+            LibraryGridScreen { notebook, pageID in
+                EditorScreen(notebook: notebook, openingPage: pageID)
             }
         } else {
-            LibraryListScreen { notebook in
-                NotebookViewerScreen(notebook: notebook)
+            LibraryListScreen { notebook, pageID in
+                NotebookViewerScreen(notebook: notebook, openingPage: pageID)
             }
         }
     }
