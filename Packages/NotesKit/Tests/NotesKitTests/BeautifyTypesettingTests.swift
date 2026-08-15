@@ -243,15 +243,28 @@ struct HandwritingDetectionTests {
             CGRect(x: 10, y: 60, width: 30, height: 20),
             CGRect(x: 50, y: 62, width: 30, height: 18)
         ]
-        let first = LiveBeautifier.strokes(
-            boxes, inside: CGRect(x: 8, y: 10, width: 80, height: 20), excluding: []
-        )
-        #expect(first == [0, 1])
-        let second = LiveBeautifier.strokes(
-            boxes, inside: CGRect(x: 8, y: 60, width: 80, height: 20),
-            excluding: Set(first)
-        )
-        #expect(second == [2, 3], "the second line takes the ink the first didn't")
+        let assigned = LiveBeautifier.assign(boxes, to: [
+            CGRect(x: 8, y: 10, width: 80, height: 20),
+            CGRect(x: 8, y: 60, width: 80, height: 20)
+        ])
+        #expect(assigned[0] == [0, 1])
+        #expect(assigned[1] == [2, 3], "the second line keeps its own ink")
+    }
+
+    @Test("Ink between two lines goes to the nearer one, not the first to ask")
+    func contestedInkGoesToTheNearestLine() {
+        // A descender hanging below the first line sits inside BOTH bands. Handed
+        // out first-come-first-served it went to whichever line the recognizer
+        // happened to return first, which could leave the other with no ink at all
+        // and drop a line that had been read perfectly.
+        let descender = CGRect(x: 30, y: 47, width: 6, height: 10)
+        let lines = [
+            CGRect(x: 8, y: 30, width: 80, height: 20),
+            CGRect(x: 8, y: 50, width: 80, height: 20)
+        ]
+        let assigned = LiveBeautifier.assign([descender], to: lines)
+        #expect(assigned[0].isEmpty)
+        #expect(assigned[1] == [0], "it sits inside the second line, so it is the second line's")
     }
 
     @Test("One short word is read, not thrown away for being narrow")
@@ -259,9 +272,9 @@ struct HandwritingDetectionTests {
         // The old pass required a line's box to be wider than it was tall, so a
         // single word — the commonest thing anybody writes — never reached Vision.
         let word = CGRect(x: 20, y: 20, width: 26, height: 30)
-        let matched = LiveBeautifier.strokes(
-            [word], inside: CGRect(x: 18, y: 22, width: 30, height: 22), excluding: []
+        let assigned = LiveBeautifier.assign(
+            [word], to: [CGRect(x: 18, y: 22, width: 30, height: 22)]
         )
-        #expect(matched == [0])
+        #expect(assigned[0] == [0])
     }
 }

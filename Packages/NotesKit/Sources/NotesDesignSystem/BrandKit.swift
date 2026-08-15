@@ -78,6 +78,26 @@ public struct BrandLockup: View {
     }
 }
 
+/// The app's mark where a navigation title would otherwise be — ClassMate puts
+/// its own lockup at the top of every shell screen, and the library was the one
+/// place in ClassNotes that showed the word "Library" instead.
+///
+/// `ToolbarContent` rather than a view so a screen can drop it into the toolbar
+/// it already has, beside its own buttons.
+public struct BrandTitle: ToolbarContent {
+    let height: CGFloat
+
+    public init(height: CGFloat = 26) {
+        self.height = height
+    }
+
+    public var body: some ToolbarContent {
+        ToolbarItem(placement: .principal) {
+            BrandLockup(height: height)
+        }
+    }
+}
+
 /// Registers the bundled Cabinet Grotesk faces (ClassMate's default type) so
 /// the app can render its wordmark/UI in the same family. Call once at launch.
 public enum CMFonts {

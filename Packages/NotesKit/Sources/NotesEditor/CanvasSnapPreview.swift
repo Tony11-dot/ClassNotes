@@ -23,6 +23,15 @@ extension CanvasPageView.Coordinator {
         canvas.layer.addSublayer(snapPreviewLayer)
 
         let watcher = StrokeDwellRecognizer(target: nil, action: nil)
+        // Only what can actually DRAW is worth watching. The watcher used to
+        // follow every touch on the canvas, so a finger steadying the page or a
+        // palm resting on it started a stroke that never ended — and a stroke
+        // that never ends is a pencil that is permanently "down", which stalls
+        // the ink pass, the undo steps and beautification all at once.
+        watcher.allowedTouchTypes = canvas.drawingPolicy == .anyInput
+            ? [NSNumber(value: UITouch.TouchType.pencil.rawValue),
+               NSNumber(value: UITouch.TouchType.direct.rawValue)]
+            : [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
         watcher.logicalPoint = { [weak canvas] touch in
             guard let canvas, canvas.zoomScale > 0 else { return .zero }
             // A scroll view hands back content coordinates already; the zoom
@@ -32,12 +41,14 @@ extension CanvasPageView.Coordinator {
         }
         watcher.onDwell = { [weak self] points in self?.previewSnap(points) ?? false }
         watcher.onAdjust = { [weak self] point in self?.adjustSnap(to: point) }
+        watcher.onProgress = { [weak self] points in self?.previewRuled(points) ?? false }
         watcher.onResume = { [weak self] in self?.cancelSnapPreview() }
         watcher.onEnd = { [weak self] held in
             guard let self else { return }
             self.hideSnapPreview()
             self.liveSnap = nil
             self.isOnDetent = false
+            self.isRulingLive = false
             if !held {
                 self.pendingSnapPath = nil
                 self.strokeCountAtSnap = nil
@@ -46,6 +57,28 @@ extension CanvasPageView.Coordinator {
         }
         canvas.addGestureRecognizer(watcher)
         dwellWatcher = watcher
+    }
+
+    // MARK: Live ruling
+
+    /// The straight-edge, applied WHILE the line is being drawn.
+    ///
+    /// Ruling used to happen in the deferred ink pass, i.e. after the pencil had
+    /// lifted — so the line you watched yourself draw was crooked, and the
+    /// straight one appeared later. A ruler that corrects you afterwards is a
+    /// picture of a ruler. This takes the stroke over the moment it is clearly
+    /// running along an edge and previews the projected line under the pencil,
+    /// exactly like a settled shape; `runInkPass` commits the same path on lift.
+    ///
+    /// Returns whether the straight-edge has taken the stroke.
+    func previewRuled(_ points: [CGPoint]) -> Bool {
+        guard let guide = rulerGuide, toolState.tool == .pen,
+              let straight = guide.straightened(points) else { return false }
+        isRulingLive = true
+        pendingSnapPath = straight
+        suppressLiveInk()
+        drawSnapPreview(straight)
+        return true
     }
 
     /// The pencil has come to rest: fit what's been drawn and show it. Returns

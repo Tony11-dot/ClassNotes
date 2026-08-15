@@ -45,10 +45,12 @@ public struct LibraryListScreen<Destination: View>: View {
             }
             .background(theme.surface.color)
             .navigationTitle("Library")
+            .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: Notebook.self) { notebook in
                 destination(notebook)
             }
             .toolbar {
+                BrandTitle()
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         showSettings = true

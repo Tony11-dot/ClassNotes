@@ -267,8 +267,7 @@ struct CanvasPageView: UIViewRepresentable {
         // muted (see `suppressLiveInk`), and a SwiftUI update landing mid-gesture
         // must not undo that — turning drawing back on halfway through would put
         // the wandering ink back under the shape.
-        canvas.drawingGestureRecognizer.isEnabled =
-            context.coordinator.isSuppressingLiveInk ? false : toolState.isDrawingEnabled
+        canvas.drawingGestureRecognizer.isEnabled = context.coordinator.shouldEnableDrawing()
         canvas.overrideUserInterfaceStyle = theme.isDark ? .dark : .light
     }
 
@@ -345,6 +344,9 @@ struct CanvasPageView: UIViewRepresentable {
         /// Whether the held line is currently sitting on the level/upright detent,
         /// so the haptic fires as it clicks in and not for every sample after.
         var isOnDetent = false
+        /// True while the straight-edge is ruling the stroke in flight, so the
+        /// shape fitter leaves it alone and the commit knows what it is committing.
+        var isRulingLive = false
         /// Draws that shape under the resting pencil. A layer rather than a stroke
         /// swap: the in-flight stroke belongs to PencilKit, and assigning
         /// `drawing` mid-stroke tears it up.
@@ -470,20 +472,13 @@ struct CanvasPageView: UIViewRepresentable {
             // committed ink is not what it will be. Wait for the lift.
             guard !isPencilDown else { return }
             var drawing = canvas.drawing
-            var count = drawing.strokes.count
+            let count = drawing.strokes.count
 
-            // The shape the user already WATCHED settle under the pencil wins:
-            // it's the one they accepted by holding still, and committing it
+            // The shape (or the ruled line) the user already WATCHED appear under
+            // the pencil wins: it's the one they accepted, and committing it
             // verbatim means the preview and the ink can never disagree.
-            if toolState.snapShapes, toolState.tool == .pen, let path = pendingSnapPath {
-                commitSettledShape(path, into: &drawing, on: canvas)
-                count = drawing.strokes.count
-                pendingSnapPath = nil
-                strokeCountAtSnap = nil
-                processedStrokeCount = count
-                replace(drawing, on: canvas)
-                commitUndoStep(named: "Shape")
-                scheduleSave()
+            if toolState.tool == .pen, pendingSnapPath != nil {
+                commitPending(into: &drawing, on: canvas)
                 return
             }
 
@@ -536,6 +531,26 @@ struct CanvasPageView: UIViewRepresentable {
             // Even an untouched stroke is a step: the history is the page's, not
             // the ink pass's.
             commitUndoStep()
+        }
+
+        /// Commits the path that was previewed under the pencil — a settled shape,
+        /// or a line the straight-edge ruled as it was drawn.
+        ///
+        /// Deliberately NOT gated on the shape-snapping switch: the straight-edge
+        /// sets `pendingSnapPath` too, and it is its own setting. Asking the shape
+        /// switch for permission is how a line ruled live could be thrown away on
+        /// the lift, leaving the raw ink the preview had already replaced.
+        private func commitPending(into drawing: inout PKDrawing, on canvas: PKCanvasView) {
+            guard let path = pendingSnapPath else { return }
+            let ruled = isRulingLive
+            commitSettledShape(path, into: &drawing, on: canvas)
+            pendingSnapPath = nil
+            strokeCountAtSnap = nil
+            isRulingLive = false
+            processedStrokeCount = drawing.strokes.count
+            replace(drawing, on: canvas)
+            commitUndoStep(named: ruled ? "Ruled Line" : "Shape")
+            scheduleSave()
         }
 
         /// Puts the settled shape on the page. Normally it replaces the stroke
@@ -609,12 +624,24 @@ struct CanvasPageView: UIViewRepresentable {
         /// `canvasViewDidEndUsingTool`, back when the pencil was still down and the
         /// shape was still being sized — nothing else is coming.
         func finishHeldStroke() {
-            let wasSuppressed = isSuppressingLiveInk
             isSuppressingLiveInk = false
-            if wasSuppressed {
-                canvas?.drawingGestureRecognizer.isEnabled = toolState.isDrawingEnabled
-            }
+            // Unconditionally, not only when this call is the one that lifts the
+            // mute. Drawing being off is the one state the editor can be left in
+            // that the user cannot get out of — the pencil stops marking the page
+            // and starts dragging it around instead — so every path out of a hold
+            // hands the canvas back.
+            canvas?.drawingGestureRecognizer.isEnabled = toolState.isDrawingEnabled
             scheduleInkPass()
+        }
+
+        /// Whether the canvas should be accepting ink right now.
+        ///
+        /// Also the place a stale mute is cleared: if the canvas is muted for a
+        /// held shape but the watcher says nothing is on the glass, the hold is
+        /// over and the mute is a leak.
+        func shouldEnableDrawing() -> Bool {
+            if isSuppressingLiveInk, !isPencilDown { finishHeldStroke() }
+            return isSuppressingLiveInk ? false : toolState.isDrawingEnabled
         }
 
         // MARK: Saving

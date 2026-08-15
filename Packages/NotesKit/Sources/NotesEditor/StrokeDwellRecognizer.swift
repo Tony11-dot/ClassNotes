@@ -1,6 +1,6 @@
 import CoreGraphics
-import QuartzCore
 import PencilKit
+import QuartzCore
 import UIKit
 
 /// Watches the pencil while it draws and reports when it comes to REST, without
@@ -45,6 +45,13 @@ final class StrokeDwellRecognizer: UIGestureRecognizer {
     /// with. Treating the next movement as "never mind" meant the only way to
     /// change a snapped circle was to undo it and draw another one.
     var onAdjust: ((CGPoint) -> Void)?
+    /// The path so far, on every sample, while it is still ordinary ink.
+    ///
+    /// This is how the straight-edge rules a line WHILE it is being drawn rather
+    /// than a beat after it is finished. Returning true means something has taken
+    /// the stroke over: the watcher stops offering it dwells and takes the touch,
+    /// so nothing else can act on it either.
+    var onProgress: (([CGPoint]) -> Bool)?
     /// The pencil moved off again before anything settled — drop any preview.
     var onResume: (() -> Void)?
     /// The stroke ended. `true` if it ended while resting (i.e. the dwell stands).
@@ -54,6 +61,10 @@ final class StrokeDwellRecognizer: UIGestureRecognizer {
     var logicalPoint: ((UITouch) -> CGPoint)?
 
     private var dwellTimer: Timer?
+    /// The one touch this watcher is following. A second finger landing on the
+    /// page (the hand steadying it, a palm) used to be indistinguishable from the
+    /// pencil moving, which is how a hold turned into a jump across the page.
+    private weak var trackedTouch: UITouch?
     private var restAnchor: CGPoint?
     /// When the pencil arrived at `restAnchor`. The rest is measured from here
     /// rather than from a one-shot timer armed on the last big move: a hand that
@@ -61,6 +72,11 @@ final class StrokeDwellRecognizer: UIGestureRecognizer {
     /// one-shot never re-armed and the hold went unnoticed.
     private var restSince: TimeInterval = 0
     private var didDwell = false
+    /// Whether this gesture took the touch (see `claimTouch`).
+    private var didClaim = false
+    /// Whether the stroke has been taken over live — the straight-edge is ruling
+    /// it — in which case it is no longer a candidate for a shape snap.
+    private var isTakenOver = false
     /// A rest that was offered and turned down (the ink isn't a shape yet). The
     /// watcher keeps looking, but waits this long before asking again so a pause
     /// halfway round a circle doesn't re-fit sixty times a second.
@@ -79,19 +95,23 @@ final class StrokeDwellRecognizer: UIGestureRecognizer {
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
         super.touchesBegan(touches, with: event)
-        guard let touch = touches.first, let map = logicalPoint else { return }
+        // Already following one — everything else on the glass is the hand.
+        guard trackedTouch == nil, let touch = touches.first, let map = logicalPoint else { return }
+        trackedTouch = touch
         isTouching = true
         points = [map(touch)]
         restAnchor = points[0]
         restSince = CACurrentMediaTime()
         nextAttempt = 0
         didDwell = false
+        isTakenOver = false
         armTimer()
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
         super.touchesMoved(touches, with: event)
-        guard let touch = touches.first, let map = logicalPoint else { return }
+        guard let touch = touches.first(where: { $0 === trackedTouch }),
+              let map = logicalPoint else { return }
         let point = map(touch)
 
         // Once a shape has settled, the pencil is holding its free end. Its path
@@ -113,42 +133,91 @@ final class StrokeDwellRecognizer: UIGestureRecognizer {
             points.append(point)
         }
 
+        // Offer the growing path to whatever wants to act on it live. The ruler
+        // does: the line has to come out straight as it is drawn, not be
+        // straightened afterwards.
+        if let onProgress, onProgress(points), !isTakenOver {
+            isTakenOver = true
+            claimTouch()
+        }
+
         guard let anchor = restAnchor else { return }
         if hypot(point.x - anchor.x, point.y - anchor.y) > holdRadius {
             // Moving again before anything settled: restart the clock from here.
             restAnchor = point
             restSince = CACurrentMediaTime()
             nextAttempt = 0
-            onResume?()
+            // A stroke the ruler is already ruling has no preview to drop — and
+            // dropping one on every sample would erase the ruled line as fast as
+            // it was drawn.
+            if !isTakenOver { onResume?() }
         }
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
         super.touchesEnded(touches, with: event)
+        guard touches.contains(where: { $0 === trackedTouch }) else { return }
         finish()
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
         super.touchesCancelled(touches, with: event)
+        guard touches.contains(where: { $0 === trackedTouch }) else { return }
         finish()
     }
 
+    /// UIKit's own last word on a gesture, whatever route it took to get here.
+    ///
+    /// This is the safety net, and it is not optional. A recognizer that another
+    /// one beats to the touch is reset WITHOUT `touchesCancelled` — so `finish`
+    /// was skipped, `isTouching` stayed true for the rest of the session, and
+    /// everything downstream that waits for the pencil to lift (the ink pass,
+    /// undo steps, beautification) waited forever. If a shape happened to be held
+    /// at the time, the canvas stayed muted too: the pencil stopped drawing
+    /// altogether and the page scrolled under it instead.
     override func reset() {
         super.reset()
+        if isTouching { finish(claiming: false) }
         dwellTimer?.invalidate()
         dwellTimer = nil
+        trackedTouch = nil
         restAnchor = nil
     }
 
-    private func finish() {
+    /// Takes the touch away from every other recognizer tracking it.
+    ///
+    /// Only ever called once a dwell has been ACCEPTED, i.e. the pencil is
+    /// deliberately holding a settled shape. Muting PencilKit at that moment
+    /// leaves the touch free for the enclosing scroll view's pan, which would
+    /// drag the page out from under the shape being sized. Moving to `.began`
+    /// makes this the recognizer in charge for the rest of the gesture, so
+    /// nothing else can pick it up.
+    private func claimTouch() {
+        guard state == .possible else { return }
+        didClaim = true
+        state = .began
+    }
+
+    private func finish(claiming: Bool = true) {
         dwellTimer?.invalidate()
         dwellTimer = nil
+        guard isTouching else { return }
         isTouching = false
-        onEnd?(didDwell)
+        trackedTouch = nil
+        onEnd?(didDwell || isTakenOver)
         didDwell = false
+        isTakenOver = false
         restAnchor = nil
-        // Never claim the touch — PencilKit owns it.
-        state = .failed
+        // Ordinarily the touch was never claimed — PencilKit owns it — and the
+        // watcher bows out with `.failed`. A held shape is the exception: it took
+        // the touch, so it has to end it properly.
+        guard claiming else { return }
+        if didClaim {
+            didClaim = false
+            state = .ended
+        } else {
+            state = .failed
+        }
     }
 
     /// Polls the rest clock for as long as the stroke lasts.
@@ -169,11 +238,12 @@ final class StrokeDwellRecognizer: UIGestureRecognizer {
     }
 
     private func checkRest() {
-        guard !didDwell, points.count > 2, restAnchor != nil else { return }
+        guard !didDwell, !isTakenOver, points.count > 2, restAnchor != nil else { return }
         let now = CACurrentMediaTime()
         guard now - restSince >= minimumHold, now >= nextAttempt else { return }
         if let accepted = onDwell?(points), accepted {
             didDwell = true
+            claimTouch()
         } else {
             // Not a shape yet. Stay armed — the pause that counts is the one that
             // comes once the shape is closed.

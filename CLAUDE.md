@@ -81,7 +81,10 @@ Universal app, Swift 6 (strict concurrency), SwiftUI-first, Liquid Glass design 
   depend on it. Editor-only code still lives behind the `App/Routing` import rule.
 - Brand parity: reuse ClassMate's single blue CM mark + wordmark as TEMPLATE
   images tinted to the theme accent (BrandMark/BrandWordmark), and bundle Cabinet
-  Grotesk in NotesDesignSystem (registered at launch via `CMFonts`).
+  Grotesk in NotesDesignSystem (registered at launch via `CMFonts`). The library's
+  navigation title is the LOCKUP, not the word "Library" — `BrandTitle`, a
+  `ToolbarContent` so a screen drops it beside the buttons it already has, on both
+  the iPad grid and the iPhone list.
 - The launch animation is the DESIGNED Lottie scene itself —
   `NotesDesignSystem/Resources/LaunchScene.json`, played by `LaunchSceneView`.
   Replacing that file replaces the launch. `lottie-ios` is the app's one
@@ -91,13 +94,26 @@ Universal app, Swift 6 (strict concurrency), SwiftUI-first, Liquid Glass design 
   animation if the scene is missing. It is staged exactly the way ClassMate stages
   its splash: theme surface, `AmbientBackground` fading in over 1.1 s behind it,
   and the scene centred and aspect-fitted across the FULL width (its own
-  `LaunchScene.aspectRatio`, not a hardcoded cap). The scene is RECOLOURED to the theme exactly
-  the way ClassMate recolours its own splash (`splash_screen.dart`): the baked
-  white canvas becomes `theme.surface` so the animation melts into the background,
-  the baked navy becomes `theme.accent`, and the CN monogram — an embedded PNG
-  that vector recolouring can't reach — has its pixels retinted with the alpha
-  preserved. Recoloured scenes are cached per theme; a recolouring failure costs
-  the theme, never the launch.
+  `LaunchScene.aspectRatio`, not a hardcoded cap) — which needs
+  `LaunchSceneView.sizeThatFits`, because a `LottieAnimationView`'s intrinsic size
+  is the composition's own 1280×720 and a representable that never answers the
+  proposal is laid out at that size whatever it was offered, i.e. off both edges
+  of a phone. The scene is RECOLOURED to the theme exactly the way ClassMate
+  recolours its own splash (`splash_screen.dart`): everything the artwork DRAWS —
+  `LaunchScene.lettering` (white), `LaunchScene.navy`, and the CN monogram, an
+  embedded PNG that vector recolouring can't reach, whose pixels are retinted with
+  the alpha preserved — becomes `theme.accent`, and `LaunchScene.plate`, the
+  near-black slab the lockup sits on, becomes `theme.surface` so the lockup melts
+  into the background. Which baked colour plays which ROLE is a property of the
+  artwork, not a constant: the previous scene was a navy mark on a white canvas,
+  so white meant background and was painted the surface — and when the artwork
+  became white lettering on a dark plate, that same rule painted the words the
+  colour of the field behind them and left the plate matching no rule at all.
+  `canBuildThemedScene` exists because `animation(surface:accent:)` falls back to
+  the untouched artwork, and a fallback still plays, still lasts the right length
+  and is still non-nil — indistinguishable, on screen and to a test, from a theme
+  being ignored. Recoloured scenes are cached per theme; `updateUIView` swaps in a
+  scene rebuilt for a new theme, since `makeUIView` runs once.
 - The cover is PAGE ONE of the document (`PageRecord.isCover`, manifest v7), drawn
   on with every tool like any other page. Its "paper" is the notebook's artwork
   (`CoverPaper` → `CoverPaperView`, via `PagePaperView`), never a template. Only a
@@ -211,6 +227,22 @@ Universal app, Swift 6 (strict concurrency), SwiftUI-first, Liquid Glass design 
   corners are rounded, its sides bow, and the down-sample that stops sampling
   noise reading as corners lands either side of a real one — the count came out
   three as often as four, so squares snapped to triangles.
+- The dwell watcher follows the PENCIL only (`allowedTouchTypes`, matching the
+  canvas's `drawingPolicy`) and one touch at a time, and it cleans up in `reset()`
+  — UIKit's own last word on a gesture — not only in `touchesEnded`. A recognizer
+  another one beats to the touch is reset WITHOUT `touchesCancelled`: a palm
+  resting on the page started a "stroke" that never ended, `isTouching` stayed
+  true for the rest of the session, and everything that waits for the pencil to
+  lift (the ink pass, undo steps, beautification's `apply`) waited forever. If a
+  shape happened to be held at the time the canvas stayed muted too — the pencil
+  stopped marking the page and started dragging it instead. That one leak is the
+  whole of "snapping doesn't work, beautification doesn't work, and sometimes the
+  pen behaves like a finger". `finishHeldStroke` re-enables drawing
+  unconditionally and `shouldEnableDrawing()` clears a mute whose hold is over,
+  because drawing being off is the one state the user cannot get out of.
+- Once a dwell is ACCEPTED the watcher claims the touch (`state = .began`).
+  Muting PencilKit leaves the touch free for the enclosing scroll view's pan,
+  which would drag the page out from under the shape being sized.
 - The dwell watcher polls a rest CLOCK (`restSince`) and appends every coalesced
   touch. A one-shot timer armed on the last big move gets one chance per move: a
   pause over ink that isn't a shape yet used it up and nothing re-armed it, so the
@@ -379,6 +411,16 @@ ML feature — distinct from the shipped handwriting→text) stays a premium stu
   them through its own frame. The overlay must NOT `ignoresSafeArea`, or the line
   the ink is ruled against sits a safe area away from the one on screen. Ink drawn
   ACROSS the edge (a crossed t) is left alone by the aspect test.
+- The ruler rules the line WHILE it is being drawn (`previewRuled`, driven by the
+  dwell watcher's `onProgress`), on the same machinery as a held shape: it takes
+  the stroke over the moment `RulerGuide.straightened` accepts it, mutes the live
+  ink and previews the projected line under the pencil, and `commitPending` inks
+  that same path on the lift. Ruling in the deferred ink pass instead is what put
+  the straight line a beat behind the hand — you watched yourself draw a crooked
+  line and a straight one turned up afterwards, which is a ruler that corrects
+  you, not one you draw against. The deferred `ruled(_:)` stays as the fallback.
+  `commitPending` is NOT gated on the shape-snapping switch: the straight-edge
+  sets `pendingSnapPath` too and is its own setting.
 - The paint bucket fills as far as the paint reaches, and the colour goes UNDER
   the ink (`PageFillLayer`, below `CanvasPageView`). Fills were in
   `PageElementsLayer` before, which was wrong twice: an element is drawn inside a
@@ -394,7 +436,13 @@ ML feature — distinct from the shipped handwriting→text) stays a premium stu
   the page out bigger without changing its logical size, so the same hand covers
   fewer logical points and only then fitted. The claim band around a Vision box is
   0.45 of the line height, not 0.6 — a wider band reached into the lines above and
-  below, leaving them with no ink of their own to typeset.
+  below, leaving them with no ink of their own to typeset. Which strokes belong to
+  which line is decided ALL AT ONCE (`LiveBeautifier.assign`): every stroke is
+  offered to every recognized line and goes to the one whose middle it sits
+  nearest, in that line's own heights. Claiming line by line in whatever order the
+  recognizer returned meant the first line to ask took every stroke its band
+  touched — a neighbour's descenders and dotted i's included — and the neighbour
+  was then dropped for having no ink of its own.
 - NOVA renders LaTeX itself (`NovaMath`). Every model answers a maths question in
   LaTeX, and Markdown passes `$x^2$` and `\frac{a}{b}` straight through to the
   screen. There is no LaTeX engine and there doesn't need to be one: the markup is

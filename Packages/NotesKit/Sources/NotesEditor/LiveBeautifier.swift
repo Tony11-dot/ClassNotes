@@ -316,23 +316,28 @@ final class LiveBeautifier {
         }
         guard !found.isEmpty else { return pass }
 
-        var claimed = Set<Int>()
-        for line in found {
+        // Every reading first, then the ink — the ink is shared out between all
+        // of them at once rather than handed to whoever asked first.
+        let readings: [(text: String, rect: CGRect)] = found.compactMap { line in
             let text = line.text
                 .replacingOccurrences(of: "\n", with: " ")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else { continue }
-            let rect = Self.pageRect(forVisionBox: line.boundingBox, in: region)
-            let indices = Self.strokes(boxes, inside: rect, excluding: claimed)
+            guard !text.isEmpty else { return nil }
+            return (text, Self.pageRect(forVisionBox: line.boundingBox, in: region))
+        }
+        .sorted { $0.rect.minY == $1.rect.minY ? $0.rect.minX < $1.rect.minX : $0.rect.minY < $1.rect.minY }
+
+        let assignment = Self.assign(boxes, to: readings.map(\.rect))
+        for (index, reading) in readings.enumerated() {
+            let indices = assignment[index]
             guard !indices.isEmpty else { continue }
             let bounds = indices.reduce(CGRect.null) { $0.union(boxes[$1]) }
             // Vision found words here, so this is writing — the only thing left to
             // rule out is ink far too tall to be a line of it (a big diagram that
             // happens to contain a label).
             guard Self.isWritingLine(bounds, pageSize: pageSize) else { continue }
-            claimed.formUnion(indices)
             pass.lines.append(RecognizedLine(
-                text: text,
+                text: reading.text,
                 bounds: bounds,
                 strokeIndices: indices.sorted(),
                 meanForce: Self.meanForce(of: indices.map { strokes[$0] })
@@ -352,24 +357,40 @@ final class LiveBeautifier {
         )
     }
 
-    /// Which strokes a recognized line is made of: the ones whose centre sits
-    /// inside its box, generously grown vertically because Vision's box hugs the
-    /// x-height and misses ascenders, descenders and the dot on an i.
-    static func strokes(
-        _ boxes: [CGRect], inside rect: CGRect, excluding claimed: Set<Int>
-    ) -> [Int] {
-        // Grown enough for ascenders, descenders and the dot on an i — and no
-        // further. A band 120% taller than the line reached into the lines above
-        // and below and claimed their ink; those lines were then left with no
-        // strokes of their own and dropped, which is most of what "about half of
-        // it gets read" was.
-        let grown = rect.insetBy(dx: -rect.height * 0.25, dy: -rect.height * 0.45)
-        return boxes.indices.filter { index in
-            guard !claimed.contains(index) else { return false }
-            let box = boxes[index]
-            guard !box.isNull, !box.isEmpty else { return false }
-            return grown.contains(CGPoint(x: box.midX, y: box.midY))
+    /// The area around a recognized line that its own ink can be sitting in.
+    ///
+    /// Grown enough for ascenders, descenders and the dot on an i — and no
+    /// further. A band 120% taller than the line reached into the lines above and
+    /// below and claimed their ink; those lines were then left with no strokes of
+    /// their own and dropped, which is most of what "about half of it gets read"
+    /// was.
+    static func band(around rect: CGRect) -> CGRect {
+        rect.insetBy(dx: -rect.height * 0.25, dy: -rect.height * 0.45)
+    }
+
+    /// Which strokes each recognized line is made of.
+    ///
+    /// Every stroke is offered to EVERY line and goes to the one whose middle it
+    /// sits closest to, measured in that line's own heights so a tall line can't
+    /// out-reach the small one beside it. Claiming line by line in whatever order
+    /// the recognizer returned meant the first line to ask took every stroke its
+    /// band touched — including the descenders and the dotted i's of its
+    /// neighbour, which was then left with no ink of its own and dropped
+    /// unbeautified.
+    static func assign(_ boxes: [CGRect], to rects: [CGRect]) -> [[Int]] {
+        var assigned = [[Int]](repeating: [], count: rects.count)
+        let bands = rects.map(band(around:))
+        for (index, box) in boxes.enumerated() {
+            guard !box.isNull, !box.isEmpty else { continue }
+            let centre = CGPoint(x: box.midX, y: box.midY)
+            var best: (line: Int, distance: CGFloat)?
+            for (line, band) in bands.enumerated() where band.contains(centre) {
+                let distance = abs(centre.y - rects[line].midY) / max(rects[line].height, 1)
+                if best == nil || distance < best!.distance { best = (line, distance) }
+            }
+            if let best { assigned[best.line].append(index) }
         }
+        return assigned
     }
 
     static func medianHeight(of boxes: [CGRect]) -> CGFloat {

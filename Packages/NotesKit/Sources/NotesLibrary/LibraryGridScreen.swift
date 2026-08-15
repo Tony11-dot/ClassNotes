@@ -55,6 +55,8 @@ public struct LibraryGridScreen<Destination: View>: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(theme.surface.color)
             .navigationTitle("Library")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { BrandTitle() }
             .navigationDestination(item: $opened) { notebook in
                 destination(notebook)
             }
