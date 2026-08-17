@@ -31,11 +31,29 @@ struct PageElementsLayer: View {
     let allowsEditing: Bool
     /// The text box the keyboard is currently in, owned by the editor screen.
     @Binding var editingTextID: UUID?
+    /// Which elements this instance renders, relative to the ink layer.
+    var layer: Layer = .all
+
+    /// Ink paints ABOVE non-tape elements (images, files, text, audio, links)
+    /// so a stroke drawn over one is actually visible on top of it — tape
+    /// stays above ink, because hiding what's underneath it is the entire
+    /// point of tape. A caller that composites ink as its own separate layer
+    /// (`EditorScreenPages.canvasStack`, `PageCompositeView`) renders one
+    /// `PageElementsLayer` on each side of it; `.all` is for any caller that
+    /// doesn't split ink out at all.
+    enum Layer {
+        case all, belowInk, aboveInk
+    }
 
     /// Live drag translation for the element currently under the finger, so the
     /// bubble tracks the finger instead of jumping on release.
     @State private var dragOffset: CGSize = .zero
     @State private var draggingID: UUID?
+    /// Live resize translation, from the corner handle. Same idea as
+    /// `dragOffset`: the box grows/shrinks under the finger instead of only
+    /// snapping to its new size on release.
+    @State private var resizeDelta: CGSize = .zero
+    @State private var resizingID: UUID?
     /// Strips already removed by the eraser gesture in flight, so one continuous
     /// scrub deletes each one exactly once.
     @State private var erasedElementIDs: Set<UUID> = []
@@ -44,19 +62,45 @@ struct PageElementsLayer: View {
 
     private var scale: CGFloat { displaySize.width / max(logicalSize.width, 1) }
 
+    /// Smallest an element may shrink to, in logical points — matches the
+    /// floor the pinch-resize path already enforces.
+    private static let minimumElementSide: Double = 40
+
+    /// Fills are never in here: their outlines are in absolute page
+    /// coordinates and they belong underneath the ink, so `PageFillLayer`
+    /// draws them below the canvas instead.
+    private var visibleElements: [PageElement] {
+        let nonFill = elements.filter { $0.kind != .fill }
+        switch layer {
+        case .all: return nonFill
+        case .belowInk: return nonFill.filter { $0.kind != .tape }
+        case .aboveInk: return nonFill.filter { $0.kind == .tape }
+        }
+    }
+
     var body: some View {
         ZStack(alignment: .topLeading) {
-            // Fills are not in here: their outlines are in absolute page
-            // coordinates and they belong underneath the ink, so `PageFillLayer`
-            // draws them below the canvas instead.
-            ForEach(elements.filter { $0.kind != .fill }) { element in
+            ForEach(visibleElements) { element in
                 let live = draggingID == element.id ? dragOffset : .zero
+                let (liveWidth, liveHeight) = resizedSize(for: element)
                 elementView(element)
-                    .frame(width: element.width * scale, height: element.height * scale)
+                    .frame(width: liveWidth * scale, height: liveHeight * scale)
+                    .overlay(alignment: .bottomTrailing) {
+                        // Pinching directly on the element still works (kept as
+                        // a secondary path), but it's the same two-finger
+                        // gesture the page itself uses to zoom, and the two
+                        // compete. A dedicated single-finger handle can't
+                        // collide with that, and it's the discoverable way to
+                        // resize precisely — the whole reason resizing an
+                        // element only ever seemed to work by accident.
+                        if allowsEditing, element.kind != .tape {
+                            resizeHandle(for: element)
+                        }
+                    }
                     .rotationEffect(.degrees(element.rotation))
                     .position(
-                        x: (element.x + element.width / 2) * scale + live.width,
-                        y: (element.y + element.height / 2) * scale + live.height
+                        x: (element.x + liveWidth / 2) * scale + live.width,
+                        y: (element.y + liveHeight / 2) * scale + live.height
                     )
                     .gesture(dragGesture(for: element), including: gestureMask(for: element))
                     .simultaneousGesture(resizeGesture(for: element), including: gestureMask(for: element))
@@ -75,27 +119,83 @@ struct PageElementsLayer: View {
         .quickLookPreview($previewURL)
     }
 
+    /// The element's size for a given resize translation (view-space points).
+    /// Logical points, top-left anchored — the handle only ever grows/shrinks
+    /// toward the bottom-right corner, same as pinch-resize.
+    private func resizedSize(
+        for element: PageElement, translation: CGSize
+    ) -> (width: Double, height: Double) {
+        let maxWidth = logicalSize.width - element.x
+        let maxHeight = logicalSize.height - element.y
+        let width = min(maxWidth, max(Self.minimumElementSide, element.width + translation.width / scale))
+        let height = min(maxHeight, max(Self.minimumElementSide, element.height + translation.height / scale))
+        return (width, height)
+    }
+
+    /// The element's size, live-adjusted while the corner handle is being
+    /// dragged; unchanged otherwise.
+    private func resizedSize(for element: PageElement) -> (width: Double, height: Double) {
+        guard resizingID == element.id else { return (element.width, element.height) }
+        return resizedSize(for: element, translation: resizeDelta)
+    }
+
+    /// A small, precise grab point at the element's bottom-right corner. The
+    /// dot is drawn small so it doesn't dominate a small element, but its hit
+    /// target is a generous 32pt box centered on it.
+    private func resizeHandle(for element: PageElement) -> some View {
+        Circle()
+            .fill(theme.accent.color)
+            .overlay(Circle().strokeBorder(.white, lineWidth: 1.5))
+            .frame(width: 14, height: 14)
+            .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
+            .frame(width: 32, height: 32)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        resizingID = element.id
+                        resizeDelta = value.translation
+                    }
+                    .onEnded { value in
+                        var updated = element
+                        (updated.width, updated.height) = resizedSize(for: element, translation: value.translation)
+                        resizingID = nil
+                        resizeDelta = .zero
+                        Task { await model.updateElement(updated, on: pageID) }
+                    }
+            )
+    }
+
     /// Tape must stay tappable even while the pencil is drawing (that's the point
     /// of it), but nothing should be draggable mid-stroke.
     private func gestureMask(for element: PageElement) -> GestureMask {
         allowsEditing ? .all : .subviews
     }
 
-    /// The eraser takes tape off the page. It's live only for tape, and only while
-    /// the eraser is the selected tool — anywhere else this gesture must not exist,
-    /// or it would swallow the taps that lift a strip and the drags that move a
-    /// photo. Ink under the strip is untouched: the canvas below still gets every
-    /// touch that isn't on a strip.
+    /// The eraser takes tape and typeset text off the page. It's live only for
+    /// those two kinds, and only while the eraser is the selected tool —
+    /// anywhere else this gesture must not exist, or it would swallow the taps
+    /// that lift a strip, the drags that move a photo, and the taps that edit a
+    /// text box. Ink under either is untouched: the canvas below still gets
+    /// every touch that isn't on one of them.
+    ///
+    /// Text is included alongside tape because a beautified (or hand-placed)
+    /// run is a `PageElement`, not `PKDrawing` ink — PencilKit's own eraser,
+    /// pixel or vector, can only ever touch raw strokes, so without this a
+    /// typeset line could never be erased at all.
     private func eraseMask(for element: PageElement) -> GestureMask {
-        toolState.tool == .eraser && element.kind == .tape ? .all : .subviews
+        toolState.tool == .eraser && (element.kind == .tape || element.kind == .text)
+            ? .all : .subviews
     }
 
-    /// Touch down anywhere on a strip removes it — so scrubbing the eraser across a
-    /// page takes out every strip it passes over, which is what an eraser should do.
+    /// Touch down anywhere on a strip or a text box removes it — so scrubbing
+    /// the eraser across a page takes out every one it passes over, which is
+    /// what an eraser should do.
     private func eraseGesture(for element: PageElement) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { _ in
-                guard toolState.tool == .eraser, element.kind == .tape else { return }
+                guard toolState.tool == .eraser, element.kind == .tape || element.kind == .text
+                else { return }
                 guard erasedElementIDs.insert(element.id).inserted else { return }
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 Task { await model.deleteElement(element.id, on: pageID) }

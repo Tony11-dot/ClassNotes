@@ -98,18 +98,29 @@ public struct PageCompositeView: View {
             if let background {
                 Image(uiImage: background).resizable().scaledToFit()
             }
-            if let ink {
-                Image(uiImage: ink).resizable().scaledToFit()
-            }
-            // Fills come from `PageContentView`, which draws them the same way the
-            // iPhone viewer does: above the ink, and still reading as underneath
-            // it, because a fill's polygon stops exactly where the ink stopped the
-            // flood (see `FillRegionView`).
+            // Everything except tape renders BELOW the ink — a stroke drawn
+            // over an image or a file is visible on top of it, matching the
+            // editor. Fills travel with this pass too: a fill's polygon
+            // already stops exactly where the ink stopped the flood (see
+            // `FillRegionView`), so it reads as under the ink either way.
             PageContentView(
                 elements: page.elements,
                 displaySize: size,
                 logicalSize: page.logicalSize,
-                mediaURL: mediaURL
+                mediaURL: mediaURL,
+                layer: .belowInk
+            )
+            if let ink {
+                Image(uiImage: ink).resizable().scaledToFit()
+            }
+            // Tape stays above the ink: hiding what's underneath it is the
+            // entire point of tape.
+            PageContentView(
+                elements: page.elements,
+                displaySize: size,
+                logicalSize: page.logicalSize,
+                mediaURL: mediaURL,
+                layer: .aboveInk
             )
         }
         .frame(width: size.width, height: size.height)

@@ -110,13 +110,20 @@ final class LiveBeautifier {
     nonisolated static let minimumConfidence: Double = 0.2
 
     /// How the chosen face actually measures, so the box matches the type.
-    static func metrics(fontName: String) -> TextMetrics {
+    ///
+    /// `bold` has to be threaded all the way through: a dynamic-bold line
+    /// renders with `FontResolver`'s bold trait (`PageElementsLayer.textFont`
+    /// passes `bold: element.isBold`), and bold glyphs measure wider than
+    /// regular ones. Measuring every line with the regular face regardless of
+    /// what it actually renders as is why a hard-pressed, bold-triggered line
+    /// could be laid out in a box slightly too narrow for what was painted.
+    static func metrics(fontName: String, bold: Bool) -> TextMetrics {
         TextMetrics(
             width: { text, size in
-                Double(FontResolver.measureWidth(text, name: fontName, size: size))
+                Double(FontResolver.measureWidth(text, name: fontName, size: size, bold: bold))
             },
             lineHeight: { size in
-                Double(FontResolver.lineHeight(name: fontName, size: size))
+                Double(FontResolver.lineHeight(name: fontName, size: size, bold: bold))
             }
         )
     }
@@ -216,6 +223,11 @@ final class LiveBeautifier {
         }
         clearFoundNothing()
 
+        // Built once per pass, not per line: only the bold/regular choice
+        // varies line to line, and re-measuring the same two faces per line
+        // would cost a text layout for nothing.
+        let regularMetrics = Self.metrics(fontName: fontName, bold: false)
+        let boldMetrics = Self.metrics(fontName: fontName, bold: true)
         let plan = Self.plan(
             lines: lines,
             existing: runs[pageID] ?? [],
@@ -223,7 +235,7 @@ final class LiveBeautifier {
             fontName: fontName,
             colorHex: nil,
             pageSize: pageSize,
-            metrics: Self.metrics(fontName: fontName)
+            metrics: { $0 ? boldMetrics : regularMetrics }
         )
         guard !plan.isEmpty else {
             noteFoundNothing(true)

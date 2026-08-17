@@ -84,7 +84,7 @@ struct BeautifySettingsApplicationTests {
             lines: [line("hello", at: CGRect(x: 60, y: 200, width: 160, height: 30))],
             existing: [], settings: settings, fontName: "Georgia",
             colorHex: nil, pageSize: pageSize,
-            metrics: LiveBeautifier.metrics(fontName: "Georgia")
+            metrics: { LiveBeautifier.metrics(fontName: "Georgia", bold: $0) }
         )
         let element = try #require(plan.inserts.first)
         #expect(element.resolvedFontSize == 31)
@@ -103,7 +103,7 @@ struct BeautifySettingsApplicationTests {
             lines: [line(text, at: CGRect(x: 40, y: 300, width: 300, height: 28))],
             existing: [], settings: settings, fontName: fontName,
             colorHex: nil, pageSize: pageSize,
-            metrics: LiveBeautifier.metrics(fontName: fontName)
+            metrics: { LiveBeautifier.metrics(fontName: fontName, bold: $0) }
         )
         let element = try #require(plan.inserts.first)
         let measured = FontResolver.measureWidth(text, name: fontName, size: 24)
@@ -112,6 +112,35 @@ struct BeautifySettingsApplicationTests {
         let lineHeight = Double(FontResolver.lineHeight(name: fontName, size: 24))
         #expect(element.height >= lines * lineHeight, "every wrapped line has room")
         #expect(element.x + element.width <= pageSize.width + 0.01)
+    }
+
+    @Test("A dynamic-bold line is measured in the SAME weight it's rendered in")
+    func boldLineIsMeasuredBold() throws {
+        let fontName = "Georgia"
+        let text = "the quick brown fox jumps over the lazy dog"
+        let settings = BeautifySettings(
+            isEnabled: true, dynamicBold: true, unifySizeAndSpacing: true, fontSize: 24
+        )
+        let pressedHard = RecognizedLine(
+            text: text, bounds: CGRect(x: 40, y: 300, width: 300, height: 28),
+            strokeIndices: [0], meanForce: 0.9
+        )
+        let plan = LiveBeautifier.plan(
+            lines: [pressedHard], existing: [], settings: settings, fontName: fontName,
+            colorHex: nil, pageSize: pageSize,
+            metrics: { LiveBeautifier.metrics(fontName: fontName, bold: $0) }
+        )
+        let element = try #require(plan.inserts.first)
+        #expect(element.isBold)
+        // Bold glyphs measure wider than regular ones at the same size — a box
+        // sized off the regular face would be too narrow for what's painted.
+        let regularWidth = FontResolver.measureWidth(text, name: fontName, size: 24, bold: false)
+        let boldWidth = FontResolver.measureWidth(text, name: fontName, size: 24, bold: true)
+        #expect(boldWidth > regularWidth, "the test's premise: bold really is wider here")
+        let drawable = element.width - BeautifyLayout.textInset * 2
+        let boldLines = ceil(Double(boldWidth) / drawable)
+        let boldLineHeight = Double(FontResolver.lineHeight(name: fontName, size: 24, bold: true))
+        #expect(element.height >= boldLines * boldLineHeight, "room for the BOLD wrap, not the regular one")
     }
 
     @Test("With unify off the spacing slider stays out of it")
@@ -123,7 +152,7 @@ struct BeautifySettingsApplicationTests {
         let plan = LiveBeautifier.plan(
             lines: [line("tracks the ink", at: CGRect(x: 40, y: 100, width: 200, height: 44))],
             existing: [], settings: settings, fontName: "Georgia",
-            colorHex: nil, pageSize: pageSize, metrics: .nominal
+            colorHex: nil, pageSize: pageSize, metrics: { _ in .nominal }
         )
         let element = try #require(plan.inserts.first)
         #expect(element.resolvedLineSpacing == 1)

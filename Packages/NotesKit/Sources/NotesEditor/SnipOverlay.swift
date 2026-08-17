@@ -47,11 +47,15 @@ struct SnipOverlay: View {
                 .ignoresSafeArea()
 
             if let rect {
+                // A plain, crisp border — no `.shadow`. A shadow here blooms
+                // outward from the shape's own alpha silhouette and isn't
+                // clipped by the dim layer's cutout above, so it read as a
+                // stray glow sitting ABOVE the selection rather than a clean
+                // outline around it.
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .strokeBorder(theme.accent.color, lineWidth: 2)
                     .frame(width: rect.width, height: rect.height)
                     .position(x: rect.midX, y: rect.midY)
-                    .shadow(color: theme.accent.withAlpha(0.5).color, radius: 8)
 
                 ForEach(corners(of: rect), id: \.self) { point in
                     Circle()

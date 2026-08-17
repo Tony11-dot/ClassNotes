@@ -26,6 +26,21 @@ public struct PageContentView: View {
     /// Called when a strip of tape is tapped, if the host wants to persist the
     /// lift. When nil, tape is lifted only for as long as the page is on screen.
     var onToggleTape: ((UUID) -> Void)?
+    /// Which elements this instance renders, relative to the ink layer the
+    /// caller composites around it. See `layer`'s doc for why.
+    var layer: Layer = .all
+
+    /// Ink paints ABOVE non-tape elements so a stroke drawn over an image or a
+    /// file is actually visible on top of it — the same split
+    /// `NotesEditor.PageElementsLayer` uses. Tape stays above ink, since
+    /// hiding what's underneath it is the entire point of tape. A caller that
+    /// composites ink as its own separate layer (`PageCompositeView`,
+    /// `NotebookViewerScreen`) renders one `PageContentView` on each side of
+    /// it; `.all` (the default) is for a caller with no ink layer to split
+    /// around at all.
+    public enum Layer: Sendable {
+        case all, belowInk, aboveInk
+    }
 
     @State private var locallyLifted: Set<UUID> = []
     @State private var previewURL: URL?
@@ -35,16 +50,34 @@ public struct PageContentView: View {
         displaySize: CGSize,
         logicalSize: CGSize,
         mediaURL: @escaping (String) -> URL,
-        onToggleTape: ((UUID) -> Void)? = nil
+        onToggleTape: ((UUID) -> Void)? = nil,
+        layer: Layer = .all
     ) {
         self.elements = elements
         self.displaySize = displaySize
         self.logicalSize = logicalSize
         self.mediaURL = mediaURL
         self.onToggleTape = onToggleTape
+        self.layer = layer
     }
 
     private var scale: CGFloat { displaySize.width / max(logicalSize.width, 1) }
+
+    /// Fills read as being under the ink (their polygon already stops exactly
+    /// where the flood stopped, at the ink's own contour) regardless of which
+    /// pass draws them, so they travel with the non-tape elements.
+    private var fillElements: [PageElement] {
+        layer == .aboveInk ? [] : elements.filter { $0.kind == .fill }
+    }
+
+    private var otherElements: [PageElement] {
+        let nonFill = elements.filter { $0.kind != .fill }
+        switch layer {
+        case .all: return nonFill
+        case .belowInk: return nonFill.filter { $0.kind != .tape }
+        case .aboveInk: return nonFill.filter { $0.kind == .tape }
+        }
+    }
 
     public var body: some View {
         ZStack(alignment: .topLeading) {
@@ -52,14 +85,14 @@ public struct PageContentView: View {
             // coordinates, so putting one inside a frame at its own box offsets
             // the colour by that box a second time and it lands nowhere near the
             // shape it was flooded out of.
-            ForEach(elements.filter { $0.kind == .fill }) { element in
+            ForEach(fillElements) { element in
                 FillRegionView(
                     points: element.points.map { CGPoint(x: $0.x * scale, y: $0.y * scale) },
                     color: element.colorHex.flatMap(ThemeColor.init(hex:)) ?? theme.accentMuted
                 )
                 .frame(width: displaySize.width, height: displaySize.height, alignment: .topLeading)
             }
-            ForEach(elements.filter { $0.kind != .fill }) { element in
+            ForEach(otherElements) { element in
                 view(for: element)
                     .frame(width: element.width * scale, height: element.height * scale)
                     .rotationEffect(.degrees(element.rotation))

@@ -44,6 +44,33 @@ struct ToolPreferencesTests {
     }
 }
 
+@Suite("Beautification's default recognition language follows the device")
+struct BeautifyLanguageDefaultTests {
+    @Test("An exact match in the offered list wins")
+    func exactMatch() {
+        let resolved = BeautifyLanguage.resolvedDefault(preferredLanguages: ["fr-FR", "en-US"])
+        #expect(resolved.code == "fr-FR")
+    }
+
+    @Test("A region-less or differently-regioned preference matches by base language")
+    func baseLanguageMatch() {
+        #expect(BeautifyLanguage.resolvedDefault(preferredLanguages: ["fr"]).code == "fr-FR")
+        #expect(BeautifyLanguage.resolvedDefault(preferredLanguages: ["de-CH"]).code == "de-DE")
+    }
+
+    @Test("A language the panel doesn't offer falls back to en-US, not silently to nothing")
+    func unsupportedFallsBackToDefault() {
+        let resolved = BeautifyLanguage.resolvedDefault(preferredLanguages: ["fi-FI", "sv-SE"])
+        #expect(resolved.code == BeautifyLanguage.default.code)
+    }
+
+    @Test("The first preferred language that matches wins over later ones")
+    func firstMatchWins() {
+        let resolved = BeautifyLanguage.resolvedDefault(preferredLanguages: ["ja-JP", "en-US"])
+        #expect(resolved.code == "ja-JP")
+    }
+}
+
 @Suite("Which device's settings win")
 struct DeviceSettingsMergeTests {
     private func settings(revision: Int, at seconds: TimeInterval) -> DeviceSettings {

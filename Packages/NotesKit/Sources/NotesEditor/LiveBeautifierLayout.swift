@@ -18,7 +18,7 @@ static func plan(
     fontName: String,
     colorHex: String?,
     pageSize: CGSize,
-    metrics: TextMetrics
+    metrics: (Bool) -> TextMetrics
 ) -> BeautifyPlan {
     var plan = BeautifyPlan()
     var runs = existing
@@ -26,13 +26,18 @@ static func plan(
     for line in lines {
         let typeSize = settings.typeSize(forInkHeight: line.bounds.height)
         let bold = settings.dynamicBold && line.meanForce > 0.5
+        // Measured in the SAME face weight it's actually painted in
+        // (`PageElementsLayer.textFont` renders `bold: element.isBold`) — a
+        // box measured regular but rendered bold ends up narrower than the
+        // type it's holding.
+        let lineMetrics = metrics(bold)
         let spacing = settings.effectiveLineSpacing
         let frame = BeautifyLayout.frame(
             inkBounds: line.bounds,
             text: line.text,
             typeSize: typeSize,
             lineSpacing: spacing,
-            metrics: metrics,
+            metrics: lineMetrics,
             in: pageSize
         )
 
@@ -48,7 +53,7 @@ static func plan(
             let merged = BeautifyLayout.merged(
                 existing: runs[index].frame, incoming: frame, text: joined,
                 typeSize: typeSize, lineSpacing: spacing,
-                metrics: metrics, in: pageSize
+                metrics: lineMetrics, in: pageSize
             )
             runs[index].text = joined
             runs[index].frame = merged

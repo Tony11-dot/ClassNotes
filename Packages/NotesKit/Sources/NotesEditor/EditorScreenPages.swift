@@ -313,6 +313,22 @@ extension EditorScreen {
             displaySize: displaySize,
             logicalSize: page.logicalSize
         )
+        // Images/files/text/audio/links sit BELOW the ink, so a stroke drawn
+        // over one of them paints on top of it — you can annotate a photo or
+        // circle something in a scan. Tape is the one exception: it renders
+        // in its own instance below, ABOVE the ink, because hiding what's
+        // underneath it is the entire point of tape.
+        PageElementsLayer(
+            pageID: page.id,
+            elements: page.elements,
+            model: model,
+            toolState: toolState,
+            displaySize: displaySize,
+            logicalSize: page.logicalSize,
+            allowsEditing: !toolState.isDrawingEnabled,
+            editingTextID: $editingTextID,
+            layer: .belowInk
+        )
         CanvasPageView(
             notebookID: notebook.id,
             page: page,
@@ -334,7 +350,8 @@ extension EditorScreen {
             displaySize: displaySize,
             logicalSize: page.logicalSize,
             allowsEditing: !toolState.isDrawingEnabled,
-            editingTextID: $editingTextID
+            editingTextID: $editingTextID,
+            layer: .aboveInk
         )
         if toolState.tool == .tape {
             TapeDrawingLayer(

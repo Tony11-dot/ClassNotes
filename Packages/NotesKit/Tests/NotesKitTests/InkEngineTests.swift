@@ -505,7 +505,7 @@ struct LiveBeautifierPlanTests {
             fontName: "SnellRoundhand",
             colorHex: nil,
             pageSize: pageSize,
-            metrics: metrics
+            metrics: { _ in metrics }
         )
         #expect(plan.inserts.count == 2)
         #expect(plan.updates.isEmpty)
@@ -525,7 +525,7 @@ struct LiveBeautifierPlanTests {
                 line("BIG", at: CGRect(x: 40, y: 140, width: 200, height: 60), strokes: [1])
             ],
             existing: [], settings: settings, fontName: "Georgia",
-            colorHex: nil, pageSize: pageSize, metrics: metrics
+            colorHex: nil, pageSize: pageSize, metrics: { _ in metrics }
         )
         let sizes = plan.inserts.map(\.resolvedFontSize)
         #expect(sizes.count == 2)
@@ -540,7 +540,7 @@ struct LiveBeautifierPlanTests {
             lines: [line("is tony", at: CGRect(x: 390, y: 120, width: 120, height: 32), strokes: [4, 5])],
             existing: [BeautifiedRun(elementID: existingID, frame: runFrame, text: "hi my name")],
             settings: BeautifySettings(isEnabled: true),
-            fontName: "Georgia", colorHex: nil, pageSize: pageSize, metrics: metrics
+            fontName: "Georgia", colorHex: nil, pageSize: pageSize, metrics: { _ in metrics }
         )
         #expect(plan.inserts.isEmpty)
         let updated = try #require(plan.updates.first)
@@ -560,7 +560,7 @@ struct LiveBeautifierPlanTests {
                 text: "first line"
             )],
             settings: BeautifySettings(isEnabled: true),
-            fontName: "Georgia", colorHex: nil, pageSize: pageSize, metrics: metrics
+            fontName: "Georgia", colorHex: nil, pageSize: pageSize, metrics: { _ in metrics }
         )
         #expect(plan.inserts.count == 1)
         #expect(plan.updates.isEmpty)
@@ -575,7 +575,7 @@ struct LiveBeautifierPlanTests {
                              strokes: [0], force: force)],
                 existing: [],
                 settings: BeautifySettings(isEnabled: true, dynamicBold: dynamicBold),
-                fontName: "Georgia", colorHex: nil, pageSize: pageSize, metrics: metrics
+                fontName: "Georgia", colorHex: nil, pageSize: pageSize, metrics: { _ in metrics }
             )
         }
         #expect(plan(force: 0.9, dynamicBold: true).inserts[0].isBold)
@@ -587,7 +587,7 @@ struct LiveBeautifierPlanTests {
     func emptyPlan() {
         let plan = LiveBeautifier.plan(
             lines: [], existing: [], settings: BeautifySettings(isEnabled: true),
-            fontName: "Georgia", colorHex: nil, pageSize: pageSize, metrics: metrics
+            fontName: "Georgia", colorHex: nil, pageSize: pageSize, metrics: { _ in metrics }
         )
         #expect(plan.isEmpty)
         #expect(plan.consumedStrokes.isEmpty)

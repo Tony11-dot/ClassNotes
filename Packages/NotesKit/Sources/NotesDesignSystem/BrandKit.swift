@@ -87,7 +87,11 @@ public struct BrandLockup: View {
 public struct BrandTitle: ToolbarContent {
     let height: CGFloat
 
-    public init(height: CGFloat = 26) {
+    /// 34pt — big enough to actually read as the brand mark in the nav bar
+    /// (the old 26pt default was roughly half the size the SAME lockup is
+    /// used at everywhere else in the app: 54 on login, 72–80 for `BrandMark`
+    /// alone) while still comfortably fitting a standard inline nav bar.
+    public init(height: CGFloat = 34) {
         self.height = height
     }
 

@@ -28,7 +28,7 @@ public struct BeautifySettings: Sendable, Equatable, Codable {
         isEnabled: Bool = false,
         fontID: String = FontLibrary.default.id,
         dynamicBold: Bool = false,
-        language: String = BeautifyLanguage.default.code,
+        language: String = BeautifyLanguage.systemDefault.code,
         unifySizeAndSpacing: Bool = true,
         fontSize: Double = 23,
         lineSpacing: Double = 1.2,
@@ -102,5 +102,38 @@ public struct BeautifyLanguage: Identifiable, Sendable, Equatable, Codable {
 
     public static func named(_ code: String) -> BeautifyLanguage {
         all.first { $0.code == code } ?? .default
+    }
+
+    /// The language a FRESH `BeautifySettings` starts on — the device's own
+    /// preferred language when it's one of the ones the panel offers,
+    /// `.default` (en-US) otherwise.
+    ///
+    /// Recognition was hardcoded to en-US regardless of device locale: a
+    /// device set to French got English-first handwriting recognition until
+    /// the user found the language picker and changed it themselves. Vision
+    /// still treats the chosen language as a HINT and not a restriction
+    /// (`automaticallyDetectsLanguage`), so this only changes which language
+    /// recognition is biased toward on day one, never which languages it can
+    /// read.
+    public static var systemDefault: BeautifyLanguage {
+        resolvedDefault(preferredLanguages: Locale.preferredLanguages)
+    }
+
+    /// Pure matching logic behind `systemDefault`, taking the preferred-language
+    /// list as a parameter so it's testable without depending on the device's
+    /// actual locale.
+    static func resolvedDefault(preferredLanguages: [String]) -> BeautifyLanguage {
+        for preferred in preferredLanguages {
+            if let exact = all.first(where: { $0.code == preferred }) { return exact }
+            // A preferred language can be region-less ("fr") or use a region
+            // this list doesn't ("fr-CA") — match on the base language too.
+            let base = Locale(identifier: preferred).language.languageCode?.identifier
+            if let base, let match = all.first(where: {
+                Locale(identifier: $0.code).language.languageCode?.identifier == base
+            }) {
+                return match
+            }
+        }
+        return .default
     }
 }

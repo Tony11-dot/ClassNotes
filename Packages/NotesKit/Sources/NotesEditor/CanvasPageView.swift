@@ -137,6 +137,26 @@ final class PageCanvasView: PKCanvasView {
     var allowsZoom = false
     private var didFit = false
 
+    /// When false, the canvas passes touches through to whatever sits behind
+    /// it (in the SwiftUI z-stack) instead of claiming them itself.
+    ///
+    /// Ink now paints ABOVE non-tape page elements (see the z-order in
+    /// `EditorScreenPages.canvasStack`), which makes this view visually
+    /// frontmost even when it isn't the active drawing surface. Left
+    /// intercepting unconditionally, a visually-on-top-but-idle canvas would
+    /// swallow every touch meant for an image/file/text box behind it — an
+    /// element could never be dragged again in Hand mode. `isUserInteractionEnabled`
+    /// is left untouched (always true) on purpose: it would also silence
+    /// `UIPencilInteraction`'s double-tap/squeeze callbacks, which aren't
+    /// part of this touch/hit-test path and have nothing to do with whether
+    /// the canvas is currently drawing.
+    var interceptsTouches = true
+
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        guard interceptsTouches else { return nil }
+        return super.hitTest(point, with: event)
+    }
+
     /// The page's OWN undo stack — the one the rail's buttons drive.
     ///
     /// The page used to hand this manager to PencilKit as well, on the theory
@@ -295,6 +315,12 @@ struct CanvasPageView: UIViewRepresentable {
         // must not undo that — turning drawing back on halfway through would put
         // the wandering ink back under the shape.
         canvas.drawingGestureRecognizer.isEnabled = context.coordinator.shouldEnableDrawing()
+        // `allowsZoom` (a whiteboard) stays interactive regardless, so its own
+        // pan/zoom keeps working outside drawing mode; a normal paged
+        // notebook page — the common case — only intercepts touches while
+        // it's actually the surface being drawn on, so the elements now
+        // visually behind it (images, files, text, links) stay reachable.
+        canvas.interceptsTouches = context.coordinator.shouldEnableDrawing() || allowsZoom
         canvas.overrideUserInterfaceStyle = theme.isDark ? .dark : .light
     }
 

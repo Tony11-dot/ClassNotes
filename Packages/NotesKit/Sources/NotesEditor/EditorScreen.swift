@@ -583,12 +583,21 @@ extension EditorScreen {
                 displaySize: logicalSize,
                 logicalSize: logicalSize
             )
+            // Same before/after-ink split as `canvasStack`: everything except
+            // tape renders below the ink, tape above it — so what NOVA sees in
+            // a snip matches what's actually on the page.
+            PageElementsLayer(
+                pageID: page.id, elements: page.elements, model: model,
+                toolState: toolState,
+                displaySize: logicalSize, logicalSize: logicalSize,
+                allowsEditing: false, editingTextID: .constant(nil), layer: .belowInk
+            )
             if let ink { Image(uiImage: ink).resizable().scaledToFit() }
             PageElementsLayer(
                 pageID: page.id, elements: page.elements, model: model,
                 toolState: toolState,
                 displaySize: logicalSize, logicalSize: logicalSize,
-                allowsEditing: false, editingTextID: .constant(nil)
+                allowsEditing: false, editingTextID: .constant(nil), layer: .aboveInk
             )
         }
         .frame(width: logicalSize.width, height: logicalSize.height)

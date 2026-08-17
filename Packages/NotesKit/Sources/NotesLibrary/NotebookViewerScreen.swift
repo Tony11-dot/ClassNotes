@@ -95,6 +95,15 @@ public struct NotebookViewerScreen: View {
                 if let background = backgrounds[page.id] {
                     Image(uiImage: background).resizable().scaledToFit()
                 }
+                // Below/above split matches the editor: ink paints over
+                // images/files/text, tape stays above ink.
+                PageContentView(
+                    elements: page.elements,
+                    displaySize: geo.size,
+                    logicalSize: page.logicalSize,
+                    mediaURL: { services.documentStore.mediaURL(notebook: notebook.id, filename: $0) },
+                    layer: .belowInk
+                )
                 if let image = inkImages[page.id] {
                     Image(uiImage: image).resizable().scaledToFit()
                 }
@@ -102,7 +111,8 @@ public struct NotebookViewerScreen: View {
                     elements: page.elements,
                     displaySize: geo.size,
                     logicalSize: page.logicalSize,
-                    mediaURL: { services.documentStore.mediaURL(notebook: notebook.id, filename: $0) }
+                    mediaURL: { services.documentStore.mediaURL(notebook: notebook.id, filename: $0) },
+                    layer: .aboveInk
                 )
             }
         }
@@ -174,6 +184,13 @@ public struct NotebookViewerScreen: View {
             if let background = backgrounds[page.id] {
                 Image(uiImage: background).resizable().scaledToFit()
             }
+            PageContentView(
+                elements: page.elements,
+                displaySize: page.logicalSize,
+                logicalSize: page.logicalSize,
+                mediaURL: { services.documentStore.mediaURL(notebook: notebook.id, filename: $0) },
+                layer: .belowInk
+            )
             if let image = inkImages[page.id] {
                 Image(uiImage: image).resizable().scaledToFit()
             }
@@ -181,7 +198,8 @@ public struct NotebookViewerScreen: View {
                 elements: page.elements,
                 displaySize: page.logicalSize,
                 logicalSize: page.logicalSize,
-                mediaURL: { services.documentStore.mediaURL(notebook: notebook.id, filename: $0) }
+                mediaURL: { services.documentStore.mediaURL(notebook: notebook.id, filename: $0) },
+                layer: .aboveInk
             )
         }
         .frame(width: page.logicalSize.width, height: page.logicalSize.height)
@@ -223,6 +241,13 @@ private struct ZoomablePageView: View {
                     if let background {
                         Image(uiImage: background).resizable().scaledToFit()
                     }
+                    PageContentView(
+                        elements: page.elements,
+                        displaySize: displaySize(in: geo.size),
+                        logicalSize: page.logicalSize,
+                        mediaURL: mediaURL,
+                        layer: .belowInk
+                    )
                     if let ink {
                         Image(uiImage: ink).resizable().scaledToFit()
                     }
@@ -230,7 +255,8 @@ private struct ZoomablePageView: View {
                         elements: page.elements,
                         displaySize: displaySize(in: geo.size),
                         logicalSize: page.logicalSize,
-                        mediaURL: mediaURL
+                        mediaURL: mediaURL,
+                        layer: .aboveInk
                     )
                 }
                 .frame(width: displaySize(in: geo.size).width, height: displaySize(in: geo.size).height)
