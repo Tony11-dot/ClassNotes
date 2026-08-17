@@ -417,8 +417,19 @@ struct CodeBlockSettingsTests {
     func defaults() {
         let settings = CodeBlockSettings()
         #expect(settings.fontID == "menlo")
+        #expect(settings.language == .swift)
         #expect(CodeBlockSettings.fontSizeRange.contains(settings.fontSize))
         #expect(CodeBlockSettings.cornerRadiusRange.contains(settings.cornerRadius))
+    }
+
+    @Test("A code-block blob saved before languages existed still decodes, defaulting to Swift")
+    func missingLanguageFallsBackToSwift() throws {
+        let json = """
+        { "fontID": "sfmono", "fontSize": 16, "cornerRadius": 8 }
+        """
+        let decoded = try JSONDecoder().decode(CodeBlockSettings.self, from: Data(json.utf8))
+        #expect(decoded.language == .swift)
+        #expect(decoded.fontID == "sfmono")
     }
 
     @Test("ToolPreferences carries code-block settings through a total decode")
@@ -447,5 +458,71 @@ struct CodeBlockSettingsTests {
     @Test("Only Menlo and SF Mono are offered — code blocks don't offer a script face")
     func monospacePoolIsMonospaceOnly() {
         #expect(FontLibrary.monospace.map(\.id).sorted() == ["menlo", "sfmono"])
+    }
+}
+
+@Suite("Code syntax highlighting")
+struct CodeSyntaxHighlighterTests {
+    private func kinds(_ text: String, _ language: CodeLanguage) -> [(String, CodeTokenKind)] {
+        CodeSyntaxHighlighter.tokens(for: text, language: language)
+            .map { (String(text[$0.range]), $0.kind) }
+    }
+
+    @Test("Swift keywords are recognized, plain identifiers are not")
+    func swiftKeywords() {
+        let found = kinds("func add(a: Int) { return a }", .swift)
+        #expect(found.contains { $0.0 == "func" && $0.1 == .keyword })
+        #expect(found.contains { $0.0 == "return" && $0.1 == .keyword })
+        #expect(!found.contains { $0.0 == "add" && $0.1 == .keyword })
+    }
+
+    @Test("A double-quoted string is one token, including an escaped quote inside it")
+    func stringLiteral() {
+        let found = kinds(#"let s = "hi \"there\"""#, .swift)
+        #expect(found.contains { $0.1 == .string && $0.0.hasPrefix("\"hi") })
+    }
+
+    @Test("A line comment runs to the end of the line, not past it")
+    func lineComment() {
+        let found = kinds("let x = 1 // note\nlet y = 2", .swift)
+        let comment = found.first { $0.1 == .comment }
+        #expect(comment?.0 == "// note")
+    }
+
+    @Test("A block comment is captured whole, including its closing marker")
+    func blockComment() {
+        let found = kinds("/* a\nb */ code", .swift)
+        #expect(found.first?.0 == "/* a\nb */")
+        #expect(found.first?.1 == .comment)
+    }
+
+    @Test("Numbers are tokenized, including decimals, but digits inside an identifier are not")
+    func numbers() {
+        let found = kinds("let pi = 3.14 let v2 = 1", .swift)
+        #expect(found.contains { $0.0 == "3.14" && $0.1 == .number })
+        #expect(!found.contains { $0.0 == "2" && $0.1 == .number })
+    }
+
+    @Test("Python uses # for line comments, not //")
+    func pythonComment() {
+        let found = kinds("x = 1 # note", .python)
+        #expect(found.contains { $0.0 == "# note" && $0.1 == .comment })
+    }
+
+    @Test("Plain text is never tokenized as anything but plain")
+    func plaintextIsInert() {
+        let tokens = CodeSyntaxHighlighter.tokens(for: "func \"hi\" 42 // x", language: .plaintext)
+        #expect(tokens.allSatisfy { $0.kind == .plain })
+    }
+
+    @Test("Tokens cover the whole string with no gaps or overlaps")
+    func tokensCoverEverything() {
+        let text = "func f() { let s = \"hi\" // done\n}"
+        var expected = text.startIndex
+        for token in CodeSyntaxHighlighter.tokens(for: text, language: .swift) {
+            #expect(token.range.lowerBound == expected)
+            expected = token.range.upperBound
+        }
+        #expect(expected == text.endIndex)
     }
 }

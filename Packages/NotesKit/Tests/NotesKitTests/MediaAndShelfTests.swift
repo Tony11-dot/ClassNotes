@@ -171,12 +171,12 @@ struct RemoteLibraryDiscoveryTests {
 
     private func entry(
         id: String = UUID().uuidString, title: String = "From the iPad",
-        shelfId: String? = nil
+        shelfId: String? = nil, updatedAt: Date = .now
     ) -> RemoteLibrary.Entry {
         RemoteLibrary.Entry(
             id: id, title: title, coverColorHex: "#2266DD", coverImage: nil,
             template: "ruled", shelfId: shelfId, pageCount: 3,
-            createdAt: .now, updatedAt: .now
+            createdAt: .now, updatedAt: updatedAt
         )
     }
 
@@ -194,21 +194,49 @@ struct RemoteLibraryDiscoveryTests {
         #expect(all.first?.isRemoteOnly == true)
     }
 
-    @Test("A notebook already known locally is left completely alone")
+    @Test("A notebook already known locally keeps its own edit when the server's copy is no newer")
     func leavesKnownNotebookAlone() async throws {
         let (repo, context, container) = makeRepository()
         _ = container
         let notebook = Notebook(title: "My own edit", coverColorHex: "#111111")
+        notebook.updatedAt = Date(timeIntervalSinceNow: 60)
         context.insert(notebook)
         try context.save()
 
         repo.applyRemoteLibrary(RemoteLibrary(
-            notebooks: [entry(id: notebook.id.uuidString, title: "Stale server title")]
+            notebooks: [entry(
+                id: notebook.id.uuidString, title: "Stale server title",
+                updatedAt: Date(timeIntervalSinceNow: -60)
+            )]
         ))
 
         let all = try context.fetch(FetchDescriptor<Notebook>())
         #expect(all.count == 1)
         #expect(all.first?.title == "My own edit")
+        #expect(all.first?.isRemoteOnly == false)
+    }
+
+    @Test("A rename/reshelve made on another device is adopted once it's newer than this device's copy")
+    func adoptsNewerRemoteEdit() async throws {
+        let (repo, context, container) = makeRepository()
+        _ = container
+        let notebook = Notebook(title: "Old title", coverColorHex: "#111111")
+        notebook.updatedAt = Date(timeIntervalSinceNow: -60)
+        context.insert(notebook)
+        try context.save()
+
+        repo.applyRemoteLibrary(RemoteLibrary(
+            notebooks: [entry(
+                id: notebook.id.uuidString, title: "Renamed on the iPad",
+                updatedAt: Date(timeIntervalSinceNow: 60)
+            )]
+        ))
+
+        let all = try context.fetch(FetchDescriptor<Notebook>())
+        #expect(all.count == 1)
+        #expect(all.first?.title == "Renamed on the iPad")
+        // Still a real local notebook with its own ink package — only its
+        // metadata was refreshed, not its ownership.
         #expect(all.first?.isRemoteOnly == false)
     }
 

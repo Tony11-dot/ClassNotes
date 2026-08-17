@@ -285,6 +285,15 @@ struct CodeBlockPanel: View {
                 Text("Tap anywhere on the page to drop a code block, then type.")
                     .font(.dsCaption).foregroundStyle(theme.inkSecondary.color)
 
+                Text("Language").font(.dsSubheadline.weight(.medium)).foregroundStyle(theme.ink.color)
+                Picker("Language", selection: $toolState.codeBlockLanguage) {
+                    ForEach(CodeLanguage.allCases) { language in
+                        Text(language.displayName).tag(language)
+                    }
+                }
+                .pickerStyle(.menu)
+                .tint(theme.accent.color)
+
                 Text("Font").font(.dsSubheadline.weight(.medium)).foregroundStyle(theme.ink.color)
                 FontRow(selected: $toolState.codeBlockFontID, pool: FontLibrary.monospace)
 
@@ -322,7 +331,7 @@ struct CodeBlockPanel: View {
             }
             .padding(18)
         }
-        .frame(width: 288, height: 420)
+        .frame(width: 288, height: 460)
         .background(theme.surfaceRaised.color)
     }
 }

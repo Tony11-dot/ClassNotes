@@ -129,7 +129,8 @@ extension NotebookEditorModel {
     @discardableResult
     public func insertCodeBlock(
         at point: CGPoint, on pageID: UUID, fontName: String, fontSize: Double,
-        textColorHex: String?, backgroundColorHex: String?, cornerRadius: Double
+        textColorHex: String?, backgroundColorHex: String?, cornerRadius: Double,
+        language: String
     ) async -> UUID? {
         let pageSize = page(pageID)?.logicalSize ?? PageGeometry.size
         let width = min(360.0, pageSize.width - 32)
@@ -140,6 +141,7 @@ extension NotebookEditorModel {
             y: min(max(point.y - height / 2, 12), max(12, pageSize.height - height - 12)),
             width: width, height: height,
             text: "", fontName: fontName, textColorHex: textColorHex,
+            codeLanguage: language,
             codeCornerRadius: cornerRadius, fontSize: fontSize,
             colorHex: backgroundColorHex
         )

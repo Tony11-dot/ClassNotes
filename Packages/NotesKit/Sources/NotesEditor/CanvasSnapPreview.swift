@@ -39,6 +39,10 @@ extension CanvasPageView.Coordinator {
             let point = touch.location(in: canvas)
             return CGPoint(x: point.x / canvas.zoomScale, y: point.y / canvas.zoomScale)
         }
+        // Keeps the hold-still tolerance a constant SCREEN distance regardless
+        // of how small the page is currently shown — see the doc on
+        // `holdRadius` for why a fixed logical radius isn't enough.
+        watcher.zoomScale = { [weak canvas] in canvas?.zoomScale ?? 1 }
         watcher.onDwell = { [weak self] points in self?.previewSnap(points) ?? false }
         watcher.onAdjust = { [weak self] point in self?.adjustSnap(to: point) }
         watcher.onProgress = { [weak self] points in self?.previewRuled(points) ?? false }

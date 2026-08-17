@@ -249,6 +249,11 @@ public final class ToolState {
         set { edit { $0.codeBlock.cornerRadius = newValue } }
     }
 
+    public var codeBlockLanguage: CodeLanguage {
+        get { preferences.codeBlock.language }
+        set { edit { $0.codeBlock.language = newValue } }
+    }
+
     // MARK: - Real-time beautification
 
     public var beautify: BeautifySettings {

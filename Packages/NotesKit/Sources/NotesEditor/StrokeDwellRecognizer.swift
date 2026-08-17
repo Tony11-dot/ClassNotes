@@ -17,8 +17,21 @@ import UIKit
 /// `.failed`, so PencilKit's own drawing recognizer is untouched and the ink is
 /// never interrupted.
 final class StrokeDwellRecognizer: UIGestureRecognizer {
-    /// How far the pencil may drift and still count as resting.
+    /// How far the pencil may drift and still count as resting, in the PAGE'S
+    /// LOGICAL space.
+    ///
+    /// A page is usually shown smaller than its logical size (`PageCanvasView`
+    /// fits it to the available width), and `logicalPoint` divides every touch
+    /// by that same fit scale — so a fixed logical radius shrinks in real,
+    /// on-screen terms exactly when the page is zoomed out, which is most of
+    /// the time. `zoomScale` (read live, the same way `logicalPoint` is) is
+    /// what keeps the tolerance a constant SCREEN distance instead: the radius
+    /// actually compared against is `holdRadius / zoomScale`. Without this, a
+    /// hand that would comfortably hold still on a 1:1 page drifted the shape
+    /// snap open on any page shown at less than full size.
     var holdRadius: CGFloat = ShapeSnapper.holdRadius
+    /// The canvas's current zoom, read fresh on every sample — see `holdRadius`.
+    var zoomScale: (() -> CGFloat)?
     /// How long it must rest before the shape settles. Shorter than the
     /// stroke-timing threshold was: the user is watching it happen now, so the
     /// wait is felt rather than merely measured.
@@ -142,7 +155,8 @@ final class StrokeDwellRecognizer: UIGestureRecognizer {
         }
 
         guard let anchor = restAnchor else { return }
-        if hypot(point.x - anchor.x, point.y - anchor.y) > holdRadius {
+        let effectiveRadius = holdRadius / max(zoomScale?() ?? 1, 0.05)
+        if hypot(point.x - anchor.x, point.y - anchor.y) > effectiveRadius {
             // Moving again before anything settled: restart the clock from here.
             restAnchor = point
             restSince = CACurrentMediaTime()

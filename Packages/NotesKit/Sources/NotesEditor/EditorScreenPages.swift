@@ -418,7 +418,8 @@ extension EditorScreen {
                         fontSize: toolState.codeBlockFontSize,
                         textColorHex: toolState.codeBlockTextColorHex ?? CodeBlockSettings.defaultTextHex,
                         backgroundColorHex: toolState.codeBlockBackgroundColorHex ?? CodeBlockSettings.defaultBackgroundHex,
-                        cornerRadius: toolState.codeBlockCornerRadius
+                        cornerRadius: toolState.codeBlockCornerRadius,
+                        language: toolState.codeBlockLanguage.rawValue
                     )
                 }
             }

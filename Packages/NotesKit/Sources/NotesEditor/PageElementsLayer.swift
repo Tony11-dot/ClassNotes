@@ -102,7 +102,14 @@ struct PageElementsLayer: View {
                         x: (element.x + liveWidth / 2) * scale + live.width,
                         y: (element.y + liveHeight / 2) * scale + live.height
                     )
-                    .gesture(dragGesture(for: element), including: gestureMask(for: element))
+                    // Always live, regardless of which tool is selected: a finger
+                    // never inks (`drawingPolicy = .pencilOnly`), so dragging an
+                    // element by touch can never collide with drawing. Gating this
+                    // on `allowsEditing` (the same switch that hides the resize
+                    // handle) meant a photo or text box could only be picked up
+                    // after switching away from the pen — which is not what "press
+                    // and drag it" looks like from the user's side.
+                    .gesture(dragGesture(for: element))
                     .simultaneousGesture(resizeGesture(for: element), including: gestureMask(for: element))
                     .onTapGesture { handleTap(element) }
                     // Erasing tape wins over lifting it, so a rubbed-out strip is
@@ -415,12 +422,15 @@ struct PageElementsLayer: View {
                 )
                 .focused($textFieldFocused)
             } else {
-                Text(element.text?.isEmpty == false ? element.text! : " ")
-                    .font(textFont(element))
-                    .lineSpacing(element.extraLeading * scale)
-                    .foregroundStyle(foreground.color)
-                    .padding(10 * scale)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                Text(CodeBlockText.attributed(
+                    element.text?.isEmpty == false ? element.text! : " ",
+                    language: CodeLanguage(rawValue: element.codeLanguage ?? "") ?? .plaintext,
+                    plainColor: foreground, background: background
+                ))
+                .font(textFont(element))
+                .lineSpacing(element.extraLeading * scale)
+                .padding(10 * scale)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
         .background(background.color, in: RoundedRectangle(cornerRadius: radius, style: .continuous))

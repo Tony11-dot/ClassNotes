@@ -10,9 +10,11 @@ enum ShapeSnapper {
     /// How long the pencil must rest at the end of a stroke for it to count as
     /// "hold to snap".
     static let minimumHold: TimeInterval = 0.4
-    /// How far the pencil may drift during that rest and still be holding still.
+    /// How far the pencil may drift during that rest and still be holding still,
+    /// in SCREEN terms (the live watcher divides this back into whatever the
+    /// page's own logical space needs — see `StrokeDwellRecognizer.holdRadius`).
     /// Generous, because a hand resting on glass is never actually still.
-    static let holdRadius: CGFloat = 11
+    static let holdRadius: CGFloat = 14
     /// How far the ink may wander off the straight line between its endpoints and
     /// still be snapped to that line. A deliberate hold is a statement of intent,
     /// so this is looser than a passive straightness test would be — but not so

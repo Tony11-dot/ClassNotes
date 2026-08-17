@@ -619,12 +619,16 @@ extension EditorScreen {
             var images: [NotebookPageImage] = []
             for (index, page) in pages.enumerated() {
                 let ink = await inkForRender(page)
-                guard let data = renderPageImage(page, scale: 1.5, drawing: ink).pngData() else {
-                    continue
-                }
+                // JPEG, not PNG: a handwritten page's render is several times
+                // smaller as a JPEG, and the smaller the body the less likely
+                // the upload is still in flight when iOS suspends the app
+                // right after the editor closes — the same reasoning
+                // `SyncService.coverDataURL` already applies to covers.
+                guard let data = renderPageImage(page, scale: 1.5, drawing: ink)
+                    .jpegData(compressionQuality: 0.85) else { continue }
                 images.append(NotebookPageImage(
                     pageIndex: index,
-                    dataUrl: "data:image/png;base64,\(data.base64EncodedString())",
+                    dataUrl: "data:image/jpeg;base64,\(data.base64EncodedString())",
                     attachments: attachments(for: page)
                 ))
             }

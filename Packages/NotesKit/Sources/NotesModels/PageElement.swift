@@ -71,8 +71,9 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
     public var text: String?
     public var fontName: String?
     public var textColorHex: String?
-    /// For codeBlock: the label shown for the language (display only — no
-    /// syntax highlighting is derived from it).
+    /// For codeBlock: `CodeLanguage.rawValue` — both the label shown and what
+    /// `CodeSyntaxHighlighter` colours the text as. `nil`/unrecognized reads
+    /// as `.plaintext` (uncoloured), never a throw.
     public var codeLanguage: String?
     /// For codeBlock: the background box's corner radius in logical points
     /// (nil = `CodeBlockSettings.defaultCornerRadius`).

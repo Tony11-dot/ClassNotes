@@ -193,18 +193,20 @@ public struct PageContentView: View {
 
     /// Read-only render of a code block — same styling rule as the editor's:
     /// the element's own colours/radius when set, the code-block defaults
-    /// otherwise. No syntax highlighting is derived from `codeLanguage`; it's
-    /// a display label only.
+    /// otherwise, coloured by `codeLanguage` the same way the editor does.
     private func codeBlockView(_ element: PageElement) -> some View {
         let radius = (element.codeCornerRadius ?? 10) * scale
         let background = ThemeColor(hex: element.colorHex ?? CodeBlockSettings.defaultBackgroundHex)
             ?? theme.surfaceRaised
         let foreground = ThemeColor(hex: element.textColorHex ?? CodeBlockSettings.defaultTextHex)
             ?? theme.ink
-        return Text(element.text ?? "")
+        return Text(CodeBlockText.attributed(
+            element.text ?? "",
+            language: CodeLanguage(rawValue: element.codeLanguage ?? "") ?? .plaintext,
+            plainColor: foreground, background: background
+        ))
             .font(font(for: element))
             .lineSpacing(element.extraLeading * scale)
-            .foregroundStyle(foreground.color)
             .padding(10 * scale)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(background.color, in: RoundedRectangle(cornerRadius: radius, style: .continuous))

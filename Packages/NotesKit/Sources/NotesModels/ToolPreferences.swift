@@ -93,19 +93,41 @@ public struct CodeBlockSettings: Sendable, Equatable, Codable {
     /// `nil` = `Self.defaultBackgroundHex`.
     public var backgroundColorHex: String?
     public var cornerRadius: Double
+    /// Which language new code blocks are labelled — and coloured — as.
+    public var language: CodeLanguage
 
     public init(
         fontID: String = "menlo",
         fontSize: Double = 15,
         textColorHex: String? = nil,
         backgroundColorHex: String? = nil,
-        cornerRadius: Double = 10
+        cornerRadius: Double = 10,
+        language: CodeLanguage = .swift
     ) {
         self.fontID = fontID
         self.fontSize = fontSize
         self.textColorHex = textColorHex
         self.backgroundColorHex = backgroundColorHex
         self.cornerRadius = cornerRadius
+        self.language = language
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case fontID, fontSize, textColorHex, backgroundColorHex, cornerRadius, language
+    }
+
+    /// Total decode: an older/corrupt blob without `language` still loads,
+    /// defaulting to Swift rather than losing the rest of the settings.
+    public init(from decoder: any Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            fontID: (try? box.decodeIfPresent(String.self, forKey: .fontID)) ?? nil ?? "menlo",
+            fontSize: (try? box.decodeIfPresent(Double.self, forKey: .fontSize)) ?? nil ?? 15,
+            textColorHex: (try? box.decodeIfPresent(String.self, forKey: .textColorHex)) ?? nil,
+            backgroundColorHex: (try? box.decodeIfPresent(String.self, forKey: .backgroundColorHex)) ?? nil,
+            cornerRadius: (try? box.decodeIfPresent(Double.self, forKey: .cornerRadius)) ?? nil ?? 10,
+            language: (try? box.decodeIfPresent(CodeLanguage.self, forKey: .language)) ?? nil ?? .swift
+        )
     }
 
     public static let fontSizeRange: ClosedRange<Double> = 10...28

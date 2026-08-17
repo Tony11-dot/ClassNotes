@@ -70,11 +70,37 @@ public final class SyncService {
         self.store = store
     }
 
+    /// Runs `work` with the OS asked to keep the app alive for it — the
+    /// difference between an upload that finishes and one that gets cut off
+    /// mid-body. Leaving the editor and immediately backgrounding (finish
+    /// writing, tap back, lock the phone) is a completely normal sequence,
+    /// and a push that was still uploading when iOS suspends the app is
+    /// silently lost with nothing left to retry it: the per-mutation pushes
+    /// here have no offline queue, and only a notebook's METADATA gets
+    /// re-sent by the next launch's full sync — its page renders, the thing
+    /// the iPhone actually needs to show anything, do not. That gap is what
+    /// "can't reach this notebook" on a sibling device usually was.
+    #if canImport(UIKit)
+    private func protected(_ name: String, _ work: @escaping () async -> Void) {
+        let identifier = UIApplication.shared.beginBackgroundTask(withName: name)
+        Task {
+            await work()
+            if identifier != .invalid {
+                await MainActor.run { UIApplication.shared.endBackgroundTask(identifier) }
+            }
+        }
+    }
+    #else
+    private func protected(_ name: String, _ work: @escaping () async -> Void) {
+        Task { await work() }
+    }
+    #endif
+
     // MARK: - Per-mutation hooks (call on @MainActor from NotebookRepository)
 
     public func pushNotebook(_ snapshot: NotebookSnapshot) {
         guard auth.token != nil else { return }
-        Task { [weak self] in await self?.sendNotebook(snapshot) }
+        protected("SyncNotebook") { [weak self] in await self?.sendNotebook(snapshot) }
     }
 
     private func sendNotebook(_ snapshot: NotebookSnapshot) async {
@@ -156,7 +182,7 @@ public final class SyncService {
     public func pushPageImages(notebookID: UUID, images: [NotebookPageImage]) {
         guard let token = auth.token, !images.isEmpty else { return }
         let client = client
-        Task {
+        protected("SyncPageImages") {
             let body = NotebookPagesBody(pages: images, pageCount: images.count)
             try? await client.putNotebookPages(id: notebookID.uuidString, body: body, token: token)
         }
@@ -173,8 +199,12 @@ public final class SyncService {
         // uploads at once, each carrying a cover image, in the seconds after
         // launch — exactly when the user is most likely to background the app
         // and iOS tears the connections down mid-body. The server saw a pile of
-        // "request aborted"s; the user saw covers that never appeared.
-        Task { [weak self] in
+        // "request aborted"s; the user saw covers that never appeared. The
+        // whole batch also runs under one background-task assertion, same
+        // reasoning as `protected` everywhere else: this is the LAUNCH sync,
+        // so it's already running exactly when someone is most likely to
+        // background the app a few seconds in.
+        protected("SyncAllNotebooks") { [weak self] in
             for notebook in notebooks {
                 guard let self else { return }
                 await self.sendNotebook(notebook)

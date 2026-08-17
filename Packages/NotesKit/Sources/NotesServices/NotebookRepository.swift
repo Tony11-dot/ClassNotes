@@ -372,19 +372,41 @@ public final class NotebookRepository {
 
     /// Creates local rows for notebooks that exist on the account but have no
     /// row on THIS device yet — the other half of the mirror `pushAll`
-    /// builds, so a notebook drawn purely on the iPad shows up on the iPhone.
+    /// builds, so a notebook drawn purely on the iPad shows up on the iPhone
+    /// — AND reconciles notebooks BOTH devices already know about, so a
+    /// rename, recolour or shelf move made on one reaches the other too.
     ///
-    /// Purely additive: an id already known locally is left completely
-    /// alone (its own edits stay authoritative), and a notebook that's since
-    /// vanished from this list is NOT deleted here — "absent from the
-    /// server" must never delete anything, same rule `applyRemoteChanges`
-    /// follows for its own tombstone channel.
+    /// That second half matters because `/classnotes/changes`
+    /// (`applyRemoteChanges`) only ever carries edits made in the ClassMate
+    /// web tab (`remoteEditedAt`) plus deletes — a rename pushed by a SIBLING
+    /// NATIVE APP through the ordinary `PUT /classnotes/notebooks/:id` never
+    /// sets that marker, so it was invisible to that channel. This one reads
+    /// the same full list `pullFullLibrary` already fetches and, for an id
+    /// already known here, adopts the server's title/colour/shelf whenever
+    /// its `updatedAt` is NEWER than this device's own — the same "newer
+    /// wins" idea `DeviceSettings.newer` uses for settings, just keyed on the
+    /// timestamp every push already carries rather than a revision counter.
+    ///
+    /// A notebook that's since vanished from this list is still NOT deleted
+    /// here — "absent from the server" must never delete anything, same rule
+    /// `applyRemoteChanges` follows for its own tombstone channel.
     public func applyRemoteLibrary(_ remote: RemoteLibrary) {
         let all = (try? context.fetch(FetchDescriptor<Notebook>())) ?? []
-        var known = Set(all.map(\.id))
-        var didCreate = false
+        var byID: [UUID: Notebook] = [:]
+        for notebook in all { byID[notebook.id] = notebook }
+        var didChange = false
         for entry in remote.notebooks {
-            guard let id = UUID(uuidString: entry.id), !known.contains(id) else { continue }
+            guard let id = UUID(uuidString: entry.id) else { continue }
+            if let existing = byID[id] {
+                guard entry.updatedAt > existing.updatedAt else { continue }
+                let title = entry.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !title.isEmpty { existing.title = title }
+                if !entry.coverColorHex.isEmpty { existing.coverColorHex = entry.coverColorHex }
+                existing.shelfID = entry.shelfId.flatMap(UUID.init(uuidString:))
+                existing.updatedAt = entry.updatedAt
+                didChange = true
+                continue
+            }
             let notebook = Notebook(
                 id: id,
                 title: entry.title,
@@ -396,10 +418,10 @@ public final class NotebookRepository {
             notebook.updatedAt = entry.updatedAt
             notebook.isRemoteOnly = true
             context.insert(notebook)
-            known.insert(id)
-            didCreate = true
+            byID[id] = notebook
+            didChange = true
         }
-        if didCreate { try? context.save() }
+        if didChange { try? context.save() }
     }
 
     public func assign(_ notebook: Notebook, toShelf shelfID: UUID?) {

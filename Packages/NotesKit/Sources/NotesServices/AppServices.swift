@@ -96,16 +96,11 @@ public final class AppServices {
             await entitlements.refreshEntitlements()
             await entitlements.loadProducts()
             await syncSettings()
-            // PULL first: notebooks the user deleted or renamed in the ClassMate
-            // ClassNotes tab. Pushing first would send this device's stale copy
-            // back over those edits and undo them.
-            await sync.pullRemoteChanges { [repository] changes in
-                await repository.applyRemoteChanges(changes)
-            }
-            // Discover notebooks that exist on the account but were created on
-            // another device — same pre-push slot as the changes pull above,
-            // for the same reason: nothing here conflicts with what's about
-            // to be pushed, since it only ever ADDS rows this device lacks.
+            // PULL first — both halves, via `refreshRemoteLibrary`: notebooks
+            // deleted/renamed/re-shelved elsewhere, and notebooks that exist on
+            // the account but were created on another device. Pushing first
+            // would send this device's stale copy back over those edits and
+            // undo them.
             await refreshRemoteLibrary(force: true)
             // Then reconcile the whole local library up to the backend (first run
             // + any missed per-edit pushes). No-ops when signed out
@@ -120,15 +115,29 @@ public final class AppServices {
     /// and a pull-to-refresh moments apart don't both fire a request.
     @ObservationIgnored private var lastRemoteLibraryPull: Date?
 
-    /// Re-pulls the account's library so a notebook created on another
-    /// device shows up here. Throttled to once per 30s unless `force`d (the
-    /// launch sequence forces it — there's nothing to throttle against yet).
+    /// Re-pulls the account's library so BOTH directions of "the other
+    /// device changed something" show up here: notebooks created elsewhere
+    /// (`pullFullLibrary`) and notebooks deleted, renamed or re-shelved
+    /// elsewhere (`pullRemoteChanges`) — same two calls `start()` makes at
+    /// launch, in the same order (changes before discovery: a rename must
+    /// land before a create-if-missing runs, or a stale title could race a
+    /// pull that's mid-flight).
+    ///
+    /// Wiring only the discovery half in here — which is what this used to
+    /// do — is why a delete or a shelve made on one device only ever reached
+    /// the other after a full cold launch of the app: nothing foreground- or
+    /// refresh-triggered ever re-checked `/classnotes/changes` at all.
+    /// Throttled to once per 30s unless `force`d (the launch sequence forces
+    /// it — there's nothing to throttle against yet).
     @discardableResult
     public func refreshRemoteLibrary(force: Bool = false) async -> Bool {
         if !force, let last = lastRemoteLibraryPull, Date().timeIntervalSince(last) < 30 {
             return false
         }
         lastRemoteLibraryPull = .now
+        await sync.pullRemoteChanges { [repository] changes in
+            await repository.applyRemoteChanges(changes)
+        }
         await sync.pullFullLibrary { [repository, remoteNotebookCache] library in
             repository.applyRemoteLibrary(library)
             for entry in library.notebooks {
