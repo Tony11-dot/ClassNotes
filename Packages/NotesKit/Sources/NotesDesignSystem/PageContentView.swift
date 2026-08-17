@@ -121,6 +121,12 @@ public struct PageContentView: View {
                 .foregroundStyle((element.textColorHex.flatMap(ThemeColor.init(hex:)) ?? theme.ink).color)
                 .padding(6 * scale)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        case .codeBlock:
+            codeBlockView(element)
+        case .unknown:
+            // A kind this build doesn't recognise — nothing to draw, but the
+            // page's other elements still render.
+            Color.clear
         case .audio:
             if let filename = element.payloadFilename {
                 VoiceBubbleView(
@@ -183,6 +189,29 @@ public struct PageContentView: View {
                 .fill(theme.surfaceRaised.color)
                 .overlay(Image(systemName: "photo").foregroundStyle(theme.inkSecondary.color))
         }
+    }
+
+    /// Read-only render of a code block — same styling rule as the editor's:
+    /// the element's own colours/radius when set, the code-block defaults
+    /// otherwise. No syntax highlighting is derived from `codeLanguage`; it's
+    /// a display label only.
+    private func codeBlockView(_ element: PageElement) -> some View {
+        let radius = (element.codeCornerRadius ?? 10) * scale
+        let background = ThemeColor(hex: element.colorHex ?? CodeBlockSettings.defaultBackgroundHex)
+            ?? theme.surfaceRaised
+        let foreground = ThemeColor(hex: element.textColorHex ?? CodeBlockSettings.defaultTextHex)
+            ?? theme.ink
+        return Text(element.text ?? "")
+            .font(font(for: element))
+            .lineSpacing(element.extraLeading * scale)
+            .foregroundStyle(foreground.color)
+            .padding(10 * scale)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(background.color, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .strokeBorder(theme.separator.color, lineWidth: 0.5)
+            )
     }
 
     private func font(for element: PageElement) -> Font {

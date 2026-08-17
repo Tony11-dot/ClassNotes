@@ -116,7 +116,7 @@ public actor SearchIndexer {
         var parts: [String] = []
         for element in elements {
             switch element.kind {
-            case .text:
+            case .text, .codeBlock:
                 if let text = element.text?.trimmingCharacters(in: .whitespacesAndNewlines),
                    !text.isEmpty { parts.append(text) }
             case .link:
@@ -126,7 +126,7 @@ public actor SearchIndexer {
                 if let url = element.urlString, !url.isEmpty { parts.append(url) }
             case .file:
                 if let name = element.displayName, !name.isEmpty { parts.append(name) }
-            case .image, .audio, .tape, .fill:
+            case .image, .audio, .tape, .fill, .unknown:
                 continue
             }
         }

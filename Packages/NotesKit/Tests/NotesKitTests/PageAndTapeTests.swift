@@ -356,3 +356,96 @@ struct PageAttachmentTests {
         #expect(NotebookPageAttachment.maximumPayloadBytes == 6 * 1024 * 1024)
     }
 }
+
+@Suite("Code blocks")
+struct CodeBlockElementTests {
+    @Test("An element kind this build doesn't recognise decodes to .unknown, not a throw")
+    func unrecognizedKindDecodesToUnknown() throws {
+        // This is the whole point: an OLDER binary opening a document a
+        // NEWER one wrote (with a kind that doesn't exist yet) must not lose
+        // the rest of that page's elements to a decode failure.
+        let json = """
+        {
+          "id": "\(UUID().uuidString)", "kind": "someFutureKind",
+          "x": 0, "y": 0, "width": 100, "height": 100, "rotation": 0,
+          "isBold": false, "points": [], "isHidden": false
+        }
+        """
+        let element = try JSONDecoder().decode(PageElement.self, from: Data(json.utf8))
+        #expect(element.kind == .unknown)
+    }
+
+    @Test("A code block round-trips its own fields alongside the text ones it reuses")
+    func codeBlockRoundTrips() throws {
+        let element = PageElement(
+            kind: .codeBlock, x: 10, y: 20, width: 300, height: 150,
+            text: "let x = 1", fontName: "Menlo-Regular", textColorHex: "#CDD6F4",
+            codeLanguage: "swift", codeCornerRadius: 14,
+            fontSize: 15, colorHex: "#1E1E2E"
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(PageElement.self, from: encoder.encode(element))
+
+        #expect(decoded.kind == .codeBlock)
+        #expect(decoded.text == "let x = 1")
+        #expect(decoded.codeLanguage == "swift")
+        #expect(decoded.codeCornerRadius == 14)
+        #expect(decoded.colorHex == "#1E1E2E")
+    }
+
+    @Test("An older manifest with no code-block fields at all still decodes")
+    func missingCodeFieldsDecodeToNil() throws {
+        let json = """
+        {
+          "id": "\(UUID().uuidString)", "kind": "codeBlock",
+          "x": 0, "y": 0, "width": 100, "height": 100, "rotation": 0,
+          "isBold": false, "points": [], "isHidden": false
+        }
+        """
+        let element = try JSONDecoder().decode(PageElement.self, from: Data(json.utf8))
+        #expect(element.codeLanguage == nil)
+        #expect(element.codeCornerRadius == nil)
+    }
+}
+
+@Suite("Code block settings")
+struct CodeBlockSettingsTests {
+    @Test("Defaults are a real monospace face and a console-style palette")
+    func defaults() {
+        let settings = CodeBlockSettings()
+        #expect(settings.fontID == "menlo")
+        #expect(CodeBlockSettings.fontSizeRange.contains(settings.fontSize))
+        #expect(CodeBlockSettings.cornerRadiusRange.contains(settings.cornerRadius))
+    }
+
+    @Test("ToolPreferences carries code-block settings through a total decode")
+    func toolPreferencesDecodesCodeBlock() throws {
+        var preferences = ToolPreferences()
+        preferences.codeBlock.fontID = "sfmono"
+        preferences.codeBlock.fontSize = 18
+        preferences.codeBlock.cornerRadius = 4
+
+        let decoded = try JSONDecoder().decode(ToolPreferences.self, from: JSONEncoder().encode(preferences))
+        #expect(decoded.codeBlock.fontID == "sfmono")
+        #expect(decoded.codeBlock.fontSize == 18)
+        #expect(decoded.codeBlock.cornerRadius == 4)
+    }
+
+    @Test("A blob written before code blocks existed still decodes, with factory code-block settings")
+    func missingCodeBlockKeyFallsBackToDefaults() throws {
+        let json = """
+        { "penPresetID": "fountainPen", "textFontID": "cabinet", "textSize": 20 }
+        """
+        let decoded = try JSONDecoder().decode(ToolPreferences.self, from: Data(json.utf8))
+        #expect(decoded.codeBlock == CodeBlockSettings())
+        #expect(decoded.penPresetID == "fountainPen")
+    }
+
+    @Test("Only Menlo and SF Mono are offered — code blocks don't offer a script face")
+    func monospacePoolIsMonospaceOnly() {
+        #expect(FontLibrary.monospace.map(\.id).sorted() == ["menlo", "sfmono"])
+    }
+}

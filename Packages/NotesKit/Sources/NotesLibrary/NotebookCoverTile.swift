@@ -52,6 +52,19 @@ public struct NotebookCoverTile: View {
             render = nil
             return
         }
+        // A remote-only notebook has no local package for `DocumentStore` to
+        // read — its cover was cached separately when it was discovered
+        // (`RemoteNotebookCache.cacheCover`, from the same list payload that
+        // created the row).
+        if notebook.isRemoteOnly {
+            if let url = await services.remoteNotebookCache.coverURL(for: notebook.id),
+               let data = try? Data(contentsOf: url) {
+                render = UIImage(data: data)
+            } else {
+                render = nil
+            }
+            return
+        }
         let data = await services.documentStore.coverImageData(for: notebook.id)
         render = data.flatMap { UIImage(data: $0) }
     }

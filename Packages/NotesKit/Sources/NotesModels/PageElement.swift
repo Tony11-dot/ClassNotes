@@ -39,6 +39,18 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
         /// region's outline in page space, traced from where the ink bounded it,
         /// so it stops exactly where the drawing does.
         case fill
+        /// A typeset block of source code: monospaced, coloured, on its own
+        /// background — reuses the same text/font/colour fields `.text` does.
+        case codeBlock
+        /// An element kind this build doesn't recognise. Decoding to this
+        /// instead of throwing is what keeps a page's OTHER elements intact
+        /// when an older binary opens a document a newer one wrote to.
+        case unknown
+
+        public init(from decoder: Decoder) throws {
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            self = Kind(rawValue: raw) ?? .unknown
+        }
     }
 
     public var id: UUID
@@ -55,10 +67,16 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
     /// For file: a human display name; for audio: recorded duration seconds.
     public var displayName: String?
     public var durationSeconds: Double?
-    /// For text: the content and the font family to typeset it in.
+    /// For text/codeBlock: the content and the font family to typeset it in.
     public var text: String?
     public var fontName: String?
     public var textColorHex: String?
+    /// For codeBlock: the label shown for the language (display only — no
+    /// syntax highlighting is derived from it).
+    public var codeLanguage: String?
+    /// For codeBlock: the background box's corner radius in logical points
+    /// (nil = `CodeBlockSettings.defaultCornerRadius`).
+    public var codeCornerRadius: Double?
     /// For text: the type size in logical page points (nil = the legacy 20 pt).
     public var fontSize: Double?
     /// For text: the line-height MULTIPLE the run was laid out at (nil = 1.0).
@@ -77,7 +95,8 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
     public var tapeShape: TapeShape?
     /// For tape: the printed pattern.
     public var tapePattern: TapePattern?
-    /// For tape: the strip's colour (`nil` = the theme's muted accent).
+    /// For tape: the strip's colour (`nil` = the theme's muted accent). For
+    /// codeBlock: the background box's colour (`nil` = `CodeBlockSettings.defaultBackgroundHex`).
     public var colorHex: String?
     /// For tape: the freeform / line path in logical page points, relative to the
     /// page (not the element frame). Empty for rectangles.
@@ -102,6 +121,8 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
         text: String? = nil,
         fontName: String? = nil,
         textColorHex: String? = nil,
+        codeLanguage: String? = nil,
+        codeCornerRadius: Double? = nil,
         fontSize: Double? = nil,
         lineSpacing: Double? = nil,
         isBold: Bool = false,
@@ -126,6 +147,8 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
         self.text = text
         self.fontName = fontName
         self.textColorHex = textColorHex
+        self.codeLanguage = codeLanguage
+        self.codeCornerRadius = codeCornerRadius
         self.fontSize = fontSize
         self.lineSpacing = lineSpacing
         self.isBold = isBold
@@ -161,6 +184,7 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
         case id, kind, x, y, width, height, rotation
         case payloadFilename, displayName, durationSeconds
         case text, fontName, textColorHex, fontSize, lineSpacing, isBold, urlString
+        case codeLanguage, codeCornerRadius
         case tapeShape, tapePattern, colorHex, points, strokeWidth, isHidden
     }
 
@@ -181,6 +205,8 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
         text = try c.decodeIfPresent(String.self, forKey: .text)
         fontName = try c.decodeIfPresent(String.self, forKey: .fontName)
         textColorHex = try c.decodeIfPresent(String.self, forKey: .textColorHex)
+        codeLanguage = try c.decodeIfPresent(String.self, forKey: .codeLanguage)
+        codeCornerRadius = try c.decodeIfPresent(Double.self, forKey: .codeCornerRadius)
         fontSize = try c.decodeIfPresent(Double.self, forKey: .fontSize)
         lineSpacing = try c.decodeIfPresent(Double.self, forKey: .lineSpacing)
         isBold = try c.decodeIfPresent(Bool.self, forKey: .isBold) ?? false

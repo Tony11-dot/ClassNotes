@@ -244,6 +244,9 @@ public struct LibraryGridScreen<Destination: View>: View {
             .padding(.top, 12)
             .padding(.bottom, 120)
         }
+        // Explicit "get the latest" — a notebook drawn on another device
+        // since the last launch/foreground shouldn't need waiting for.
+        .refreshable { await services.refreshRemoteLibrary(force: true) }
     }
 
     @ViewBuilder

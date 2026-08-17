@@ -26,6 +26,8 @@ public final class ToolState {
         case tape
         /// Tapping the page drops a typed text box.
         case text
+        /// Tapping the page drops a typeset, styled block of source code.
+        case codeBlock
         /// Moving / resizing the things already on the page; the pencil doesn't draw.
         case hand
         /// Tapping inside a shape floods it with the current colour.
@@ -41,6 +43,7 @@ public final class ToolState {
             case .eraser: "Eraser"
             case .tape: "Tape"
             case .text: "Text"
+            case .codeBlock: "Code"
             case .hand: "Move"
             case .fill: "Fill"
             case .lasso: "Select"
@@ -53,6 +56,7 @@ public final class ToolState {
             case .eraser: "eraser"
             case .tape: "square.on.square.dashed"
             case .text: "textformat"
+            case .codeBlock: "chevron.left.forwardslash.chevron.right"
             case .hand: "hand.point.up.left"
             case .fill: "drop.fill"
             case .lasso: "lasso"
@@ -216,6 +220,33 @@ public final class ToolState {
     public var textColorHex: String? {
         get { preferences.textColorHex }
         set { edit { $0.textColorHex = newValue } }
+    }
+
+    // MARK: - Code blocks
+
+    public var codeBlockFontID: String {
+        get { preferences.codeBlock.fontID }
+        set { edit { $0.codeBlock.fontID = newValue } }
+    }
+
+    public var codeBlockFontSize: Double {
+        get { preferences.codeBlock.fontSize }
+        set { edit { $0.codeBlock.fontSize = newValue } }
+    }
+
+    public var codeBlockTextColorHex: String? {
+        get { preferences.codeBlock.textColorHex }
+        set { edit { $0.codeBlock.textColorHex = newValue } }
+    }
+
+    public var codeBlockBackgroundColorHex: String? {
+        get { preferences.codeBlock.backgroundColorHex }
+        set { edit { $0.codeBlock.backgroundColorHex = newValue } }
+    }
+
+    public var codeBlockCornerRadius: Double {
+        get { preferences.codeBlock.cornerRadius }
+        set { edit { $0.codeBlock.cornerRadius = newValue } }
     }
 
     // MARK: - Real-time beautification
@@ -390,7 +421,7 @@ public final class ToolState {
             // not erase anything in this mode — the tape layer handles the taps.
             case .tapeOnly: return PKInkingTool(.pen, color: .clear, width: 1)
             }
-        case .tape, .text, .hand, .fill, .lasso:
+        case .tape, .text, .codeBlock, .hand, .fill, .lasso:
             // Inert — drawing is disabled in these modes; the value is unused.
             return PKInkingTool(.pen, color: .clear, width: 1)
         }

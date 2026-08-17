@@ -184,6 +184,9 @@ public struct LibraryListScreen<Destination: View>: View {
                 .listRowBackground(theme.surfaceRaised.color)
         }
         .scrollContentBackground(.hidden)
+        // Explicit "get the latest" — a notebook drawn on the iPad since the
+        // last launch/foreground shouldn't need waiting for.
+        .refreshable { await services.refreshRemoteLibrary(force: true) }
     }
 
     /// While selecting, the row picks up instead of navigating — a NavigationLink

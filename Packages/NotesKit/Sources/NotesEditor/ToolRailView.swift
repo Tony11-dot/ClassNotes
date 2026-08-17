@@ -43,6 +43,7 @@ struct ToolRailView: View {
         case eraser
         case tape
         case text
+        case codeBlock
         case beautify
         case pageSettings
     }
@@ -142,6 +143,18 @@ struct ToolRailView: View {
         }
         .popover(isPresented: binding(.text), arrowEdge: .leading) {
             TextBoxPanel(toolState: toolState)
+                .presentationCompactAdaptation(.popover)
+        }
+
+        railButton(
+            "Code block", systemImage: "chevron.left.forwardslash.chevron.right",
+            isActive: toolState.tool == .codeBlock
+        ) {
+            toolState.select(.codeBlock)
+            panel = .codeBlock
+        }
+        .popover(isPresented: binding(.codeBlock), arrowEdge: .leading) {
+            CodeBlockPanel(toolState: toolState)
                 .presentationCompactAdaptation(.popover)
         }
 

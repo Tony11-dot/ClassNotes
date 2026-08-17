@@ -81,6 +81,41 @@ public enum PencilAction: String, CaseIterable, Sendable, Codable, Identifiable 
     }
 }
 
+/// How a code block is typeset — the panel behind its own style button. Every
+/// code block starts from these defaults and can be overridden per-element
+/// (`PageElement.fontName`/`fontSize`/`textColorHex`/`colorHex`/`codeCornerRadius`).
+public struct CodeBlockSettings: Sendable, Equatable, Codable {
+    /// `FontLibrary` catalog id — monospace faces only.
+    public var fontID: String
+    public var fontSize: Double
+    /// `nil` = `Self.defaultTextHex`.
+    public var textColorHex: String?
+    /// `nil` = `Self.defaultBackgroundHex`.
+    public var backgroundColorHex: String?
+    public var cornerRadius: Double
+
+    public init(
+        fontID: String = "menlo",
+        fontSize: Double = 15,
+        textColorHex: String? = nil,
+        backgroundColorHex: String? = nil,
+        cornerRadius: Double = 10
+    ) {
+        self.fontID = fontID
+        self.fontSize = fontSize
+        self.textColorHex = textColorHex
+        self.backgroundColorHex = backgroundColorHex
+        self.cornerRadius = cornerRadius
+    }
+
+    public static let fontSizeRange: ClosedRange<Double> = 10...28
+    public static let cornerRadiusRange: ClosedRange<Double> = 0...24
+    /// A dark "console" look by default — the same idea every AI assistant's
+    /// code block reaches for, so it reads as code rather than as a text box.
+    public static let defaultBackgroundHex = "#1E1E2E"
+    public static let defaultTextHex = "#CDD6F4"
+}
+
 /// Everything the editor's tools remember: which instrument is in hand, how each
 /// one is tuned, the eraser, tape, text boxes, beautification, and what the
 /// Pencil's gestures do.
@@ -117,6 +152,9 @@ public struct ToolPreferences: Codable, Sendable, Equatable {
     public var textSize: Double
     public var textColorHex: String?
 
+    // Code blocks
+    public var codeBlock: CodeBlockSettings
+
     // Beautification
     public var beautify: BeautifySettings
 
@@ -138,6 +176,7 @@ public struct ToolPreferences: Codable, Sendable, Equatable {
         textFontID: String = FontLibrary.default.id,
         textSize: Double = 20,
         textColorHex: String? = nil,
+        codeBlock: CodeBlockSettings = CodeBlockSettings(),
         beautify: BeautifySettings = BeautifySettings(),
         pencilDoubleTap: PencilAction = .toggleEraser,
         pencilSqueeze: PencilAction = .showColors
@@ -155,6 +194,7 @@ public struct ToolPreferences: Codable, Sendable, Equatable {
         self.textFontID = textFontID
         self.textSize = textSize
         self.textColorHex = textColorHex
+        self.codeBlock = codeBlock
         self.beautify = beautify
         self.pencilDoubleTap = pencilDoubleTap
         self.pencilSqueeze = pencilSqueeze
@@ -180,6 +220,7 @@ public struct ToolPreferences: Codable, Sendable, Equatable {
             textFontID: value(.textFontID, fallback.textFontID),
             textSize: value(.textSize, fallback.textSize),
             textColorHex: (try? box.decodeIfPresent(String.self, forKey: .textColorHex)) ?? nil,
+            codeBlock: value(.codeBlock, fallback.codeBlock),
             beautify: value(.beautify, fallback.beautify),
             pencilDoubleTap: value(.pencilDoubleTap, fallback.pencilDoubleTap),
             pencilSqueeze: value(.pencilSqueeze, fallback.pencilSqueeze)

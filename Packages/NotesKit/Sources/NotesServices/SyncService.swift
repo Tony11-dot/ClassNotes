@@ -206,6 +206,16 @@ public final class SyncService {
         try? await client.acknowledgeChanges(ids: applied, token: token)
     }
 
+    /// The full library, so `apply` can create local rows for notebooks this
+    /// device doesn't have yet — the other half of the mirror `pushAll`
+    /// builds. Read-only: unlike `pullRemoteChanges` there's nothing to
+    /// acknowledge, since discovering an already-known notebook is a no-op.
+    public func pullFullLibrary(apply: @MainActor (RemoteLibrary) async -> Void) async {
+        guard let token = auth.token else { return }
+        guard let library = try? await client.fetchLibrary(token: token) else { return }
+        await apply(library)
+    }
+
     // MARK: - Settings
 
     /// Sends this device's setup up to the account. Fire-and-forget, like every

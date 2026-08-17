@@ -50,6 +50,15 @@ public final class Notebook {
     /// lifts. `NotebookRepository.purge` is the step that actually removes ink.
     public var deletedAt: Date?
 
+    // MARK: Added — remote-only notebooks
+
+    /// `true` for a notebook discovered on the account (`applyRemoteLibrary`)
+    /// that has no local `.cmnote` ink package on THIS device — created
+    /// purely on another one. There's nothing here for `NotesEditor` to open;
+    /// routing sends it to the read-only remote viewer instead, on every
+    /// device, until real content sync exists.
+    public var isRemoteOnly: Bool = false
+
     public init(
         id: UUID = UUID(),
         title: String,

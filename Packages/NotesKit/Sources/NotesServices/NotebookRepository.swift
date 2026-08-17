@@ -370,6 +370,38 @@ public final class NotebookRepository {
         return applied
     }
 
+    /// Creates local rows for notebooks that exist on the account but have no
+    /// row on THIS device yet — the other half of the mirror `pushAll`
+    /// builds, so a notebook drawn purely on the iPad shows up on the iPhone.
+    ///
+    /// Purely additive: an id already known locally is left completely
+    /// alone (its own edits stay authoritative), and a notebook that's since
+    /// vanished from this list is NOT deleted here — "absent from the
+    /// server" must never delete anything, same rule `applyRemoteChanges`
+    /// follows for its own tombstone channel.
+    public func applyRemoteLibrary(_ remote: RemoteLibrary) {
+        let all = (try? context.fetch(FetchDescriptor<Notebook>())) ?? []
+        var known = Set(all.map(\.id))
+        var didCreate = false
+        for entry in remote.notebooks {
+            guard let id = UUID(uuidString: entry.id), !known.contains(id) else { continue }
+            let notebook = Notebook(
+                id: id,
+                title: entry.title,
+                coverColorHex: entry.coverColorHex,
+                defaultTemplate: PageTemplate(rawValue: entry.template) ?? .ruled,
+                shelfID: entry.shelfId.flatMap(UUID.init(uuidString:)),
+                createdAt: entry.createdAt
+            )
+            notebook.updatedAt = entry.updatedAt
+            notebook.isRemoteOnly = true
+            context.insert(notebook)
+            known.insert(id)
+            didCreate = true
+        }
+        if didCreate { try? context.save() }
+    }
+
     public func assign(_ notebook: Notebook, toShelf shelfID: UUID?) {
         notebook.shelfID = shelfID
         notebook.updatedAt = .now

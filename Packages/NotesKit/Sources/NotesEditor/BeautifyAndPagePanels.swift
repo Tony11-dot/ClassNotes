@@ -194,8 +194,12 @@ struct FontRow: View {
     @Binding var selected: String
     /// User-uploaded faces, shown after the curated pack.
     var custom: [HandwritingFont] = []
+    /// Which curated faces to offer — the full pack by default, or a narrower
+    /// set (e.g. `FontLibrary.monospace` for code blocks, where a script face
+    /// would defeat the point).
+    var pool: [HandwritingFont] = FontLibrary.all
 
-    private var allFonts: [HandwritingFont] { FontLibrary.all + custom }
+    private var allFonts: [HandwritingFont] { pool + custom }
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -264,6 +268,61 @@ struct TextBoxPanel: View {
         }
         .padding(18)
         .frame(width: 288)
+        .background(theme.surfaceRaised.color)
+    }
+}
+
+// MARK: - Code blocks
+
+struct CodeBlockPanel: View {
+    @Environment(\.theme) private var theme
+    @Bindable var toolState: ToolState
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                PanelHeader(title: "Code block")
+                Text("Tap anywhere on the page to drop a code block, then type.")
+                    .font(.dsCaption).foregroundStyle(theme.inkSecondary.color)
+
+                Text("Font").font(.dsSubheadline.weight(.medium)).foregroundStyle(theme.ink.color)
+                FontRow(selected: $toolState.codeBlockFontID, pool: FontLibrary.monospace)
+
+                PanelSlider(
+                    title: "Size",
+                    readout: "\(Int(toolState.codeBlockFontSize.rounded()))",
+                    value: $toolState.codeBlockFontSize,
+                    range: CodeBlockSettings.fontSizeRange,
+                    step: 1,
+                    showsSteppers: true
+                )
+
+                Text("Text color").font(.dsSubheadline.weight(.medium)).foregroundStyle(theme.ink.color)
+                ColorSwatchRow(
+                    swatches: [CodeBlockSettings.defaultTextHex] + theme.coverPalette.map(\.hexString),
+                    selection: $toolState.codeBlockTextColorHex,
+                    includesAuto: true
+                )
+
+                Text("Background").font(.dsSubheadline.weight(.medium)).foregroundStyle(theme.ink.color)
+                ColorSwatchRow(
+                    swatches: [CodeBlockSettings.defaultBackgroundHex] + theme.coverPalette.map(\.hexString),
+                    selection: $toolState.codeBlockBackgroundColorHex,
+                    includesAuto: true
+                )
+
+                PanelSlider(
+                    title: "Corner radius",
+                    readout: "\(Int(toolState.codeBlockCornerRadius.rounded()))",
+                    value: $toolState.codeBlockCornerRadius,
+                    range: CodeBlockSettings.cornerRadiusRange,
+                    step: 1,
+                    showsSteppers: true
+                )
+            }
+            .padding(18)
+        }
+        .frame(width: 288, height: 420)
         .background(theme.surfaceRaised.color)
     }
 }

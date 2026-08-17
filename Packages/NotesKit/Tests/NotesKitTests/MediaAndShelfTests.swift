@@ -154,3 +154,75 @@ struct RemoteChangeTests {
         #expect(applied == [stranger])
     }
 }
+
+@MainActor
+@Suite("Notebooks discovered on the account but not on this device", .serialized)
+struct RemoteLibraryDiscoveryTests {
+    private func makeRepository() -> (NotebookRepository, ModelContext, ModelContainer) {
+        let container = ModelContainerFactory.make(inMemory: true)
+        let repo = NotebookRepository(
+            context: container.mainContext,
+            store: DocumentStore(rootURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)),
+            entitlements: EntitlementService(listenForUpdates: false)
+        )
+        return (repo, container.mainContext, container)
+    }
+
+    private func entry(
+        id: String = UUID().uuidString, title: String = "From the iPad",
+        shelfId: String? = nil
+    ) -> RemoteLibrary.Entry {
+        RemoteLibrary.Entry(
+            id: id, title: title, coverColorHex: "#2266DD", coverImage: nil,
+            template: "ruled", shelfId: shelfId, pageCount: 3,
+            createdAt: .now, updatedAt: .now
+        )
+    }
+
+    @Test("A notebook only the server knows about is created locally, marked remote-only")
+    func createsMissingNotebook() async throws {
+        let (repo, context, container) = makeRepository()
+        _ = container
+        let remoteID = UUID()
+        repo.applyRemoteLibrary(RemoteLibrary(notebooks: [entry(id: remoteID.uuidString, title: "Physics")]))
+
+        let all = try context.fetch(FetchDescriptor<Notebook>())
+        #expect(all.count == 1)
+        #expect(all.first?.id == remoteID)
+        #expect(all.first?.title == "Physics")
+        #expect(all.first?.isRemoteOnly == true)
+    }
+
+    @Test("A notebook already known locally is left completely alone")
+    func leavesKnownNotebookAlone() async throws {
+        let (repo, context, container) = makeRepository()
+        _ = container
+        let notebook = Notebook(title: "My own edit", coverColorHex: "#111111")
+        context.insert(notebook)
+        try context.save()
+
+        repo.applyRemoteLibrary(RemoteLibrary(
+            notebooks: [entry(id: notebook.id.uuidString, title: "Stale server title")]
+        ))
+
+        let all = try context.fetch(FetchDescriptor<Notebook>())
+        #expect(all.count == 1)
+        #expect(all.first?.title == "My own edit")
+        #expect(all.first?.isRemoteOnly == false)
+    }
+
+    @Test("An empty or unreachable pull creates nothing and deletes nothing")
+    func emptyPullIsANoOp() async throws {
+        let (repo, context, container) = makeRepository()
+        _ = container
+        context.insert(Notebook(title: "Untouched", coverColorHex: "#111111"))
+        try context.save()
+
+        repo.applyRemoteLibrary(RemoteLibrary(notebooks: []))
+
+        let all = try context.fetch(FetchDescriptor<Notebook>())
+        #expect(all.count == 1)
+        #expect(all.first?.title == "Untouched")
+    }
+}

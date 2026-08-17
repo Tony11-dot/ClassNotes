@@ -1,6 +1,7 @@
 import ClassMateTheme
 import NotesDesignSystem
 import SwiftUI
+import UIKit
 
 /// Where the straight-edge is sitting, in the editor's own coordinate space.
 /// Published upwards so the ink pass can rule the strokes drawn along it.
@@ -27,6 +28,11 @@ struct RulerOverlay: View {
 
     @State private var start: CGPoint?
     @State private var end: CGPoint?
+    /// Whether each handle's last reported drag point was sitting on a
+    /// level/upright detent — edge-triggered so the haptic fires once on
+    /// entry rather than rattling for as long as the hand stays near axis.
+    @State private var startOnDetent = false
+    @State private var endOnDetent = false
 
     /// How wide the straight-edge is. Both long edges guide, so this is also how
     /// far apart the two guides are.
@@ -39,8 +45,8 @@ struct RulerOverlay: View {
             ZStack {
                 rulerBody(from: a, to: b)
                 readout(from: a, to: b)
-                handle(at: a) { start = clamp($0, in: geo.size) }
-                handle(at: b) { end = clamp($0, in: geo.size) }
+                handle(at: a, anchor: b, wasOnDetent: $startOnDetent) { start = clamp($0, in: geo.size) }
+                handle(at: b, anchor: a, wasOnDetent: $endOnDetent) { end = clamp($0, in: geo.size) }
                 closeButton(near: midpoint(a, b))
             }
             .onAppear {
@@ -119,7 +125,16 @@ struct RulerOverlay: View {
             .allowsHitTesting(false)
     }
 
-    private func handle(at point: CGPoint, onMove: @escaping (CGPoint) -> Void) -> some View {
+    /// A draggable end of the straight-edge. Dragging it rotates the ruler
+    /// around the OTHER end (`anchor`); as that angle nears level or upright,
+    /// `ShapeSnapper.detented` — the same eased pull-to-axis a held shape
+    /// already gets — resists the hand and settles the ruler exactly onto the
+    /// axis, with a haptic tap on the way in so it can be felt, not squinted
+    /// at.
+    private func handle(
+        at point: CGPoint, anchor: CGPoint, wasOnDetent: Binding<Bool>,
+        onMove: @escaping (CGPoint) -> Void
+    ) -> some View {
         Circle()
             .fill(theme.accent.color)
             .overlay(Circle().stroke(.white, lineWidth: 2))
@@ -127,7 +142,15 @@ struct RulerOverlay: View {
             .position(point)
             .gesture(
                 DragGesture()
-                    .onChanged { onMove($0.location) }
+                    .onChanged { value in
+                        let settled = ShapeSnapper.detented(value.location, from: anchor)
+                        if settled.isDetent, !wasOnDetent.wrappedValue {
+                            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                        }
+                        wasOnDetent.wrappedValue = settled.isDetent
+                        onMove(settled.point)
+                    }
+                    .onEnded { _ in wasOnDetent.wrappedValue = false }
             )
             .accessibilityLabel("Ruler handle")
     }

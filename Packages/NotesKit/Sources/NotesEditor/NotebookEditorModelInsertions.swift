@@ -123,6 +123,30 @@ extension NotebookEditorModel {
         return element.id
     }
 
+    /// Drops an empty code block where the user tapped and returns its id, so
+    /// the editor can put the keyboard straight into it — same shape as
+    /// `insertTextBox`, styled instead from the code-block settings.
+    @discardableResult
+    public func insertCodeBlock(
+        at point: CGPoint, on pageID: UUID, fontName: String, fontSize: Double,
+        textColorHex: String?, backgroundColorHex: String?, cornerRadius: Double
+    ) async -> UUID? {
+        let pageSize = page(pageID)?.logicalSize ?? PageGeometry.size
+        let width = min(360.0, pageSize.width - 32)
+        let height = max(fontSize * 4, 100)
+        let element = PageElement(
+            kind: .codeBlock,
+            x: min(max(point.x - width / 2, 12), max(12, pageSize.width - width - 12)),
+            y: min(max(point.y - height / 2, 12), max(12, pageSize.height - height - 12)),
+            width: width, height: height,
+            text: "", fontName: fontName, textColorHex: textColorHex,
+            codeCornerRadius: cornerRadius, fontSize: fontSize,
+            colorHex: backgroundColorHex
+        )
+        await append(element, to: pageID)
+        return element.id
+    }
+
     // MARK: - Tape
 
     /// Lays a strip of tape over the page. `points` are in the page's logical

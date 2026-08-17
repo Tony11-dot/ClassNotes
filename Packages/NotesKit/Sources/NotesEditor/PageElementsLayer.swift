@@ -182,11 +182,14 @@ struct PageElementsLayer: View {
     /// Text is included alongside tape because a beautified (or hand-placed)
     /// run is a `PageElement`, not `PKDrawing` ink — PencilKit's own eraser,
     /// pixel or vector, can only ever touch raw strokes, so without this a
-    /// typeset line could never be erased at all.
+    /// typeset line could never be erased at all. A code block is the same
+    /// kind of typeset content.
     private func eraseMask(for element: PageElement) -> GestureMask {
-        toolState.tool == .eraser && (element.kind == .tape || element.kind == .text)
+        toolState.tool == .eraser && Self.erasableKinds.contains(element.kind)
             ? .all : .subviews
     }
+
+    private static let erasableKinds: Set<PageElement.Kind> = [.tape, .text, .codeBlock]
 
     /// Touch down anywhere on a strip or a text box removes it — so scrubbing
     /// the eraser across a page takes out every one it passes over, which is
@@ -194,7 +197,7 @@ struct PageElementsLayer: View {
     private func eraseGesture(for element: PageElement) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { _ in
-                guard toolState.tool == .eraser, element.kind == .tape || element.kind == .text
+                guard toolState.tool == .eraser, Self.erasableKinds.contains(element.kind)
                 else { return }
                 guard erasedElementIDs.insert(element.id).inserted else { return }
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -216,11 +219,11 @@ struct PageElementsLayer: View {
         case .link:
             guard let string = element.urlString, let url = URL(string: string) else { return }
             openURL(url)
-        case .text:
+        case .text, .codeBlock:
             guard allowsEditing else { return }
             editingTextID = element.id
             textFieldFocused = true
-        case .image, .audio, .fill:
+        case .image, .audio, .fill, .unknown:
             break
         }
     }
@@ -245,6 +248,14 @@ struct PageElementsLayer: View {
                 textFieldFocused = true
             } label: {
                 Label("Edit text", systemImage: "pencil")
+            }
+        }
+        if element.kind == .codeBlock {
+            Button {
+                editingTextID = element.id
+                textFieldFocused = true
+            } label: {
+                Label("Edit code", systemImage: "chevron.left.forwardslash.chevron.right")
             }
         }
         if element.kind == .tape {
@@ -304,6 +315,13 @@ struct PageElementsLayer: View {
             }
         case .text:
             textElement(element)
+        case .codeBlock:
+            codeBlockElement(element)
+        case .unknown:
+            // A kind this build doesn't recognise. Nothing to draw — the
+            // point of decoding to `.unknown` rather than throwing is that
+            // the page's OTHER elements still load; this one just sits out.
+            Color.clear
         case .tape:
             TapeView(
                 shape: element.tapeShape ?? .rectangle,
@@ -361,6 +379,54 @@ struct PageElementsLayer: View {
             named: element.fontName,
             size: element.resolvedFontSize * scale,
             bold: element.isBold
+        )
+    }
+
+    // MARK: - Code blocks
+
+    @ViewBuilder
+    private func codeBlockElement(_ element: PageElement) -> some View {
+        let radius = (element.codeCornerRadius ?? toolState.codeBlockCornerRadius) * scale
+        let background = ThemeColor(hex: element.colorHex ?? CodeBlockSettings.defaultBackgroundHex)
+            ?? theme.surfaceRaised
+        let foreground = ThemeColor(hex: element.textColorHex ?? CodeBlockSettings.defaultTextHex)
+            ?? theme.ink
+
+        Group {
+            if editingTextID == element.id {
+                CodeBlockEditor(
+                    element: element, scale: scale, font: textFont(element), foreground: foreground.color,
+                    onCommit: { text in
+                        var updated = element
+                        updated.text = text
+                        updated.height = max(
+                            element.height,
+                            Double(text.split(separator: "\n").count) * element.resolvedFontSize * 1.4 + 24
+                        )
+                        Task {
+                            if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                await model.deleteElement(element.id, on: pageID)
+                            } else {
+                                await model.updateElement(updated, on: pageID)
+                            }
+                        }
+                        editingTextID = nil
+                    }
+                )
+                .focused($textFieldFocused)
+            } else {
+                Text(element.text?.isEmpty == false ? element.text! : " ")
+                    .font(textFont(element))
+                    .lineSpacing(element.extraLeading * scale)
+                    .foregroundStyle(foreground.color)
+                    .padding(10 * scale)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
+        }
+        .background(background.color, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                .strokeBorder(theme.separator.color, lineWidth: 0.5)
         )
     }
 
@@ -460,6 +526,51 @@ private struct TextBoxEditor: View {
                     .strokeBorder(theme.accent.color, lineWidth: 1.5)
             )
             .onSubmit { onCommit(draft) }
+            .onDisappear { onCommit(draft) }
+            .toolbar {
+                ToolbarItem(placement: .keyboard) {
+                    Button("Done") { onCommit(draft) }
+                        .font(.dsSubheadline.weight(.semibold))
+                }
+            }
+    }
+}
+
+/// The in-place editor for a code block: a multiline field with autocorrect
+/// and autocapitalization off, so typing code doesn't fight the keyboard.
+/// Undecorated — `codeBlockElement` already draws the background, corner
+/// radius and border this sits inside, whether editing or not.
+private struct CodeBlockEditor: View {
+    let element: PageElement
+    let scale: CGFloat
+    let font: Font
+    let foreground: Color
+    let onCommit: (String) -> Void
+
+    @State private var draft: String
+
+    init(
+        element: PageElement, scale: CGFloat, font: Font, foreground: Color,
+        onCommit: @escaping (String) -> Void
+    ) {
+        self.element = element
+        self.scale = scale
+        self.font = font
+        self.foreground = foreground
+        self.onCommit = onCommit
+        _draft = State(initialValue: element.text ?? "")
+    }
+
+    var body: some View {
+        TextEditor(text: $draft)
+            .font(font)
+            .foregroundStyle(foreground)
+            .scrollContentBackground(.hidden)
+            .background(.clear)
+            .autocorrectionDisabled(true)
+            .textInputAutocapitalization(.never)
+            .padding(4 * scale)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .onDisappear { onCommit(draft) }
             .toolbar {
                 ToolbarItem(placement: .keyboard) {

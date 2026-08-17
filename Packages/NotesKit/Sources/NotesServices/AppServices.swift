@@ -24,6 +24,9 @@ public final class AppServices {
     /// Mirrors the local library up to the ClassMate backend so the ClassMate
     /// "ClassNotes" tab shows the user's real notebooks.
     public let sync: SyncService
+    /// Cached rendered pages for notebooks that exist on the account but have
+    /// no local ink package on this device (see `Notebook.isRemoteOnly`).
+    public let remoteNotebookCache: RemoteNotebookCache
     /// Saved NOVA conversations, per notebook.
     public let novaChats: NovaChatStore
     /// How the tools are tuned and what the Pencil's gestures do — saved, and
@@ -46,6 +49,7 @@ public final class AppServices {
         self.keychain = keychain
         self.auth = auth
         self.sync = sync
+        self.remoteNotebookCache = RemoteNotebookCache(client: ClassMateAPIClient())
         self.themeService = ThemeService(context: context, entitlements: entitlements)
         self.novaChats = NovaChatStore(context: context)
         self.settings = SettingsStore(context: context)
@@ -98,6 +102,11 @@ public final class AppServices {
             await sync.pullRemoteChanges { [repository] changes in
                 await repository.applyRemoteChanges(changes)
             }
+            // Discover notebooks that exist on the account but were created on
+            // another device — same pre-push slot as the changes pull above,
+            // for the same reason: nothing here conflicts with what's about
+            // to be pushed, since it only ever ADDS rows this device lacks.
+            await refreshRemoteLibrary(force: true)
             // Then reconcile the whole local library up to the backend (first run
             // + any missed per-edit pushes). No-ops when signed out
             // (SyncService checks the token).
@@ -105,6 +114,29 @@ public final class AppServices {
             sync.pushAll(notebooks: snapshot.notebooks, shelves: snapshot.shelves)
         }
         Task { await runMaintenance() }
+    }
+
+    /// When this last actually reached the network, so a foreground trigger
+    /// and a pull-to-refresh moments apart don't both fire a request.
+    @ObservationIgnored private var lastRemoteLibraryPull: Date?
+
+    /// Re-pulls the account's library so a notebook created on another
+    /// device shows up here. Throttled to once per 30s unless `force`d (the
+    /// launch sequence forces it — there's nothing to throttle against yet).
+    @discardableResult
+    public func refreshRemoteLibrary(force: Bool = false) async -> Bool {
+        if !force, let last = lastRemoteLibraryPull, Date().timeIntervalSince(last) < 30 {
+            return false
+        }
+        lastRemoteLibraryPull = .now
+        await sync.pullFullLibrary { [repository, remoteNotebookCache] library in
+            repository.applyRemoteLibrary(library)
+            for entry in library.notebooks {
+                guard let id = UUID(uuidString: entry.id) else { continue }
+                await remoteNotebookCache.cacheCover(entry.coverImage, for: id)
+            }
+        }
+        return true
     }
 
     /// Housekeeping that has nothing to do with the account, kept off the sync

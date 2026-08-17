@@ -409,6 +409,20 @@ extension EditorScreen {
                 }
             }
         }
+        if toolState.tool == .codeBlock, editingTextID == nil {
+            TextPlacementLayer(displaySize: displaySize, logicalSize: page.logicalSize) { point in
+                Task {
+                    editingTextID = await model.insertCodeBlock(
+                        at: point, on: page.id,
+                        fontName: FontLibrary.byNameOrID(toolState.codeBlockFontID).fontName,
+                        fontSize: toolState.codeBlockFontSize,
+                        textColorHex: toolState.codeBlockTextColorHex ?? CodeBlockSettings.defaultTextHex,
+                        backgroundColorHex: toolState.codeBlockBackgroundColorHex ?? CodeBlockSettings.defaultBackgroundHex,
+                        cornerRadius: toolState.codeBlockCornerRadius
+                    )
+                }
+            }
+        }
     }
 
     /// Where the straight-edge lies on this page, in the page's own logical

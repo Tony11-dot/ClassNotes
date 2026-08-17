@@ -74,6 +74,63 @@ struct ClassMateNetworkingTests {
         #expect(ClassMateAPI.defaultBaseURL.host == "pacific-enchantment-production-7a80.up.railway.app")
     }
 
+    @Test("fetchLibrary decodes notebooks with Postgres's fractional-second timestamps")
+    func fetchLibraryDecodes() async throws {
+        let client = makeClient { _ in
+            let json = """
+            {
+              "shelves": [],
+              "notebooks": [
+                {
+                  "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+                  "title": "Physics", "coverColorHex": "#2266DD", "coverImage": null,
+                  "template": "ruled", "shelfId": null, "pageCount": 3,
+                  "createdAt": "2026-01-01T10:00:00.123Z",
+                  "updatedAt": "2026-01-02T11:30:00.456Z"
+                }
+              ]
+            }
+            """
+            return (200, Data(json.utf8))
+        }
+        let library = try await client.fetchLibrary(token: "jwt")
+        #expect(library.notebooks.count == 1)
+        #expect(library.notebooks.first?.title == "Physics")
+        #expect(library.notebooks.first?.id == "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d")
+    }
+
+    @Test("fetchNotebookPages decodes rendered pages and their attachments")
+    func fetchNotebookPagesDecodes() async throws {
+        let client = makeClient { _ in
+            let json = """
+            {
+              "pages": [
+                {
+                  "pageIndex": 0, "dataUrl": "data:image/png;base64,AA==",
+                  "attachments": [
+                    {"kind": "link", "name": "Docs", "url": "https://example.com"}
+                  ]
+                }
+              ]
+            }
+            """
+            return (200, Data(json.utf8))
+        }
+        let pages = try await client.fetchNotebookPages(id: "n1", token: "jwt")
+        #expect(pages.pages.count == 1)
+        #expect(pages.pages.first?.attachments.first?.kind == "link")
+        #expect(pages.pages.first?.attachments.first?.url == "https://example.com")
+    }
+
+    @Test("A page synced before attachments existed decodes with an empty list, not a throw")
+    func fetchNotebookPagesToleratesMissingAttachments() async throws {
+        let client = makeClient { _ in
+            (200, Data(#"{"pages":[{"pageIndex":0,"dataUrl":"data:image/png;base64,AA==","attachments":[]}]}"#.utf8))
+        }
+        let pages = try await client.fetchNotebookPages(id: "n1", token: "jwt")
+        #expect(pages.pages.first?.attachments.isEmpty == true)
+    }
+
     // MARK: AuthService
 
     @MainActor

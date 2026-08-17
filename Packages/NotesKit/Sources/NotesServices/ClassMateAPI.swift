@@ -69,6 +69,50 @@ public struct LibraryChanges: Decodable, Sendable, Equatable {
     public var isEmpty: Bool { deletedIds.isEmpty && edited.isEmpty }
 }
 
+/// The full remote library for the signed-in account — `GET /classnotes/library`.
+/// Used to discover notebooks that exist on the account but not on THIS device
+/// yet (the other half of the mirror `pushAll` builds): a notebook drawn purely
+/// on the iPad has no local row on the iPhone until this is applied. Shelves
+/// aren't modeled here — this channel is additive to notebooks only.
+public struct RemoteLibrary: Decodable, Sendable, Equatable {
+    public let notebooks: [Entry]
+
+    public struct Entry: Decodable, Sendable, Equatable {
+        public let id: String
+        public let title: String
+        public let coverColorHex: String
+        public let coverImage: String?
+        public let template: String       // PageTemplate.rawValue
+        public let shelfId: String?
+        public let pageCount: Int
+        public let createdAt: Date
+        public let updatedAt: Date
+    }
+}
+
+/// One notebook's rendered pages — `GET /classnotes/notebooks/:id/pages`. What
+/// a device with no local ink package (a remote-only notebook) shows instead:
+/// the flat render, plus whatever's playable/openable on it.
+public struct RemoteNotebookPages: Decodable, Sendable, Equatable {
+    public let pages: [Page]
+
+    public struct Page: Decodable, Sendable, Equatable {
+        public let pageIndex: Int
+        /// `data:image/png;base64,...`
+        public let dataUrl: String
+        public let attachments: [Attachment]
+    }
+
+    /// Mirrors `NotebookPageAttachment` — `kind` is `audio`, `file` or `link`.
+    public struct Attachment: Decodable, Sendable, Equatable {
+        public let kind: String
+        public let name: String
+        public let durationSeconds: Double?
+        public let dataUrl: String?
+        public let url: String?
+    }
+}
+
 /// Upload body for `PUT /classnotes/notebooks/:id` — the notebook metadata the
 /// ClassMate "ClassNotes" tab renders. The id travels in the URL, so it is NOT
 /// part of the body (the backend rejects unknown fields).
@@ -373,6 +417,32 @@ public struct ClassMateAPIClient: Sendable {
         req.httpBody = try JSONSerialization.data(withJSONObject: ["ids": ids])
         let (_, status) = try await send(req)
         try ensureSuccess(status)
+    }
+
+    /// `GET /classnotes/library` — every notebook on the account, so a device
+    /// can discover ones it doesn't have a local copy of yet.
+    public func fetchLibrary(token: String) async throws -> RemoteLibrary {
+        let (data, status) = try await send(
+            request(path: "/classnotes/library", method: "GET", token: token)
+        )
+        try ensureSuccess(status)
+        guard let decoded = try? Self.settingsDecoder.decode(RemoteLibrary.self, from: data) else {
+            throw APIError.decoding
+        }
+        return decoded
+    }
+
+    /// `GET /classnotes/notebooks/:id/pages` — the rendered pages for one
+    /// notebook, for a device with no local ink package to draw from.
+    public func fetchNotebookPages(id: String, token: String) async throws -> RemoteNotebookPages {
+        let (data, status) = try await send(
+            request(path: "/classnotes/notebooks/\(id)/pages", method: "GET", token: token)
+        )
+        try ensureSuccess(status)
+        guard let decoded = try? JSONDecoder().decode(RemoteNotebookPages.self, from: data) else {
+            throw APIError.decoding
+        }
+        return decoded
     }
 
     /// `DELETE /classnotes/notebooks/:id`.

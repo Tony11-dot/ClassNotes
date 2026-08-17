@@ -243,7 +243,7 @@ extension EditorScreen {
             context.closePath()
             context.fillPath()
             context.restoreGState()
-        case .text:
+        case .text, .codeBlock:
             guard let text = element.text, !text.isEmpty else { break }
             let color = element.colorHex.flatMap(ThemeColor.init(hex:))?.uiColor ?? .label
             let font = FontResolver.uiFont(
@@ -255,7 +255,7 @@ extension EditorScreen {
                 in: frame,
                 withAttributes: [.font: font, .foregroundColor: color, .paragraphStyle: style]
             )
-        case .file, .audio, .link, .tape:
+        case .file, .audio, .link, .tape, .unknown:
             break
         }
     }

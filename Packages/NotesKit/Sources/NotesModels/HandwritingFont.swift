@@ -51,13 +51,20 @@ public enum FontLibrary {
         .init(id: "rounded", displayName: "Rounded", fontName: "SFRounded-Regular", category: .typeset),
         .init(id: "newyork", displayName: "New York", fontName: "NewYork-Regular", category: .typeset),
         .init(id: "georgia", displayName: "Georgia", fontName: "Georgia", category: .typeset),
-        .init(id: "menlo", displayName: "Menlo", fontName: "Menlo-Regular", category: .typeset)
+        .init(id: "menlo", displayName: "Menlo", fontName: "Menlo-Regular", category: .typeset),
+        // Resolved by `FontResolver` through the system-design path (its name
+        // starts "sfmono"), not by PostScript name — this is a real,
+        // selectable face, not a placeholder.
+        .init(id: "sfmono", displayName: "SF Mono", fontName: "SFMono-Regular", category: .typeset)
     ]
 
     /// The full curated pack, in display order.
     public static var all: [HandwritingFont] {
         [brand] + handwriting + typeset
     }
+
+    /// Monospace faces only — code blocks offer just these, not the whole pack.
+    public static let monospace: [HandwritingFont] = typeset.filter { $0.id == "menlo" || $0.id == "sfmono" }
 
     public static var `default`: HandwritingFont { brand }
 
