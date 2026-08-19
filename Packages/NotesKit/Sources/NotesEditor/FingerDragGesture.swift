@@ -15,9 +15,13 @@ import UIKit
 /// its frame regardless of type, which is what actually delivers touches to a
 /// view in the first place. A declined recognizer doesn't hand a swallowed
 /// touch back to anything — the Pencil just stopped drawing wherever the
-/// ruler sat. `FingerHitTestView.hitTest` is the same "only a finger claims
-/// this view" pattern `PageCanvasView` already uses for the exact same
-/// reason, applied one level lower so it actually works.
+/// ruler sat. A second version then swung the other way and only claimed a
+/// touch it could positively prove was a finger — which stopped the ruler
+/// moving AT ALL, by either hand, the moment that proof turned out to be less
+/// reliable for a small, nested, constantly-repositioned control than for the
+/// canvas the pattern was copied from. `FingerHitTestView.hitTest` now claims
+/// by default and only lets a touch through when it can positively prove
+/// PENCIL — see its own doc comment for why that direction is the safe one.
 struct FingerDragArea: UIViewRepresentable {
     struct Value {
         var translation: CGSize
@@ -75,22 +79,31 @@ struct FingerDragArea: UIViewRepresentable {
     }
 }
 
-/// A view that hands itself back for a finger touch and refuses (returns
-/// `nil`) for anything else, so a Pencil touch over it is invisible to it
-/// entirely and falls through to whatever's behind. Matches by proximity to
-/// the queried point rather than "is any touch on the event a finger" — a
-/// palm resting elsewhere on the glass must not make an unrelated touch here
-/// read as a finger.
+/// A view that hands itself back UNLESS the touch at this point is positively
+/// identified as the Pencil, in which case it refuses (`nil`) so the touch
+/// falls through to whatever's behind (the drawing canvas).
+///
+/// This is deliberately "claim unless proven Pencil", not "claim only if
+/// proven finger" — the first version of this view used the latter, and it
+/// stopped the ruler moving AT ALL, by either hand. `PageCanvasView.hitTest`
+/// (the pattern this was modelled on) gets away with the stricter "only if
+/// proven finger" test because ITS fallback — claim the touch — is what you
+/// want for a drawing surface when detection is ambiguous; a small, isolated
+/// control like the ruler has no such luck, since claiming nothing means the
+/// finger meant to drag it does nothing either. Matching the SAME bias
+/// (assume yes unless positively ruled out) as the canvas, just pointed at
+/// the opposite type, keeps this robust to the same edge cases without ever
+/// making the control unusable.
 final class FingerHitTestView: UIView {
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         guard let event else { return super.hitTest(point, with: event) }
-        let isFinger = event.allTouches?.contains { touch in
-            guard touch.type == .direct else { return false }
+        let isPencil = event.allTouches?.contains { touch in
+            guard touch.type == .pencil else { return false }
             let location = touch.location(in: self)
             let dx = location.x - point.x, dy = location.y - point.y
-            return dx * dx + dy * dy < 4
+            return dx * dx + dy * dy < 484 // 22pt — generous on purpose, see above.
         } ?? false
-        guard isFinger else { return nil }
-        return super.hitTest(point, with: event)
+        guard isPencil else { return super.hitTest(point, with: event) }
+        return nil
     }
 }

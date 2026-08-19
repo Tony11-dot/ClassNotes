@@ -23,6 +23,9 @@ public struct LibraryGridScreen<Destination: View>: View {
     /// the empty-state's "New notebook" button does, so both trigger the SAME
     /// creation flow below rather than two separate ones.
     @Binding var addChoice: AddContentChoice?
+    /// Reported up so the shell can hide its own bottom bar while a notebook
+    /// pushed from this tab is on screen.
+    @Binding var isDetailOpen: Bool
 
     @State var opened: LibraryOpenRequest?
     @State var renameTarget: Notebook?
@@ -38,9 +41,11 @@ public struct LibraryGridScreen<Destination: View>: View {
 
     public init(
         addChoice: Binding<AddContentChoice?>,
+        isDetailOpen: Binding<Bool>,
         @ViewBuilder destination: @escaping (Notebook, UUID?) -> Destination
     ) {
         self._addChoice = addChoice
+        self._isDetailOpen = isDetailOpen
         self.destination = destination
     }
 
@@ -92,12 +97,9 @@ public struct LibraryGridScreen<Destination: View>: View {
                 BrandTitle(height: 88)
             }
             .navigationDestination(item: $opened) { request in
-                // A destination pushed inside this tab's own NavigationStack
-                // does NOT hide the tab bar by default — without this, the bar
-                // sat behind the editor/viewer for as long as it was open.
                 destination(request.notebook, request.pageID)
-                    .toolbar(.hidden, for: .tabBar)
             }
+            .onChange(of: opened) { _, new in isDetailOpen = new != nil }
             .overlay(alignment: .bottom) {
                 if !selection.isActive { floatingToolbar }
             }

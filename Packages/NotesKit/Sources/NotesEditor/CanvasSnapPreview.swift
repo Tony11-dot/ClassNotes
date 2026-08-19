@@ -103,11 +103,22 @@ extension CanvasPageView.Coordinator {
     /// false when the ink isn't a shape yet, so the watcher stays armed for the
     /// pause that comes once it is.
     private func previewSnap(_ points: [CGPoint]) -> Bool {
+        // `points` here is the watcher's OWN raw touch samples — real jitter and
+        // all — not PencilKit's fitted spline. The release-only fallback
+        // (`ShapeSnapper.snapped`) classifies `PKStroke.path.interpolatedPoints`,
+        // which is already smoothed by the time it's fitted; classifying this
+        // path's tremor directly made `classify`'s straightness/corner/residual
+        // thresholds miss far more often live than on release, which is why a
+        // hold only ever seemed to work once the pencil lifted. Smoothing before
+        // classification (endpoints pinned, so the anchor/handle stay exactly
+        // where the pencil is) puts the live path on equal footing with the
+        // release path's own already-clean geometry.
+        let smoothed = StrokeSmoothing.smooth(points, window: 7)
         guard toolState.snapShapes, toolState.tool == .pen,
               // A scrub is an erasure, not a shape. Fitting it to an ellipse
               // under the pencil would beat the eraser to the same ink.
               !(toolState.scribbleToErase && ScribbleDetector.isErasureScribble(points)),
-              let snap = ShapeSnapper.liveSnap(points, holdRadius: logicalSnapTolerance),
+              let snap = ShapeSnapper.liveSnap(smoothed, holdRadius: logicalSnapTolerance),
               let settled = ShapeSnapper.resolve(snap, handle: snap.handle) else { return false }
         liveSnap = snap
         pendingSnapPath = settled.path

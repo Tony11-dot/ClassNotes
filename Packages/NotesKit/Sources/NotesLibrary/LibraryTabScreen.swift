@@ -14,76 +14,146 @@ struct LibraryOpenRequest: Identifiable, Hashable {
     var id: UUID { notebook.id }
 }
 
-/// The library's five tabs. `create` is never actually shown as a tab's
-/// content — selecting it is intercepted and turned into a sheet instead, so
-/// it's a place in the bar, not a screen.
+/// The library's four real tabs. "New" sits between Search and Trash in the
+/// bar but is a plain button, not a tab — it never has content of its own.
 enum LibraryTab: Hashable {
-    case shelves, search, create, trash, settings
+    case shelves, search, trash, settings
 }
 
-/// iPad's library shell: a native bottom tab bar (Liquid Glass floating chrome
-/// is automatic on this SDK for a stock `TabView`) — Shelves, Search, a
-/// centred `+`, Trash and Settings, in that literal order so `+` lands dead
-/// centre. The bigger logo lives on the Shelves tab as its page title, not
-/// folded into the bar itself.
+/// iPad's library shell: Shelves, Search, a centred `+`, Trash and Settings,
+/// as a hand-built bottom bar rather than the system `TabView` chrome.
 ///
-/// Trash and Settings used to be sheets triggered from small buttons buried in
-/// a floating toolbar; they're full tabs now, so `TrashScreen`/`SettingsScreen`
-/// are handed `isTab: true` to drop their own "Done" button — there's nothing
-/// to dismiss back to, you just tap another tab.
+/// The new `Tab`-catalog `TabView` was tried first with `.tabViewStyle(.tabBarOnly)`,
+/// on the theory that `.automatic` was choosing iPadOS 18's adaptable-sidebar
+/// presentation. It wasn't: iPadOS 18 changed the PLATFORM DEFAULT position for
+/// a `TabView`'s own chrome to a floating bar at the TOP of the screen, and
+/// `.tabBarOnly` only rules out the sidebar option — it has no lever for which
+/// EDGE the bar sits against, because the system no longer offers a "bottom"
+/// tab bar on iPad at all. Nothing built on top of that API can be forced
+/// bottom, however it's configured — hence a bar that was still on top, still
+/// unstyled, after two straight rounds of style flags that never had a chance
+/// of working. This bar is ordinary SwiftUI content in a `safeAreaInset`, so
+/// its position and its icon+label rendering are ours, not the platform's.
+///
+/// All four screens stay mounted for as long as the shell is alive — switching
+/// tabs only toggles which one is drawn on top and hit-testable — so leaving
+/// Search and coming back doesn't lose the query or the scroll position the
+/// way tearing the view down and rebuilding it would.
+///
+/// Trash and Settings are handed `isTab: true` to drop their own "Done"
+/// button — there's nothing to dismiss back to, you just tap another tab.
 public struct LibraryTabScreen<Destination: View>: View {
+    @Environment(\.theme) private var theme
+
     private let destination: (Notebook, UUID?) -> Destination
 
     @State private var selectedTab: LibraryTab = .shelves
     @State private var addChoice: AddContentChoice?
     @State private var showCreateSheet = false
+    /// Whether the ACTIVE tab currently has a notebook pushed over it —
+    /// tracked per tab (only Shelves and Search ever push one) so switching to
+    /// a tab that has nothing open doesn't inherit another tab's hidden bar.
+    @State private var shelvesDetailOpen = false
+    @State private var searchDetailOpen = false
 
     public init(@ViewBuilder destination: @escaping (Notebook, UUID?) -> Destination) {
         self.destination = destination
     }
 
+    private var isDetailOpen: Bool {
+        switch selectedTab {
+        case .shelves: shelvesDetailOpen
+        case .search: searchDetailOpen
+        case .trash, .settings: false
+        }
+    }
+
     public var body: some View {
-        TabView(selection: $selectedTab) {
-            Tab("Shelves", systemImage: "books.vertical", value: LibraryTab.shelves) {
-                LibraryGridScreen(addChoice: $addChoice, destination: destination)
-            }
-            Tab("Search", systemImage: "magnifyingglass", value: LibraryTab.search) {
-                LibrarySearchScreen(destination: destination)
-            }
-            Tab("New", systemImage: "plus.circle.fill", value: LibraryTab.create) {
-                Color.clear
-            }
-            Tab("Trash", systemImage: "trash", value: LibraryTab.trash) {
-                TrashScreen(isTab: true)
-            }
-            Tab("Settings", systemImage: "gearshape", value: LibraryTab.settings) {
-                SettingsScreen(isTab: true)
+        ZStack {
+            LibraryGridScreen(
+                addChoice: $addChoice, isDetailOpen: $shelvesDetailOpen, destination: destination
+            )
+            .opacity(selectedTab == .shelves ? 1 : 0)
+            .allowsHitTesting(selectedTab == .shelves)
+
+            LibrarySearchScreen(isDetailOpen: $searchDetailOpen, destination: destination)
+                .opacity(selectedTab == .search ? 1 : 0)
+                .allowsHitTesting(selectedTab == .search)
+
+            TrashScreen(isTab: true)
+                .opacity(selectedTab == .trash ? 1 : 0)
+                .allowsHitTesting(selectedTab == .trash)
+
+            SettingsScreen(isTab: true)
+                .opacity(selectedTab == .settings ? 1 : 0)
+                .allowsHitTesting(selectedTab == .settings)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .safeAreaInset(edge: .bottom) {
+            if !isDetailOpen {
+                bottomBar
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        // `.automatic` can present as a top bar or an adaptable sidebar on
-        // iPad rather than the classic bottom bar — which is also why it can
-        // read as text-only, since those presentations don't draw the same
-        // icon+label bottom-bar look every `Tab` here is already built for.
-        // Forcing `.tabBarOnly` pins it to the floating Liquid Glass bottom
-        // bar the user actually asked for.
-        .tabViewStyle(.tabBarOnly)
-        // The `create` tab is an ACTION, not a screen: selecting it never
-        // actually shows anything — it bounces straight back to whichever tab
-        // was showing and opens the creation sheet instead. Doing this in
-        // `didSet`-style via `onChange` (rather than a button living outside
-        // the TabView) is what keeps `+` in its natural centred position among
-        // the other four, matching what the user asked for.
-        .onChange(of: selectedTab) { old, new in
-            guard new == .create else { return }
-            selectedTab = old
-            showCreateSheet = true
-        }
+        .animation(.spring(duration: 0.28), value: isDetailOpen)
         .sheet(isPresented: $showCreateSheet) {
             AddContentSheet { choice in
                 addChoice = choice
                 showCreateSheet = false
             }
         }
+    }
+
+    private var bottomBar: some View {
+        GlassEffectContainer {
+            HStack(spacing: 2) {
+                tabButton(.shelves, title: "Shelves", systemImage: "books.vertical")
+                tabButton(.search, title: "Search", systemImage: "magnifyingglass")
+                createButton
+                tabButton(.trash, title: "Trash", systemImage: "trash")
+                tabButton(.settings, title: "Settings", systemImage: "gearshape")
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 8)
+            .dsGlass(in: Capsule(), interactive: true)
+        }
+        .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
+        .padding(.horizontal, 40)
+        .padding(.bottom, 8)
+    }
+
+    private func tabButton(_ tab: LibraryTab, title: String, systemImage: String) -> some View {
+        let isSelected = selectedTab == tab
+        return Button {
+            selectedTab = tab
+        } label: {
+            VStack(spacing: 3) {
+                Image(systemName: systemImage)
+                    .font(.dsSystem(size: 20, weight: isSelected ? .semibold : .regular))
+                Text(title)
+                    .font(.dsCaption2.weight(isSelected ? .semibold : .regular))
+            }
+            .foregroundStyle(isSelected ? theme.accent.color : theme.inkSecondary.color)
+            .frame(minWidth: 60, minHeight: 48)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private var createButton: some View {
+        Button {
+            showCreateSheet = true
+        } label: {
+            Image(systemName: "plus.circle.fill")
+                .font(.dsSystem(size: 30))
+                .foregroundStyle(theme.accent.color)
+                .frame(minWidth: 60, minHeight: 48)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("New")
     }
 }
 
@@ -96,12 +166,16 @@ struct LibrarySearchScreen<Destination: View>: View {
     @Query(sort: \Notebook.updatedAt, order: .reverse) private var notebooks: [Notebook]
 
     private let destination: (Notebook, UUID?) -> Destination
+    /// Reported up so the shell can hide its own bottom bar while a notebook
+    /// pushed from a search hit is on screen.
+    @Binding var isDetailOpen: Bool
 
     @State private var opened: LibraryOpenRequest?
     @State private var searchText = ""
     @State private var search = LibrarySearchModel()
 
-    init(@ViewBuilder destination: @escaping (Notebook, UUID?) -> Destination) {
+    init(isDetailOpen: Binding<Bool>, @ViewBuilder destination: @escaping (Notebook, UUID?) -> Destination) {
+        self._isDetailOpen = isDetailOpen
         self.destination = destination
     }
 
@@ -145,13 +219,10 @@ struct LibrarySearchScreen<Destination: View>: View {
                 }
             }
             .navigationDestination(item: $opened) { request in
-                // A destination pushed inside a tab's own NavigationStack does
-                // NOT hide the tab bar by default — without this, the bar sat
-                // behind the editor/viewer for as long as it was open.
                 destination(request.notebook, request.pageID)
-                    .toolbar(.hidden, for: .tabBar)
             }
         }
+        .onChange(of: opened) { _, new in isDetailOpen = new != nil }
     }
 }
 

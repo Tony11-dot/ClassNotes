@@ -100,6 +100,37 @@ struct ShapeSnapperTests {
         }
     }
 
+    @Test("Live snapping smooths raw touch jitter before classifying, matching the release path")
+    func liveSnapSmoothsJitterBeforeClassifying() {
+        // Real touch samples carry tremor a fitted PencilKit spline doesn't —
+        // high frequency, alternating sign, exactly what a moving average
+        // cancels out. Left raw, this reads as too wobbly to be a line; the
+        // live dwell watcher used to classify exactly this raw path (see
+        // `CanvasSnapPreview.previewSnap`), which is why a hold only ever
+        // seemed to resolve once the pencil lifted and the release path
+        // classified PencilKit's already-smoothed spline instead.
+        var raw: [CGPoint] = (0..<20).map { index in
+            let t = CGFloat(index) / 19
+            let x = 100 + t * 240
+            let y: CGFloat = 200 + (index % 2 == 0 ? 45 : -45)
+            return CGPoint(x: x, y: y)
+        }
+        raw[0] = CGPoint(x: 100, y: 200)
+        raw[raw.count - 1] = CGPoint(x: 340, y: 200)
+
+        #expect(
+            ShapeSnapper.liveSnap(raw)?.shape != .line,
+            "raw jitter this size shouldn't already read as straight"
+        )
+
+        let smoothed = StrokeSmoothing.smooth(raw, window: 7)
+        guard let snap = ShapeSnapper.liveSnap(smoothed) else {
+            Issue.record("smoothed jitter should classify as a line")
+            return
+        }
+        #expect(snap.shape == .line)
+    }
+
     @Test("A short, fast line has too few control points to fit — and is snapped anyway")
     func shortLineIsNotRejectedForPointCount() {
         // Four control points is all a quick flick leaves behind. The old
