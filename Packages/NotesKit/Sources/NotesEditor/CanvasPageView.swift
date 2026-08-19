@@ -200,11 +200,27 @@ final class PageCanvasView: PKCanvasView {
             // FINGER?" — keeps that same ambiguity resolving to the canvas, so a
             // mistake costs at worst a missed finger-scroll, never a missed
             // pencil stroke.
-            let isFinger = event?.allTouches?.contains { $0.type == .direct } ?? false
+            //
+            // The check must match the touch AT THIS POINT, not "is any touch on
+            // the event a finger" — a palm resting on the glass while the Pencil
+            // draws (an entirely normal grip) is itself a `.direct` touch
+            // elsewhere on screen, and matching against `allTouches` indiscriminately
+            // made that resting palm mark the PENCIL's own hit test as a finger
+            // too, routing the pencil's touch away from the canvas.
+            let isFinger = event?.allTouches?.contains { touch in
+                touch.type == .direct && distanceSquared(touch.location(in: self), point) < 4
+            } ?? false
             guard isFinger else { return super.hitTest(point, with: event) }
             return nil
         }
         return super.hitTest(point, with: event)
+    }
+
+    /// Squared distance is enough for a "is this touch near that point"
+    /// threshold check — avoids a `sqrt` on every touch in `hitTest`.
+    private func distanceSquared(_ a: CGPoint, _ b: CGPoint) -> CGFloat {
+        let dx = a.x - b.x, dy = a.y - b.y
+        return dx * dx + dy * dy
     }
 
     /// The page's OWN undo stack — the one the rail's buttons drive.
@@ -610,9 +626,16 @@ struct CanvasPageView: UIViewRepresentable {
                 for index in processedStrokeCount..<count {
                     let stroke = drawing.strokes[index]
                     // Fallback for a hold the live watcher missed. Same result,
-                    // just a beat later.
+                    // just a beat later. `snapTolerance` is screen-space (same
+                    // convention as the live path, see `logicalSnapTolerance` in
+                    // CanvasSnapPreview.swift) so it's converted by zoom here too
+                    // — left raw, the fitter's effective tolerance drifted with
+                    // zoom and this fallback and the live path could disagree.
+                    let holdRadius = ShapeSnapper.holdRadius(
+                        forTolerance: CGFloat(toolState.snapTolerance), zoomScale: canvas.zoomScale
+                    )
                     if toolState.snapShapes,
-                       let snapped = ShapeSnapper.snapped(stroke, holdRadius: CGFloat(toolState.snapTolerance)) {
+                       let snapped = ShapeSnapper.snapped(stroke, holdRadius: holdRadius) {
                         drawing.strokes[index] = snapped
                         changed = true
                         snappedLate = true
@@ -683,7 +706,10 @@ struct CanvasPageView: UIViewRepresentable {
         /// drawn along it.
         private func ruled(_ stroke: PKStroke) -> PKStroke? {
             guard let guide = rulerGuide,
-                  let straight = guide.straightened(ShapeSnapper.densePoints(stroke))
+                  let straight = guide.straightened(
+                      ShapeSnapper.densePoints(stroke),
+                      inset: CGFloat(toolState.penSettings.effectiveWidth) / 2
+                  )
             else { return nil }
             return ShapeSnapper.stroke(from: straight, like: stroke)
         }

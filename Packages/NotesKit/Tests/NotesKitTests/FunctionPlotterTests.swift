@@ -317,3 +317,88 @@ struct TransparentBackgroundTests {
         #expect(unset.backgroundIsTransparent == nil)
     }
 }
+
+@Suite("Axis count and per-axis settings")
+struct AxisSettingsTests {
+    @Test("axisCount maps 1 <-> .axis, 3 <-> .threeD, and 2 for every explicit/polar/parametric mode")
+    func axisCountDerivesFromMode() {
+        #expect(PlotMode.axis.axisCount == 1)
+        #expect(PlotMode.threeD.axisCount == 3)
+        #expect(PlotMode.cartesianY.axisCount == 2)
+        #expect(PlotMode.cartesianX.axisCount == 2)
+        #expect(PlotMode.polar.axisCount == 2)
+        #expect(PlotMode.parametric.axisCount == 2)
+    }
+
+    @Test("A 1-axis element needs no expression fields")
+    func axisModeNeedsNoExpressions() {
+        #expect(!PlotMode.axis.needsSecondaryExpression)
+        #expect(!PlotMode.axis.needsTertiaryExpression)
+    }
+
+    @Test("An element round-trips its new axis unit/tick-format/tick-interval fields")
+    func axisSettingsRoundTrip() throws {
+        let element = PageElement(
+            kind: .functionPlot, x: 0, y: 0, width: 200, height: 200,
+            functionExpression: "sin(x)", functionMode: PlotMode.cartesianY.rawValue,
+            axisXLabel: "Angle", axisYLabel: "Amplitude",
+            axisXUnit: "rad", axisYUnit: "m",
+            axisXTickFormat: AxisTickFormat.radians.rawValue, axisYTickFormat: AxisTickFormat.decimal.rawValue,
+            axisXTickInterval: .pi / 2, axisYTickInterval: 1
+        )
+        let decoded = try JSONDecoder().decode(PageElement.self, from: JSONEncoder().encode(element))
+        #expect(decoded.axisXUnit == "rad")
+        #expect(decoded.axisYUnit == "m")
+        #expect(decoded.axisXTickFormat == AxisTickFormat.radians.rawValue)
+        #expect(decoded.axisXTickInterval == .pi / 2)
+        #expect(decoded.axisXDisplay.displayLabel == "Angle (rad)")
+        #expect(decoded.axisXDisplay.tickFormat == .radians)
+    }
+
+    @Test("An older manifest with none of the new axis fields still decodes to defaults")
+    func missingAxisFieldsDecodeToDefaults() throws {
+        let json = """
+        {
+          "id": "\(UUID().uuidString)", "kind": "functionPlot",
+          "x": 0, "y": 0, "width": 100, "height": 100, "rotation": 0,
+          "isBold": false, "points": [], "isHidden": false
+        }
+        """
+        let element = try JSONDecoder().decode(PageElement.self, from: Data(json.utf8))
+        #expect(element.axisXUnit == nil)
+        #expect(element.axisXDisplay.tickFormat == .decimal)
+        #expect(element.axisXDisplay.displayLabel == "X")
+    }
+
+    @Test("A unit is only shown when present and non-empty")
+    func displayLabelOmitsBlankUnit() {
+        #expect(AxisDisplay(label: "X", unit: nil).displayLabel == "X")
+        #expect(AxisDisplay(label: "X", unit: "").displayLabel == "X")
+        #expect(AxisDisplay(label: "X", unit: "m/s").displayLabel == "X (m/s)")
+    }
+}
+
+@Suite("Axis tick formatting")
+struct AxisTickFormatTests {
+    @Test("Decimal formats plain numbers, trimming a trailing .0")
+    func decimalFormatting() {
+        #expect(AxisTickFormat.decimal.label(for: 5) == "5")
+        #expect(AxisTickFormat.decimal.label(for: -5) == "-5")
+        #expect(AxisTickFormat.decimal.label(for: 0) == "0")
+    }
+
+    @Test("Radians formats common angles as clean pi-fractions")
+    func radiansFormatting() {
+        #expect(AxisTickFormat.radians.label(for: .pi) == "π")
+        #expect(AxisTickFormat.radians.label(for: .pi / 2) == "π/2")
+        #expect(AxisTickFormat.radians.label(for: -.pi / 2) == "-π/2")
+        #expect(AxisTickFormat.radians.label(for: 0) == "0")
+    }
+
+    @Test("Degrees converts the same underlying radian value for display")
+    func degreesFormatting() {
+        #expect(AxisTickFormat.degrees.label(for: .pi) == "180°")
+        #expect(AxisTickFormat.degrees.label(for: .pi / 2) == "90°")
+        #expect(AxisTickFormat.degrees.label(for: 0) == "0°")
+    }
+}

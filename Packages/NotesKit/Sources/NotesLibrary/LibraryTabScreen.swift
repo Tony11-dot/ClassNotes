@@ -60,6 +60,13 @@ public struct LibraryTabScreen<Destination: View>: View {
                 SettingsScreen(isTab: true)
             }
         }
+        // `.automatic` can present as a top bar or an adaptable sidebar on
+        // iPad rather than the classic bottom bar — which is also why it can
+        // read as text-only, since those presentations don't draw the same
+        // icon+label bottom-bar look every `Tab` here is already built for.
+        // Forcing `.tabBarOnly` pins it to the floating Liquid Glass bottom
+        // bar the user actually asked for.
+        .tabViewStyle(.tabBarOnly)
         // The `create` tab is an ACTION, not a screen: selecting it never
         // actually shows anything — it bounces straight back to whichever tab
         // was showing and opens the creation sheet instead. Doing this in
@@ -138,7 +145,11 @@ struct LibrarySearchScreen<Destination: View>: View {
                 }
             }
             .navigationDestination(item: $opened) { request in
+                // A destination pushed inside a tab's own NavigationStack does
+                // NOT hide the tab bar by default — without this, the bar sat
+                // behind the editor/viewer for as long as it was open.
                 destination(request.notebook, request.pageID)
+                    .toolbar(.hidden, for: .tabBar)
             }
         }
     }

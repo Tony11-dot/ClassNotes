@@ -89,10 +89,14 @@ public struct LibraryGridScreen<Destination: View>: View {
             .navigationTitle("Library")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                BrandTitle(height: 64)
+                BrandTitle(height: 88)
             }
             .navigationDestination(item: $opened) { request in
+                // A destination pushed inside this tab's own NavigationStack
+                // does NOT hide the tab bar by default — without this, the bar
+                // sat behind the editor/viewer for as long as it was open.
                 destination(request.notebook, request.pageID)
+                    .toolbar(.hidden, for: .tabBar)
             }
             .overlay(alignment: .bottom) {
                 if !selection.isActive { floatingToolbar }

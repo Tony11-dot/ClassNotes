@@ -377,6 +377,18 @@ struct ShapeSnapperTests {
         }
         #expect(ShapeSnapper.fit(squiggle) == nil)
     }
+
+    @Test("Screen-space tolerance converts to logical space by dividing out zoom")
+    func holdRadiusConvertsByZoom() {
+        #expect(ShapeSnapper.holdRadius(forTolerance: 22, zoomScale: 1) == 22)
+        #expect(ShapeSnapper.holdRadius(forTolerance: 22, zoomScale: 2) == 11)
+        #expect(abs(ShapeSnapper.holdRadius(forTolerance: 22, zoomScale: 0.5) - 44) < 0.001)
+    }
+
+    @Test("A zero or negative zoom never divides by zero")
+    func holdRadiusGuardsDegenerateZoom() {
+        #expect(ShapeSnapper.holdRadius(forTolerance: 22, zoomScale: 0).isFinite)
+    }
 }
 
 /// The beautification pass end to end — everything except Vision, which is

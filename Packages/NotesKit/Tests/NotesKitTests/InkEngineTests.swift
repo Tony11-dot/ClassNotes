@@ -752,4 +752,32 @@ struct RulerGuideTests {
         let dot = [CGPoint(x: 300, y: 424), CGPoint(x: 302, y: 425)]
         #expect(guide.straightened(dot) == nil)
     }
+
+    @Test("With no inset, nothing changes (regression guard)")
+    func zeroInsetMatchesUninset() throws {
+        let withDefault = try #require(guide.straightened(alongLowerEdge()))
+        let withZero = try #require(guide.straightened(alongLowerEdge(), inset: 0))
+        #expect(withDefault == withZero)
+    }
+
+    @Test("Inset nudges the ruled line AWAY from the ruler, by exactly the inset")
+    func insetPushesOutwardOnTheLowerEdge() throws {
+        // The lower edge sits at y = 422; its outward direction is further
+        // DOWN the page (larger y), away from the ruler's body above it.
+        let ruled = try #require(guide.straightened(alongLowerEdge(), inset: 5))
+        #expect(abs(ruled[0].y - 427) < 0.001)
+        #expect(abs(ruled[1].y - 427) < 0.001)
+    }
+
+    @Test("Inset pushes the OTHER way on the upper edge")
+    func insetPushesOutwardOnTheUpperEdge() throws {
+        let above = (0...30).map { index -> CGPoint in
+            let t = CGFloat(index) / 30
+            return CGPoint(x: 150 + t * 300, y: 372 + sin(t * .pi * 2) * 5)
+        }
+        // The upper edge sits at y = 378; outward is further UP the page
+        // (smaller y).
+        let ruled = try #require(guide.straightened(above, inset: 5))
+        #expect(abs(ruled[0].y - 373) < 0.001)
+    }
 }

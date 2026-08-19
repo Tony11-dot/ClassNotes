@@ -95,12 +95,29 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
     /// For functionPlot: half-width of the view window in math units (nil =
     /// `FunctionPlotSettings.window`).
     public var functionWindow: Double?
-    /// For functionPlot in 3D mode: each axis's own label — a name and, if the
-    /// user wants one, its units, typed together as one string (e.g.
-    /// "Velocity (m/s)"). `nil` = the plain letter ("X"/"Y"/"Z").
+    /// For functionPlot: each axis's own name. `nil` = the plain letter
+    /// ("X"/"Y"/"Z"). Used whenever that axis is drawn — every 2-axis mode as
+    /// well as 3D — not only in 3D as the field name might suggest; kept from
+    /// when only 3D had axis labels at all.
     public var axisXLabel: String?
     public var axisYLabel: String?
     public var axisZLabel: String?
+    /// For functionPlot: each axis's optional unit, shown as "Label (unit)".
+    /// `nil`/empty = no unit shown.
+    public var axisXUnit: String?
+    public var axisYUnit: String?
+    public var axisZUnit: String?
+    /// For functionPlot: `AxisTickFormat.rawValue` per axis — purely how tick
+    /// numbers are displayed (`nil` = `.decimal`); the underlying math never
+    /// changes.
+    public var axisXTickFormat: String?
+    public var axisYTickFormat: String?
+    public var axisZTickFormat: String?
+    /// For functionPlot: tick spacing per axis, in the axis's own math units
+    /// (`nil` = auto, `window / 5`).
+    public var axisXTickInterval: Double?
+    public var axisYTickInterval: Double?
+    public var axisZTickInterval: Double?
     /// For codeBlock/functionPlot: draw with no background box/frame at all —
     /// just the bare syntax text, or the bare axes and curve, directly on the
     /// page. `nil` = follow the tool's own setting.
@@ -162,6 +179,15 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
         axisXLabel: String? = nil,
         axisYLabel: String? = nil,
         axisZLabel: String? = nil,
+        axisXUnit: String? = nil,
+        axisYUnit: String? = nil,
+        axisZUnit: String? = nil,
+        axisXTickFormat: String? = nil,
+        axisYTickFormat: String? = nil,
+        axisZTickFormat: String? = nil,
+        axisXTickInterval: Double? = nil,
+        axisYTickInterval: Double? = nil,
+        axisZTickInterval: Double? = nil,
         backgroundIsTransparent: Bool? = nil,
         fontSize: Double? = nil,
         lineSpacing: Double? = nil,
@@ -197,6 +223,15 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
         self.axisXLabel = axisXLabel
         self.axisYLabel = axisYLabel
         self.axisZLabel = axisZLabel
+        self.axisXUnit = axisXUnit
+        self.axisYUnit = axisYUnit
+        self.axisZUnit = axisZUnit
+        self.axisXTickFormat = axisXTickFormat
+        self.axisYTickFormat = axisYTickFormat
+        self.axisZTickFormat = axisZTickFormat
+        self.axisXTickInterval = axisXTickInterval
+        self.axisYTickInterval = axisYTickInterval
+        self.axisZTickInterval = axisZTickInterval
         self.backgroundIsTransparent = backgroundIsTransparent
         self.fontSize = fontSize
         self.lineSpacing = lineSpacing
@@ -225,11 +260,36 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
         functionMode.flatMap(PlotMode.init(rawValue:)) ?? .cartesianY
     }
 
-    /// For functionPlot in 3D mode: each axis's label, falling back to the
-    /// plain letter when the user hasn't named it.
+    /// For functionPlot: each axis's label, falling back to the plain letter
+    /// when the user hasn't named it.
     public var resolvedAxisXLabel: String { axisXLabel?.isEmpty == false ? axisXLabel! : "X" }
     public var resolvedAxisYLabel: String { axisYLabel?.isEmpty == false ? axisYLabel! : "Y" }
     public var resolvedAxisZLabel: String { axisZLabel?.isEmpty == false ? axisZLabel! : "Z" }
+
+    private func tickFormat(_ raw: String?) -> AxisTickFormat {
+        raw.flatMap(AxisTickFormat.init(rawValue:)) ?? .decimal
+    }
+
+    /// Everything `FunctionPlotView` needs to draw each axis, bundled from the
+    /// element's flat storage fields.
+    public var axisXDisplay: AxisDisplay {
+        AxisDisplay(
+            label: resolvedAxisXLabel, unit: axisXUnit,
+            tickFormat: tickFormat(axisXTickFormat), tickInterval: axisXTickInterval
+        )
+    }
+    public var axisYDisplay: AxisDisplay {
+        AxisDisplay(
+            label: resolvedAxisYLabel, unit: axisYUnit,
+            tickFormat: tickFormat(axisYTickFormat), tickInterval: axisYTickInterval
+        )
+    }
+    public var axisZDisplay: AxisDisplay {
+        AxisDisplay(
+            label: resolvedAxisZLabel, unit: axisZUnit,
+            tickFormat: tickFormat(axisZTickFormat), tickInterval: axisZTickInterval
+        )
+    }
 
     /// The line-height multiple to draw the run at. Single-spaced unless the run
     /// was laid out otherwise.
@@ -249,6 +309,9 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
         case functionExpression, functionSecondaryExpression, functionTertiaryExpression
         case functionMode, functionWindow
         case axisXLabel, axisYLabel, axisZLabel, backgroundIsTransparent
+        case axisXUnit, axisYUnit, axisZUnit
+        case axisXTickFormat, axisYTickFormat, axisZTickFormat
+        case axisXTickInterval, axisYTickInterval, axisZTickInterval
         case tapeShape, tapePattern, colorHex, points, strokeWidth, isHidden
     }
 
@@ -279,6 +342,15 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
         axisXLabel = try c.decodeIfPresent(String.self, forKey: .axisXLabel)
         axisYLabel = try c.decodeIfPresent(String.self, forKey: .axisYLabel)
         axisZLabel = try c.decodeIfPresent(String.self, forKey: .axisZLabel)
+        axisXUnit = try c.decodeIfPresent(String.self, forKey: .axisXUnit)
+        axisYUnit = try c.decodeIfPresent(String.self, forKey: .axisYUnit)
+        axisZUnit = try c.decodeIfPresent(String.self, forKey: .axisZUnit)
+        axisXTickFormat = try c.decodeIfPresent(String.self, forKey: .axisXTickFormat)
+        axisYTickFormat = try c.decodeIfPresent(String.self, forKey: .axisYTickFormat)
+        axisZTickFormat = try c.decodeIfPresent(String.self, forKey: .axisZTickFormat)
+        axisXTickInterval = try c.decodeIfPresent(Double.self, forKey: .axisXTickInterval)
+        axisYTickInterval = try c.decodeIfPresent(Double.self, forKey: .axisYTickInterval)
+        axisZTickInterval = try c.decodeIfPresent(Double.self, forKey: .axisZTickInterval)
         backgroundIsTransparent = try c.decodeIfPresent(Bool.self, forKey: .backgroundIsTransparent)
         fontSize = try c.decodeIfPresent(Double.self, forKey: .fontSize)
         lineSpacing = try c.decodeIfPresent(Double.self, forKey: .lineSpacing)

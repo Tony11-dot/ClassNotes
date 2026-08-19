@@ -19,6 +19,10 @@ public enum PlotMode: String, Sendable, CaseIterable, Identifiable, Codable {
     /// parametric curve/vector traced through it. No rotation gesture; moving
     /// the block itself covers "adjust it".
     case threeD
+    /// A single labeled, ticked number line — no curve, just an axis. The "1
+    /// axis" choice for someone who wants a scale/reference line rather than a
+    /// plotted function.
+    case axis
 
     public var id: String { rawValue }
 
@@ -29,6 +33,7 @@ public enum PlotMode: String, Sendable, CaseIterable, Identifiable, Codable {
         case .polar: "r = f(θ)"
         case .parametric: "x(t), y(t)"
         case .threeD: "3D (x, y, z)"
+        case .axis: "Number line"
         }
     }
 
@@ -39,6 +44,7 @@ public enum PlotMode: String, Sendable, CaseIterable, Identifiable, Codable {
         case .cartesianX: "y"
         case .polar: "theta"
         case .parametric, .threeD: "t"
+        case .axis: "x"
         }
     }
 
@@ -57,7 +63,117 @@ public enum PlotMode: String, Sendable, CaseIterable, Identifiable, Codable {
         case .polar: "r = sin(3*theta)"
         case .parametric: "x = cos(t), y = sin(t)"
         case .threeD: "x = cos(t), y = sin(t), z = t/3"
+        case .axis: ""
         }
+    }
+
+    /// How many axes this mode draws — the primary control the editor's "Axes"
+    /// picker sets; the curve-type sub-picker (which of the 2-axis modes, or
+    /// 3D) only decides how those axes are USED. 1 and 3 each map to exactly
+    /// one mode; 2 covers the four explicit/polar/parametric modes.
+    public var axisCount: Int {
+        switch self {
+        case .axis: 1
+        case .threeD: 3
+        case .cartesianY, .cartesianX, .polar, .parametric: 2
+        }
+    }
+}
+
+/// How a tick's numeric value is FORMATTED for display — purely presentational.
+/// Trig functions always evaluate in radians regardless of this choice; an
+/// axis using radians/degrees formatting is just labeling its own already-radian
+/// coordinate values as `π/2`-style fractions or as `90°`, not changing any math.
+public enum AxisTickFormat: String, Sendable, Codable, CaseIterable, Identifiable {
+    case decimal, radians, degrees
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .decimal: "123"
+        case .radians: "rad"
+        case .degrees: "deg"
+        }
+    }
+
+    /// Preset spacings shown in the editor, adapted to the format — plain
+    /// numbers for decimal, common π-fractions (the axis's own radian units)
+    /// for radians, and their degree-labeled equivalents (still radians
+    /// underneath, so the math never changes) for degrees.
+    public var intervalPresets: [Double] {
+        switch self {
+        case .decimal: [1, 2, 5, 10, 15, 30]
+        case .radians: [.pi / 6, .pi / 4, .pi / 3, .pi / 2, .pi]
+        case .degrees: [15, 30, 45, 90].map { $0 * Double.pi / 180 }
+        }
+    }
+
+    public func label(for value: Double) -> String {
+        switch self {
+        case .decimal: Self.decimalLabel(value)
+        case .degrees: Self.decimalLabel(value * 180 / .pi) + "°"
+        case .radians: Self.piFraction(of: value)
+        }
+    }
+
+    private static func decimalLabel(_ value: Double) -> String {
+        if abs(value) < 0.0001 { return "0" }
+        if abs(value - value.rounded()) < 0.001 { return String(Int(value.rounded())) }
+        return String(format: "%.2f", value)
+    }
+
+    private static func piFraction(of value: Double) -> String {
+        if abs(value) < 0.0001 { return "0" }
+        let ratio = value / .pi
+        for denominator in [1, 2, 3, 4, 6, 8, 12] {
+            let numerator = (ratio * Double(denominator)).rounded()
+            if abs(ratio * Double(denominator) - numerator) < 0.01 {
+                return fractionString(numerator: Int(numerator), denominator: denominator)
+            }
+        }
+        return String(format: "%.2fπ", ratio)
+    }
+
+    private static func fractionString(numerator: Int, denominator: Int) -> String {
+        guard numerator != 0 else { return "0" }
+        let sign = numerator < 0 ? "-" : ""
+        let n = abs(numerator)
+        let g = gcd(n, denominator)
+        let simplifiedN = n / g, simplifiedD = denominator / g
+        let piPart = simplifiedN == 1 ? "π" : "\(simplifiedN)π"
+        return simplifiedD == 1 ? "\(sign)\(piPart)" : "\(sign)\(piPart)/\(simplifiedD)"
+    }
+
+    private static func gcd(_ a: Int, _ b: Int) -> Int { b == 0 ? a : gcd(b, a % b) }
+}
+
+/// Everything a plot's axis needs to draw itself: name, optional unit, and how
+/// its ticks are spaced/formatted. Bundling these keeps `FunctionPlotView`'s
+/// init from growing a field per axis per setting.
+public struct AxisDisplay: Sendable, Equatable {
+    public var label: String
+    public var unit: String?
+    public var tickFormat: AxisTickFormat
+    /// `nil` = auto-spaced (`window / 5`).
+    public var tickInterval: Double?
+
+    public init(label: String, unit: String? = nil, tickFormat: AxisTickFormat = .decimal, tickInterval: Double? = nil) {
+        self.label = label
+        self.unit = unit
+        self.tickFormat = tickFormat
+        self.tickInterval = tickInterval
+    }
+
+    /// "Velocity (m/s)" when there's a unit, otherwise just the name.
+    public var displayLabel: String {
+        guard let unit, !unit.isEmpty else { return label }
+        return "\(label) (\(unit))"
+    }
+
+    public func interval(window: Double) -> Double {
+        let value = tickInterval ?? max(window / 5, 0.0001)
+        return value > 0.0001 ? value : max(window / 5, 0.0001)
     }
 }
 

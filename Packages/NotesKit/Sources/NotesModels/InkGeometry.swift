@@ -160,16 +160,21 @@ public struct RulerGuide: Sendable, Equatable {
     /// Shorter than this and there is no direction to speak of.
     public static let minimumLength: CGFloat = 12
 
-    /// The two long edges of the ruler, as centre-line offsets along its normal.
-    public var edges: [(start: CGPoint, end: CGPoint)] {
+    /// The two long edges of the ruler, as centre-line offsets along its normal,
+    /// each carrying the unit vector that points AWAY from the ruler's body —
+    /// the direction ink drawn against that edge should be nudged so it lands
+    /// flush against the edge instead of straddling it (see `straightened(_:inset:)`).
+    public var edges: [(start: CGPoint, end: CGPoint, outward: CGVector)] {
         let dx = end.x - start.x, dy = end.y - start.y
         let length = hypot(dx, dy)
         guard length > 0.0001 else { return [] }
         let normal = CGVector(dx: -dy / length, dy: dx / length)
         return [halfWidth, -halfWidth].map { offset in
-            (
+            let sign: CGFloat = offset >= 0 ? 1 : -1
+            return (
                 CGPoint(x: start.x + normal.dx * offset, y: start.y + normal.dy * offset),
-                CGPoint(x: end.x + normal.dx * offset, y: end.y + normal.dy * offset)
+                CGPoint(x: end.x + normal.dx * offset, y: end.y + normal.dy * offset),
+                CGVector(dx: normal.dx * sign, dy: normal.dy * sign)
             )
         }
     }
@@ -180,11 +185,17 @@ public struct RulerGuide: Sendable, Equatable {
     /// The result is the two ends of the straightened run: every sample is
     /// projected onto the edge's infinite line, and the extremes of those
     /// projections are the line the user actually meant to draw.
-    public func straightened(_ points: [CGPoint]) -> [CGPoint]? {
+    ///
+    /// `inset` nudges the returned line outward from the ruler's body by that
+    /// many points (pass half the stroke's width) so the INKED line — which
+    /// PencilKit centers on these points — lands with its edge nearest the
+    /// ruler exactly flush against the ruler, rather than centred on the edge
+    /// with half its width hidden underneath the ruler and half showing.
+    public func straightened(_ points: [CGPoint], inset: CGFloat = 0) -> [CGPoint]? {
         guard points.count >= 2 else { return nil }
-        var best: (edge: (start: CGPoint, end: CGPoint), distance: CGFloat)?
+        var best: (edge: (start: CGPoint, end: CGPoint, outward: CGVector), distance: CGFloat)?
         for edge in edges {
-            let mean = meanDistance(points, from: edge)
+            let mean = meanDistance(points, from: (edge.start, edge.end))
             if best == nil || mean < best!.distance { best = (edge, mean) }
         }
         guard let chosen = best, chosen.distance <= Self.snapBand else { return nil }
@@ -216,8 +227,8 @@ public struct RulerGuide: Sendable, Equatable {
 
         func point(at along: CGFloat) -> CGPoint {
             CGPoint(
-                x: chosen.edge.start.x + unit.dx * along,
-                y: chosen.edge.start.y + unit.dy * along
+                x: chosen.edge.start.x + unit.dx * along + chosen.edge.outward.dx * inset,
+                y: chosen.edge.start.y + unit.dy * along + chosen.edge.outward.dy * inset
             )
         }
         // Drawn right-to-left? Keep the direction the hand went, so the stroke's

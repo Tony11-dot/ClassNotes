@@ -106,8 +106,8 @@ struct RulerOverlay: View {
                 .position(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
                 .contentShape(Rectangle())
                 .gesture(
-                    DragGesture()
-                        .onChanged { value in
+                    FingerDragGesture(
+                        onChanged: { value in
                             let base = bodyDragBase ?? (start: a, end: b)
                             if bodyDragBase == nil { bodyDragBase = base }
                             // Clamp the TRANSLATION, not each endpoint separately —
@@ -123,8 +123,9 @@ struct RulerOverlay: View {
                             let dy = min(max(value.translation.height, minDY), maxDY)
                             start = CGPoint(x: base.start.x + dx, y: base.start.y + dy)
                             end = CGPoint(x: base.end.x + dx, y: base.end.y + dy)
-                        }
-                        .onEnded { _ in bodyDragBase = nil }
+                        },
+                        onEnded: { _ in bodyDragBase = nil }
+                    )
                 )
         }
     }
@@ -171,16 +172,17 @@ struct RulerOverlay: View {
             .frame(width: 30, height: 30)
             .position(point)
             .gesture(
-                DragGesture()
-                    .onChanged { value in
+                FingerDragGesture(
+                    onChanged: { value in
                         let settled = ShapeSnapper.detented(value.location, from: anchor)
                         if settled.isDetent, !wasOnDetent.wrappedValue {
                             UIImpactFeedbackGenerator(style: .soft).impactOccurred()
                         }
                         wasOnDetent.wrappedValue = settled.isDetent
                         onMove(settled.point)
-                    }
-                    .onEnded { _ in wasOnDetent.wrappedValue = false }
+                    },
+                    onEnded: { _ in wasOnDetent.wrappedValue = false }
+                )
             )
             .accessibilityLabel("Ruler handle")
     }

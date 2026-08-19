@@ -498,12 +498,24 @@ struct PageElementsLayer: View {
                         updated.functionExpression = draft.expression
                         updated.functionSecondaryExpression = draft.secondary
                         updated.functionTertiaryExpression = draft.tertiary
+                        updated.functionMode = draft.mode.rawValue
                         updated.functionWindow = draft.window
                         updated.axisXLabel = draft.axisXLabel
                         updated.axisYLabel = draft.axisYLabel
                         updated.axisZLabel = draft.axisZLabel
+                        updated.axisXUnit = draft.axisXUnit
+                        updated.axisYUnit = draft.axisYUnit
+                        updated.axisZUnit = draft.axisZUnit
+                        updated.axisXTickFormat = draft.axisXTickFormat?.rawValue
+                        updated.axisYTickFormat = draft.axisYTickFormat?.rawValue
+                        updated.axisZTickFormat = draft.axisZTickFormat?.rawValue
+                        updated.axisXTickInterval = draft.axisXTickInterval
+                        updated.axisYTickInterval = draft.axisYTickInterval
+                        updated.axisZTickInterval = draft.axisZTickInterval
                         Task {
-                            let blank = [draft.expression, draft.secondary, draft.tertiary]
+                            // A 1-axis number line has no expression at all by
+                            // design — blank there is normal, not "delete me".
+                            let blank = draft.mode != .axis && [draft.expression, draft.secondary, draft.tertiary]
                                 .allSatisfy { ($0 ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                             if blank {
                                 await model.deleteElement(element.id, on: pageID)
@@ -523,8 +535,7 @@ struct PageElementsLayer: View {
                     mode: element.resolvedPlotMode,
                     window: element.functionWindow ?? toolState.functionPlotWindow,
                     lineColor: lineColor.color, axisColor: lineColor.color,
-                    axisXLabel: element.resolvedAxisXLabel, axisYLabel: element.resolvedAxisYLabel,
-                    axisZLabel: element.resolvedAxisZLabel
+                    axisX: element.axisXDisplay, axisY: element.axisYDisplay, axisZ: element.axisZDisplay
                 )
                 .padding(6 * scale)
             }
@@ -750,8 +761,10 @@ private struct CodeBlockEditor: View {
 
 /// Everything a function-plot commit needs, bundled so `onCommit` doesn't grow
 /// an ever-longer tuple as the block gains fields (3D added a third
-/// expression and three axis labels).
+/// expression and three axis labels; the axis overhaul added mode itself,
+/// since axis count/curve type are now editable after placement too).
 struct FunctionPlotDraft {
+    var mode: PlotMode
     var expression: String
     var secondary: String?
     var tertiary: String?
@@ -759,14 +772,43 @@ struct FunctionPlotDraft {
     var axisXLabel: String?
     var axisYLabel: String?
     var axisZLabel: String?
+    var axisXUnit: String?
+    var axisYUnit: String?
+    var axisZUnit: String?
+    var axisXTickFormat: AxisTickFormat?
+    var axisYTickFormat: AxisTickFormat?
+    var axisZTickFormat: AxisTickFormat?
+    var axisXTickInterval: Double?
+    var axisYTickInterval: Double?
+    var axisZTickInterval: Double?
+}
+
+/// One axis's editable settings, bundled so the editor doesn't carry four
+/// separate `@State` vars per axis times three axes.
+private struct AxisFieldState {
+    var name = ""
+    var unit = ""
+    var tickFormat: AxisTickFormat = .decimal
+    var tickInterval: Double?
+
+    init() {}
+
+    init(label: String?, unit: String?, display: AxisDisplay) {
+        self.name = label ?? ""
+        self.unit = unit ?? ""
+        self.tickFormat = display.tickFormat
+        self.tickInterval = display.tickInterval
+    }
 }
 
 /// The in-place editor for a function-plot block: the curve, LIVE from the
 /// draft text as it's typed (validated through the same parser the read-only
-/// render uses), with the expression field(s), a zoom control, and a math
-/// symbol keyboard — all fully editable, nothing locked to the panel.
-/// Parametric mode gets a second field for `y(t)`; 3D gets a third (`z(t)`)
-/// plus three axis-name fields; every other mode gets one.
+/// render uses), an "Axes" count picker (1/2/3) that gates which curve-type
+/// and axis settings show, the expression field(s), per-axis name/unit/tick
+/// settings, a zoom control, and a math symbol keyboard — all fully editable,
+/// nothing locked to the panel. Parametric mode gets a second field for
+/// `y(t)`; 3D gets a third (`z(t)`); 1-axis gets none (it's a bare number
+/// line, not a curve).
 private struct FunctionPlotEditor: View {
     @Environment(\.theme) private var theme
 
@@ -776,18 +818,23 @@ private struct FunctionPlotEditor: View {
     let backgroundColor: ThemeColor
     let onCommit: (FunctionPlotDraft) -> Void
 
+    @State private var mode: PlotMode
+    /// The last 2-axis curve type picked, so toggling the axis count away from
+    /// 2 and back doesn't lose which of cartesianY/cartesianX/polar/parametric
+    /// was selected.
+    @State private var twoAxisMode: PlotMode
     @State private var draft: String
     @State private var secondaryDraft: String
     @State private var tertiaryDraft: String
     @State private var window: Double
-    @State private var axisXDraft: String
-    @State private var axisYDraft: String
-    @State private var axisZDraft: String
+    @State private var axisX: AxisFieldState
+    @State private var axisY: AxisFieldState
+    @State private var axisZ: AxisFieldState
 
     private enum Field: Hashable { case primary, secondary, tertiary, axisX, axisY, axisZ }
     @FocusState private var focusedField: Field?
 
-    private var mode: PlotMode { element.resolvedPlotMode }
+    private var axisCount: Int { mode.axisCount }
 
     init(
         element: PageElement, scale: CGFloat, lineColor: Color, backgroundColor: ThemeColor,
@@ -798,13 +845,16 @@ private struct FunctionPlotEditor: View {
         self.lineColor = lineColor
         self.backgroundColor = backgroundColor
         self.onCommit = onCommit
+        let startMode = element.resolvedPlotMode
+        _mode = State(initialValue: startMode)
+        _twoAxisMode = State(initialValue: startMode.axisCount == 2 ? startMode : .cartesianY)
         _draft = State(initialValue: element.functionExpression ?? "")
         _secondaryDraft = State(initialValue: element.functionSecondaryExpression ?? "")
         _tertiaryDraft = State(initialValue: element.functionTertiaryExpression ?? "")
         _window = State(initialValue: element.functionWindow ?? FunctionPlotSettings().window)
-        _axisXDraft = State(initialValue: element.axisXLabel ?? "")
-        _axisYDraft = State(initialValue: element.axisYLabel ?? "")
-        _axisZDraft = State(initialValue: element.axisZLabel ?? "")
+        _axisX = State(initialValue: AxisFieldState(label: element.axisXLabel, unit: element.axisXUnit, display: element.axisXDisplay))
+        _axisY = State(initialValue: AxisFieldState(label: element.axisYLabel, unit: element.axisYUnit, display: element.axisYDisplay))
+        _axisZ = State(initialValue: AxisFieldState(label: element.axisZLabel, unit: element.axisZUnit, display: element.axisZDisplay))
     }
 
     var body: some View {
@@ -812,23 +862,41 @@ private struct FunctionPlotEditor: View {
             FunctionPlotView(
                 expression: draft, secondaryExpression: secondaryDraft, tertiaryExpression: tertiaryDraft,
                 mode: mode, window: window, lineColor: lineColor, axisColor: lineColor,
-                axisXLabel: axisXDraft.isEmpty ? "X" : axisXDraft,
-                axisYLabel: axisYDraft.isEmpty ? "Y" : axisYDraft,
-                axisZLabel: axisZDraft.isEmpty ? "Z" : axisZDraft
+                axisX: axisDisplay(axisX, fallback: "X"),
+                axisY: axisDisplay(axisY, fallback: "Y"),
+                axisZ: axisDisplay(axisZ, fallback: "Z")
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            VStack(alignment: .leading, spacing: 4 * scale) {
-                fieldRow(mode.needsSecondaryExpression ? "x(t) =" : "\(mode.variableLabel) =", text: $draft, field: .primary)
+            VStack(alignment: .leading, spacing: 8 * scale) {
+                Picker("Axes", selection: axisCountBinding) {
+                    Text("1 axis").tag(1)
+                    Text("2 axes").tag(2)
+                    Text("3 axes").tag(3)
+                }
+                .pickerStyle(.segmented)
+                if axisCount == 2 {
+                    Picker("Curve", selection: twoAxisModeBinding) {
+                        ForEach([PlotMode.cartesianY, .cartesianX, .polar, .parametric]) { option in
+                            Text(option.displayName).tag(option)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                }
+                if mode != .axis {
+                    fieldRow(mode.needsSecondaryExpression ? "x(t) =" : "\(mode.variableLabel) =", text: $draft, field: .primary)
+                }
                 if mode.needsSecondaryExpression {
                     fieldRow("y(t) =", text: $secondaryDraft, field: .secondary)
                 }
                 if mode.needsTertiaryExpression {
                     fieldRow("z(t) =", text: $tertiaryDraft, field: .tertiary)
                 }
-                if mode == .threeD {
-                    fieldRow("X axis", text: $axisXDraft, field: .axisX, placeholder: "X")
-                    fieldRow("Y axis", text: $axisYDraft, field: .axisY, placeholder: "Y")
-                    fieldRow("Z axis", text: $axisZDraft, field: .axisZ, placeholder: "Z")
+                axisSettingsRow(title: "X axis", state: $axisX, field: .axisX, placeholder: "X")
+                if axisCount >= 2 {
+                    axisSettingsRow(title: "Y axis", state: $axisY, field: .axisY, placeholder: "Y")
+                }
+                if axisCount == 3 {
+                    axisSettingsRow(title: "Z axis", state: $axisZ, field: .axisZ, placeholder: "Z")
                 }
                 HStack(spacing: 6 * scale) {
                     Text("Zoom").font(.dsCaption2).foregroundStyle(lineColor.opacity(0.75))
@@ -875,14 +943,108 @@ private struct FunctionPlotEditor: View {
 
     private func commit() {
         onCommit(FunctionPlotDraft(
+            mode: mode,
             expression: draft,
             secondary: mode.needsSecondaryExpression ? secondaryDraft : nil,
             tertiary: mode.needsTertiaryExpression ? tertiaryDraft : nil,
             window: window,
-            axisXLabel: mode == .threeD ? axisXDraft : nil,
-            axisYLabel: mode == .threeD ? axisYDraft : nil,
-            axisZLabel: mode == .threeD ? axisZDraft : nil
+            axisXLabel: axisX.name,
+            axisYLabel: axisCount >= 2 ? axisY.name : nil,
+            axisZLabel: axisCount == 3 ? axisZ.name : nil,
+            axisXUnit: axisX.unit,
+            axisYUnit: axisCount >= 2 ? axisY.unit : nil,
+            axisZUnit: axisCount == 3 ? axisZ.unit : nil,
+            axisXTickFormat: axisX.tickFormat,
+            axisYTickFormat: axisCount >= 2 ? axisY.tickFormat : nil,
+            axisZTickFormat: axisCount == 3 ? axisZ.tickFormat : nil,
+            axisXTickInterval: axisX.tickInterval,
+            axisYTickInterval: axisCount >= 2 ? axisY.tickInterval : nil,
+            axisZTickInterval: axisCount == 3 ? axisZ.tickInterval : nil
         ))
+    }
+
+    /// 1 ↔ `.axis`, 3 ↔ `.threeD`; 2 restores whichever 2-axis curve type was
+    /// last selected so the choice isn't lost when hopping away and back.
+    private var axisCountBinding: Binding<Int> {
+        Binding(
+            get: { axisCount },
+            set: { newValue in
+                switch newValue {
+                case 1: mode = .axis
+                case 3: mode = .threeD
+                default: mode = twoAxisMode
+                }
+            }
+        )
+    }
+
+    private var twoAxisModeBinding: Binding<PlotMode> {
+        Binding(
+            get: { twoAxisMode },
+            set: { newValue in
+                twoAxisMode = newValue
+                mode = newValue
+            }
+        )
+    }
+
+    private func axisDisplay(_ state: AxisFieldState, fallback: String) -> AxisDisplay {
+        AxisDisplay(
+            label: state.name.isEmpty ? fallback : state.name,
+            unit: state.unit.isEmpty ? nil : state.unit,
+            tickFormat: state.tickFormat,
+            tickInterval: state.tickInterval
+        )
+    }
+
+    private func axisSettingsRow(title: String, state: Binding<AxisFieldState>, field: Field, placeholder: String) -> some View {
+        VStack(alignment: .leading, spacing: 3 * scale) {
+            HStack(spacing: 6 * scale) {
+                Text(title).font(.dsCaption.weight(.semibold)).foregroundStyle(lineColor)
+                TextField(placeholder, text: state.name)
+                    .font(.dsCaption.monospaced())
+                    .foregroundStyle(lineColor)
+                    .textFieldStyle(.plain)
+                    .autocorrectionDisabled(true)
+                    .textInputAutocapitalization(.never)
+                    .focused($focusedField, equals: field)
+                TextField("unit (optional)", text: state.unit)
+                    .font(.dsCaption.monospaced())
+                    .foregroundStyle(lineColor.opacity(0.8))
+                    .textFieldStyle(.plain)
+                    .autocorrectionDisabled(true)
+                    .textInputAutocapitalization(.never)
+            }
+            HStack(spacing: 6 * scale) {
+                Picker("", selection: state.tickFormat) {
+                    ForEach(AxisTickFormat.allCases) { format in
+                        Text(format.displayName).tag(format)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: state.wrappedValue.tickFormat) { _, _ in
+                    // A stored interval from the OLD format (say, a plain "5")
+                    // makes no sense once ticks are formatted as π-fractions —
+                    // fall back to auto so the new format's own presets apply.
+                    state.wrappedValue.tickInterval = nil
+                }
+                Menu {
+                    Button("Auto") { state.wrappedValue.tickInterval = nil }
+                    ForEach(state.wrappedValue.tickFormat.intervalPresets, id: \.self) { preset in
+                        Button(state.wrappedValue.tickFormat.label(for: preset)) {
+                            state.wrappedValue.tickInterval = preset
+                        }
+                    }
+                } label: {
+                    Label(
+                        state.wrappedValue.tickInterval.map { "Every \(state.wrappedValue.tickFormat.label(for: $0))" } ?? "Ticks: Auto",
+                        systemImage: "ruler"
+                    )
+                }
+            }
+            .font(.dsCaption2)
+            .foregroundStyle(lineColor.opacity(0.85))
+        }
     }
 
     /// Quick-insert math symbols — appended to whichever field is currently
@@ -927,6 +1089,7 @@ private extension PlotMode {
         case .polar: "r"
         case .parametric: "x(t)"
         case .threeD: "x(t)"
+        case .axis: ""
         }
     }
 }

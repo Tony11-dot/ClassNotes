@@ -238,8 +238,7 @@ public struct PageContentView: View {
             mode: element.resolvedPlotMode,
             window: element.functionWindow ?? FunctionPlotSettings().window,
             lineColor: lineColor.color, axisColor: lineColor.color,
-            axisXLabel: element.resolvedAxisXLabel, axisYLabel: element.resolvedAxisYLabel,
-            axisZLabel: element.resolvedAxisZLabel
+            axisX: element.axisXDisplay, axisY: element.axisYDisplay, axisZ: element.axisZDisplay
         )
             .padding(6 * scale)
             .background(transparent ? Color.clear : background.color, in: RoundedRectangle(cornerRadius: radius, style: .continuous))

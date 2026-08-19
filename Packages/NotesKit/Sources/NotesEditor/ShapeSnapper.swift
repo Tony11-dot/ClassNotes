@@ -22,6 +22,18 @@ enum ShapeSnapper {
     /// loose that a drawn arc collapses into a chord.
     static let straightTolerance: CGFloat = 0.15
 
+    /// Converts the user-facing `snapTolerance` setting — a constant SCREEN
+    /// distance — into the logical/page-space radius the fitter actually
+    /// operates on, by dividing out the current zoom. Both the live preview
+    /// (`CanvasSnapPreview.previewSnap`) and the release-only fallback below
+    /// call this, so a tolerance change feels identical on either path. Left
+    /// unconverted (as it was before this existed), the fitter's effective
+    /// tolerance drifted with zoom — too tight zoomed out, too loose zoomed
+    /// in — which alone was enough to make a genuine hold fail to fit.
+    static func holdRadius(forTolerance tolerance: CGFloat, zoomScale: CGFloat) -> CGFloat {
+        tolerance / max(zoomScale, 0.01)
+    }
+
     /// If `stroke` ends with a dwell and fits a primitive confidently, returns a
     /// replacement stroke; otherwise nil (leave the freehand stroke as drawn).
     ///

@@ -77,12 +77,26 @@ extension CanvasPageView.Coordinator {
     /// Returns whether the straight-edge has taken the stroke.
     func previewRuled(_ points: [CGPoint]) -> Bool {
         guard let guide = rulerGuide, toolState.tool == .pen,
-              let straight = guide.straightened(points) else { return false }
+              let straight = guide.straightened(
+                  points, inset: CGFloat(toolState.penSettings.effectiveWidth) / 2
+              ) else { return false }
         isRulingLive = true
         pendingSnapPath = straight
         suppressLiveInk()
         drawSnapPreview(straight)
         return true
+    }
+
+    /// `toolState.snapTolerance` is a constant SCREEN distance (same convention
+    /// as `StrokeDwellRecognizer`'s own rest radius, see `watcher.zoomScale`
+    /// above) but `points` here are already in logical/page space — dividing by
+    /// the current zoom converts the setting into the same space the fitter
+    /// operates in. Left unconverted, the fitter's effective tolerance drifted
+    /// with zoom (too tight when zoomed out, too loose when zoomed in), which
+    /// was enough on its own to make `ShapeSnapper.liveSnap` miss a fit even
+    /// when the recognizer had genuinely detected a hold.
+    var logicalSnapTolerance: CGFloat {
+        ShapeSnapper.holdRadius(forTolerance: CGFloat(toolState.snapTolerance), zoomScale: canvas?.zoomScale ?? 1)
     }
 
     /// The pencil has come to rest: fit what's been drawn and show it. Returns
@@ -93,7 +107,7 @@ extension CanvasPageView.Coordinator {
               // A scrub is an erasure, not a shape. Fitting it to an ellipse
               // under the pencil would beat the eraser to the same ink.
               !(toolState.scribbleToErase && ScribbleDetector.isErasureScribble(points)),
-              let snap = ShapeSnapper.liveSnap(points, holdRadius: CGFloat(toolState.snapTolerance)),
+              let snap = ShapeSnapper.liveSnap(points, holdRadius: logicalSnapTolerance),
               let settled = ShapeSnapper.resolve(snap, handle: snap.handle) else { return false }
         liveSnap = snap
         pendingSnapPath = settled.path
