@@ -18,6 +18,7 @@ struct ToolPreferencesTests {
         #expect(decoded.eraserWidth == 42)
         // Everything absent falls back to the factory value rather than throwing.
         #expect(decoded.snapShapes == ToolPreferences().snapShapes)
+        #expect(decoded.snapTolerance == ToolPreferences().snapTolerance)
         #expect(decoded.pencilSqueeze == ToolPreferences().pencilSqueeze)
     }
 
@@ -34,6 +35,7 @@ struct ToolPreferencesTests {
         original.tuning["marker"] = PenSettings(thickness: 7, concentration: 0.6)
         original.eraserMode = .stroke
         original.scribbleToErase = true
+        original.snapTolerance = 31
         original.pencilDoubleTap = .undo
         original.pencilSqueeze = .askNova
         original.textSize = 33

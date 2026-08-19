@@ -137,6 +137,40 @@ struct NovaConversationTests {
     }
 }
 
+@MainActor
+@Suite("NOVA follow-up suggestion parsing")
+struct NovaFollowUpParsingTests {
+    @Test("A clean one-per-line reply parses straight through")
+    func cleanLines() {
+        let parsed = NovaConversation.parseFollowUps("What causes this?\nHow does it scale?\nAny real examples?")
+        #expect(parsed == ["What causes this?", "How does it scale?", "Any real examples?"])
+    }
+
+    @Test("Numbering and bullet prefixes the model adds anyway are stripped")
+    func stripsPrefixes() {
+        let parsed = NovaConversation.parseFollowUps("1. First one\n2) Second one\n- Third one\n• Fourth one")
+        #expect(parsed == ["First one", "Second one", "Third one"])
+    }
+
+    @Test("Blank lines are skipped rather than becoming empty suggestions")
+    func skipsBlankLines() {
+        let parsed = NovaConversation.parseFollowUps("First\n\n\nSecond\n   \nThird")
+        #expect(parsed == ["First", "Second", "Third"])
+    }
+
+    @Test("More than 3 lines is capped at 3")
+    func capsAtThree() {
+        let parsed = NovaConversation.parseFollowUps("One\nTwo\nThree\nFour\nFive")
+        #expect(parsed == ["One", "Two", "Three"])
+    }
+
+    @Test("Fewer than 3 lines returns fewer than 3, not padded")
+    func fewerThanThree() {
+        #expect(NovaConversation.parseFollowUps("Just one") == ["Just one"])
+        #expect(NovaConversation.parseFollowUps("") == [])
+    }
+}
+
 @Suite("OCR assembly + content models")
 struct ContentModelTests {
     @Test("OCR lines assemble top-to-bottom (Vision bottom-left origin)")

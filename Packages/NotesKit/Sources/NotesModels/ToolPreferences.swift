@@ -95,6 +95,8 @@ public struct CodeBlockSettings: Sendable, Equatable, Codable {
     public var cornerRadius: Double
     /// Which language new code blocks are labelled — and coloured — as.
     public var language: CodeLanguage
+    /// No background box/frame at all — just the bare syntax text on the page.
+    public var transparentBackground: Bool
 
     public init(
         fontID: String = "menlo",
@@ -102,7 +104,8 @@ public struct CodeBlockSettings: Sendable, Equatable, Codable {
         textColorHex: String? = nil,
         backgroundColorHex: String? = nil,
         cornerRadius: Double = 10,
-        language: CodeLanguage = .swift
+        language: CodeLanguage = .swift,
+        transparentBackground: Bool = false
     ) {
         self.fontID = fontID
         self.fontSize = fontSize
@@ -110,10 +113,12 @@ public struct CodeBlockSettings: Sendable, Equatable, Codable {
         self.backgroundColorHex = backgroundColorHex
         self.cornerRadius = cornerRadius
         self.language = language
+        self.transparentBackground = transparentBackground
     }
 
     private enum CodingKeys: String, CodingKey {
         case fontID, fontSize, textColorHex, backgroundColorHex, cornerRadius, language
+        case transparentBackground
     }
 
     /// Total decode: an older/corrupt blob without `language` still loads,
@@ -126,7 +131,8 @@ public struct CodeBlockSettings: Sendable, Equatable, Codable {
             textColorHex: (try? box.decodeIfPresent(String.self, forKey: .textColorHex)) ?? nil,
             backgroundColorHex: (try? box.decodeIfPresent(String.self, forKey: .backgroundColorHex)) ?? nil,
             cornerRadius: (try? box.decodeIfPresent(Double.self, forKey: .cornerRadius)) ?? nil ?? 10,
-            language: (try? box.decodeIfPresent(CodeLanguage.self, forKey: .language)) ?? nil ?? .swift
+            language: (try? box.decodeIfPresent(CodeLanguage.self, forKey: .language)) ?? nil ?? .swift,
+            transparentBackground: (try? box.decodeIfPresent(Bool.self, forKey: .transparentBackground)) ?? nil ?? false
         )
     }
 
@@ -149,23 +155,28 @@ public struct FunctionPlotSettings: Sendable, Equatable, Codable {
     /// Half-width of the default view window, in math units (so the default
     /// window is roughly `-window...window` on the relevant axis/parameter).
     public var window: Double
+    /// No background box/frame at all — just the bare axes and curve on the page.
+    public var transparentBackground: Bool
 
     public init(
         mode: PlotMode = .cartesianY,
         lineColorHex: String? = nil,
         backgroundColorHex: String? = nil,
         cornerRadius: Double = 10,
-        window: Double = 10
+        window: Double = 10,
+        transparentBackground: Bool = false
     ) {
         self.mode = mode
         self.lineColorHex = lineColorHex
         self.backgroundColorHex = backgroundColorHex
         self.cornerRadius = cornerRadius
         self.window = window
+        self.transparentBackground = transparentBackground
     }
 
     private enum CodingKeys: String, CodingKey {
         case mode, lineColorHex, backgroundColorHex, cornerRadius, window
+        case transparentBackground
     }
 
     /// Total decode: an older/corrupt blob still loads, defaulting whatever
@@ -177,7 +188,8 @@ public struct FunctionPlotSettings: Sendable, Equatable, Codable {
             lineColorHex: (try? box.decodeIfPresent(String.self, forKey: .lineColorHex)) ?? nil,
             backgroundColorHex: (try? box.decodeIfPresent(String.self, forKey: .backgroundColorHex)) ?? nil,
             cornerRadius: (try? box.decodeIfPresent(Double.self, forKey: .cornerRadius)) ?? nil ?? 10,
-            window: (try? box.decodeIfPresent(Double.self, forKey: .window)) ?? nil ?? 10
+            window: (try? box.decodeIfPresent(Double.self, forKey: .window)) ?? nil ?? 10,
+            transparentBackground: (try? box.decodeIfPresent(Bool.self, forKey: .transparentBackground)) ?? nil ?? false
         )
     }
 
@@ -217,6 +229,10 @@ public struct ToolPreferences: Codable, Sendable, Equatable {
     public var eraserWidth: Double
     public var scribbleToErase: Bool
     public var snapShapes: Bool
+    /// How far the pencil may drift during the end-of-stroke hold and still count
+    /// as resting, in screen points — the tolerance behind "hold to snap". Wider
+    /// forgives more hand tremor; narrower asks for a steadier hold.
+    public var snapTolerance: Double
 
     // Text boxes
     public var textFontID: String
@@ -247,6 +263,7 @@ public struct ToolPreferences: Codable, Sendable, Equatable {
         eraserWidth: Double = 20,
         scribbleToErase: Bool = false,
         snapShapes: Bool = true,
+        snapTolerance: Double = 22,
         textFontID: String = FontLibrary.default.id,
         textSize: Double = 20,
         textColorHex: String? = nil,
@@ -266,6 +283,7 @@ public struct ToolPreferences: Codable, Sendable, Equatable {
         self.eraserWidth = eraserWidth
         self.scribbleToErase = scribbleToErase
         self.snapShapes = snapShapes
+        self.snapTolerance = snapTolerance
         self.textFontID = textFontID
         self.textSize = textSize
         self.textColorHex = textColorHex
@@ -293,6 +311,7 @@ public struct ToolPreferences: Codable, Sendable, Equatable {
             eraserWidth: value(.eraserWidth, fallback.eraserWidth),
             scribbleToErase: value(.scribbleToErase, fallback.scribbleToErase),
             snapShapes: value(.snapShapes, fallback.snapShapes),
+            snapTolerance: value(.snapTolerance, fallback.snapTolerance),
             textFontID: value(.textFontID, fallback.textFontID),
             textSize: value(.textSize, fallback.textSize),
             textColorHex: (try? box.decodeIfPresent(String.self, forKey: .textColorHex)) ?? nil,
@@ -303,6 +322,8 @@ public struct ToolPreferences: Codable, Sendable, Equatable {
             pencilSqueeze: value(.pencilSqueeze, fallback.pencilSqueeze)
         )
     }
+
+    public static let snapToleranceRange: ClosedRange<Double> = 10...40
 }
 
 /// The whole of "how this user has their app set up", as one value: the tools,

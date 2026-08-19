@@ -58,7 +58,7 @@ struct RootView: View {
     @ViewBuilder
     private var deviceRoot: some View {
         if UIDevice.current.userInterfaceIdiom == .pad {
-            LibraryGridScreen { notebook, pageID in
+            LibraryTabScreen { notebook, pageID in
                 // A remote-only notebook (created on another device, never
                 // opened here) has no local ink package for the editor to
                 // open — route it to the read-only viewer on every device,

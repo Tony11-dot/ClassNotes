@@ -14,6 +14,11 @@ public enum PlotMode: String, Sendable, CaseIterable, Identifiable, Codable {
     /// circle or any hand-drawable curve that isn't a function of x or y (a
     /// vertical line, a loop) gets plotted at all.
     case parametric
+    /// A labeled 3D coordinate frame (custom name per axis), drawn in a fixed
+    /// isometric projection — optionally with an `x(t)`, `y(t)`, `z(t)`
+    /// parametric curve/vector traced through it. No rotation gesture; moving
+    /// the block itself covers "adjust it".
+    case threeD
 
     public var id: String { rawValue }
 
@@ -23,6 +28,7 @@ public enum PlotMode: String, Sendable, CaseIterable, Identifiable, Codable {
         case .cartesianX: "x = f(y)"
         case .polar: "r = f(θ)"
         case .parametric: "x(t), y(t)"
+        case .threeD: "3D (x, y, z)"
         }
     }
 
@@ -32,13 +38,15 @@ public enum PlotMode: String, Sendable, CaseIterable, Identifiable, Codable {
         case .cartesianY: "x"
         case .cartesianX: "y"
         case .polar: "theta"
-        case .parametric: "t"
+        case .parametric, .threeD: "t"
         }
     }
 
-    /// Parametric is the one mode with a second field (`y(t)`, alongside the
-    /// primary `x(t)`).
-    public var needsSecondaryExpression: Bool { self == .parametric }
+    /// Whether a second field (`y(t)` alongside the primary `x(t)`) is shown.
+    public var needsSecondaryExpression: Bool { self == .parametric || self == .threeD }
+
+    /// 3D is the one mode with a THIRD field, `z(t)`.
+    public var needsTertiaryExpression: Bool { self == .threeD }
 
     /// A friendly example shown as a placeholder before the user types
     /// anything, so an empty block reads as "waiting for input", not broken.
@@ -48,6 +56,7 @@ public enum PlotMode: String, Sendable, CaseIterable, Identifiable, Codable {
         case .cartesianX: "x = y^2"
         case .polar: "r = sin(3*theta)"
         case .parametric: "x = cos(t), y = sin(t)"
+        case .threeD: "x = cos(t), y = sin(t), z = t/3"
         }
     }
 }
@@ -303,6 +312,32 @@ public enum FunctionPlotSampler {
             guard let x = xExpression.evaluate(t), let y = yExpression.evaluate(t) else { return nil }
             return CGPoint(x: x, y: y)
         }
+    }
+
+    /// A vector/curve through 3D space, traced by a shared parameter and
+    /// projected with `isometric(x:y:z:)` — the same fixed angle the 3D axes
+    /// themselves are drawn at, so a plotted curve always sits correctly inside
+    /// its own frame.
+    public static func parametric3D(
+        x xExpression: FunctionExpression, y yExpression: FunctionExpression,
+        z zExpression: FunctionExpression, window: Double
+    ) -> [[CGPoint]] {
+        run(from: -window, to: window, window: window) { t in
+            guard let x = xExpression.evaluate(t), let y = yExpression.evaluate(t),
+                  let z = zExpression.evaluate(t) else { return nil }
+            return isometric(x: x, y: y, z: z)
+        }
+    }
+
+    /// A fixed isometric projection from math-space (x, y, z) onto the 2D plane
+    /// — no rotation, just a stable, readable angle shared by the 3D axes and
+    /// any curve plotted inside them.
+    public static func isometric(x: Double, y: Double, z: Double) -> CGPoint {
+        let cos30 = 0.8660254037844387
+        let sin30 = 0.5
+        // Y-up in this "math space", same as every other mode here — `toView`
+        // flips it once, later, the same way it flips a 2D point's y.
+        return CGPoint(x: (x - z) * cos30, y: y - (x + z) * sin30)
     }
 
     /// Shared sampling loop: walks `from...to` in `sampleCount` steps, asking

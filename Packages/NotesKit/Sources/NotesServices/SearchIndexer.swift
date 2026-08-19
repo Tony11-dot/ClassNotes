@@ -124,6 +124,8 @@ public actor SearchIndexer {
                    !expression.isEmpty { parts.append(expression) }
                 if let secondary = element.functionSecondaryExpression?.trimmingCharacters(in: .whitespacesAndNewlines),
                    !secondary.isEmpty { parts.append(secondary) }
+                if let tertiary = element.functionTertiaryExpression?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !tertiary.isEmpty { parts.append(tertiary) }
             case .link:
                 // A link is findable by what it was CALLED as well as where it
                 // goes — nobody remembers the URL of the paper they saved.

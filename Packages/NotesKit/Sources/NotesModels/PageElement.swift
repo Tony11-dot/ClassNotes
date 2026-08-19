@@ -85,14 +85,26 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
     /// For functionPlot: the primary expression — `f(x)`, `f(y)`, `f(θ)`, or
     /// `x(t)` in parametric mode, per `functionMode`.
     public var functionExpression: String?
-    /// For functionPlot in parametric mode only: the `y(t)` half.
+    /// For functionPlot in parametric/3D mode: the `y(t)` half.
     public var functionSecondaryExpression: String?
+    /// For functionPlot in 3D mode only: the `z(t)` half.
+    public var functionTertiaryExpression: String?
     /// For functionPlot: `PlotMode.rawValue`. `nil`/unrecognized reads as
     /// `.cartesianY`, never a throw.
     public var functionMode: String?
     /// For functionPlot: half-width of the view window in math units (nil =
     /// `FunctionPlotSettings.window`).
     public var functionWindow: Double?
+    /// For functionPlot in 3D mode: each axis's own label — a name and, if the
+    /// user wants one, its units, typed together as one string (e.g.
+    /// "Velocity (m/s)"). `nil` = the plain letter ("X"/"Y"/"Z").
+    public var axisXLabel: String?
+    public var axisYLabel: String?
+    public var axisZLabel: String?
+    /// For codeBlock/functionPlot: draw with no background box/frame at all —
+    /// just the bare syntax text, or the bare axes and curve, directly on the
+    /// page. `nil` = follow the tool's own setting.
+    public var backgroundIsTransparent: Bool?
     /// For text: the type size in logical page points (nil = the legacy 20 pt).
     public var fontSize: Double?
     /// For text: the line-height MULTIPLE the run was laid out at (nil = 1.0).
@@ -144,8 +156,13 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
         codeCornerRadius: Double? = nil,
         functionExpression: String? = nil,
         functionSecondaryExpression: String? = nil,
+        functionTertiaryExpression: String? = nil,
         functionMode: String? = nil,
         functionWindow: Double? = nil,
+        axisXLabel: String? = nil,
+        axisYLabel: String? = nil,
+        axisZLabel: String? = nil,
+        backgroundIsTransparent: Bool? = nil,
         fontSize: Double? = nil,
         lineSpacing: Double? = nil,
         isBold: Bool = false,
@@ -174,8 +191,13 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
         self.codeCornerRadius = codeCornerRadius
         self.functionExpression = functionExpression
         self.functionSecondaryExpression = functionSecondaryExpression
+        self.functionTertiaryExpression = functionTertiaryExpression
         self.functionMode = functionMode
         self.functionWindow = functionWindow
+        self.axisXLabel = axisXLabel
+        self.axisYLabel = axisYLabel
+        self.axisZLabel = axisZLabel
+        self.backgroundIsTransparent = backgroundIsTransparent
         self.fontSize = fontSize
         self.lineSpacing = lineSpacing
         self.isBold = isBold
@@ -203,6 +225,12 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
         functionMode.flatMap(PlotMode.init(rawValue:)) ?? .cartesianY
     }
 
+    /// For functionPlot in 3D mode: each axis's label, falling back to the
+    /// plain letter when the user hasn't named it.
+    public var resolvedAxisXLabel: String { axisXLabel?.isEmpty == false ? axisXLabel! : "X" }
+    public var resolvedAxisYLabel: String { axisYLabel?.isEmpty == false ? axisYLabel! : "Y" }
+    public var resolvedAxisZLabel: String { axisZLabel?.isEmpty == false ? axisZLabel! : "Z" }
+
     /// The line-height multiple to draw the run at. Single-spaced unless the run
     /// was laid out otherwise.
     public var resolvedLineSpacing: Double { max(lineSpacing ?? 1, 0.5) }
@@ -218,7 +246,9 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
         case payloadFilename, displayName, durationSeconds
         case text, fontName, textColorHex, fontSize, lineSpacing, isBold, urlString
         case codeLanguage, codeCornerRadius
-        case functionExpression, functionSecondaryExpression, functionMode, functionWindow
+        case functionExpression, functionSecondaryExpression, functionTertiaryExpression
+        case functionMode, functionWindow
+        case axisXLabel, axisYLabel, axisZLabel, backgroundIsTransparent
         case tapeShape, tapePattern, colorHex, points, strokeWidth, isHidden
     }
 
@@ -243,8 +273,13 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
         codeCornerRadius = try c.decodeIfPresent(Double.self, forKey: .codeCornerRadius)
         functionExpression = try c.decodeIfPresent(String.self, forKey: .functionExpression)
         functionSecondaryExpression = try c.decodeIfPresent(String.self, forKey: .functionSecondaryExpression)
+        functionTertiaryExpression = try c.decodeIfPresent(String.self, forKey: .functionTertiaryExpression)
         functionMode = try c.decodeIfPresent(String.self, forKey: .functionMode)
         functionWindow = try c.decodeIfPresent(Double.self, forKey: .functionWindow)
+        axisXLabel = try c.decodeIfPresent(String.self, forKey: .axisXLabel)
+        axisYLabel = try c.decodeIfPresent(String.self, forKey: .axisYLabel)
+        axisZLabel = try c.decodeIfPresent(String.self, forKey: .axisZLabel)
+        backgroundIsTransparent = try c.decodeIfPresent(Bool.self, forKey: .backgroundIsTransparent)
         fontSize = try c.decodeIfPresent(Double.self, forKey: .fontSize)
         lineSpacing = try c.decodeIfPresent(Double.self, forKey: .lineSpacing)
         isBold = try c.decodeIfPresent(Bool.self, forKey: .isBold) ?? false

@@ -210,6 +210,13 @@ public final class ToolState {
         set { edit { $0.snapShapes = newValue } }
     }
 
+    /// How far the pencil may drift during the end-of-stroke hold and still
+    /// count as resting, in screen points.
+    public var snapTolerance: Double {
+        get { preferences.snapTolerance }
+        set { edit { $0.snapTolerance = newValue } }
+    }
+
     // MARK: - Text boxes
 
     public var textFontID: String {
@@ -259,6 +266,11 @@ public final class ToolState {
         set { edit { $0.codeBlock.language = newValue } }
     }
 
+    public var codeBlockTransparentBackground: Bool {
+        get { preferences.codeBlock.transparentBackground }
+        set { edit { $0.codeBlock.transparentBackground = newValue } }
+    }
+
     // MARK: - Function-plot blocks
 
     public var functionPlotMode: PlotMode {
@@ -284,6 +296,11 @@ public final class ToolState {
     public var functionPlotWindow: Double {
         get { preferences.functionPlot.window }
         set { edit { $0.functionPlot.window = newValue } }
+    }
+
+    public var functionPlotTransparentBackground: Bool {
+        get { preferences.functionPlot.transparentBackground }
+        set { edit { $0.functionPlot.transparentBackground = newValue } }
     }
 
     // MARK: - Real-time beautification

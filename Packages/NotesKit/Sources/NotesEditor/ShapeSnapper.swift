@@ -28,9 +28,12 @@ enum ShapeSnapper {
     /// This is the FALLBACK path, used when the live dwell watcher didn't catch
     /// the hold — the snap normally settles under the pencil while it's still
     /// down (see `StrokeDwellRecognizer`).
-    static func snapped(_ stroke: PKStroke) -> PKStroke? {
-        guard holdDuration(of: stroke) >= minimumHold else { return nil }
-        let points = trimmedTail(densePoints(stroke))
+    ///
+    /// `holdRadius` defaults to the constant above but is overridable so this
+    /// path stays in step with the user's own snap-tolerance setting.
+    static func snapped(_ stroke: PKStroke, holdRadius: CGFloat = holdRadius) -> PKStroke? {
+        guard holdDuration(of: stroke, holdRadius: holdRadius) >= minimumHold else { return nil }
+        let points = trimmedTail(densePoints(stroke), holdRadius: holdRadius)
         guard points.count >= 6, let path = fit(points) else { return nil }
         return rebuild(stroke, along: path)
     }
@@ -75,8 +78,8 @@ enum ShapeSnapper {
     }
 
     /// Classifies an in-progress path and works out which end the pencil holds.
-    static func liveSnap(_ points: [CGPoint]) -> LiveSnap? {
-        let trimmed = trimmedTail(points)
+    static func liveSnap(_ points: [CGPoint], holdRadius: CGFloat = holdRadius) -> LiveSnap? {
+        let trimmed = trimmedTail(points, holdRadius: holdRadius)
         guard trimmed.count >= 6, let (shape, box) = classify(trimmed),
               let start = trimmed.first, let rest = trimmed.last else { return nil }
 
@@ -235,7 +238,7 @@ enum ShapeSnapper {
     ///
     /// Returns 0 for a stroke that never left `holdRadius` at all: that's a dot
     /// being placed, not a shape being drawn.
-    static func holdDuration(of stroke: PKStroke) -> TimeInterval {
+    static func holdDuration(of stroke: PKStroke, holdRadius: CGFloat = holdRadius) -> TimeInterval {
         let points = Array(stroke.path)
         guard let last = points.last else { return 0 }
         for point in points.reversed() where distance(point.location, last.location) > holdRadius {
@@ -259,7 +262,7 @@ enum ShapeSnapper {
 
     /// Drops the dwell from the end of the path so the pause doesn't drag the fit
     /// toward the resting point, while keeping the true endpoint.
-    static func trimmedTail(_ points: [CGPoint]) -> [CGPoint] {
+    static func trimmedTail(_ points: [CGPoint], holdRadius: CGFloat = holdRadius) -> [CGPoint] {
         guard let last = points.last,
               let cut = points.lastIndex(where: { distance($0, last) > holdRadius }),
               cut < points.count - 1

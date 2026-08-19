@@ -303,6 +303,7 @@ public struct EditorScreen: View {
                 conversation: conversation,
                 store: services.novaChats,
                 notebookID: notebook.id,
+                onReadNotebook: { await readNotebookForNova() },
                 onClose: { showNova = false }
             )
             .transition(.move(edge: .trailing))
@@ -426,6 +427,24 @@ extension EditorScreen {
             )
             sharedPDF = await exporter.pdfFile(notebook: notebook).map(SharedFile.init(url:))
         }
+    }
+
+    /// Renders the whole notebook to one contact-sheet image plus a text hint,
+    /// for NOVA's "Read notebook" button. Ink is flushed first for the same
+    /// reason `exportPDF` does — the renderer reads pages off disk.
+    private func readNotebookForNova() async -> (image: Data, pageCount: Int, textHint: String)? {
+        await flushInkForExport()
+        let exporter = NotebookExporter(
+            store: services.documentStore, theme: theme, paperTone: paperTone
+        )
+        guard let sheet = await exporter.contactSheet(notebook: notebook) else { return nil }
+        let index = await services.searchIndexer.index(notebook: notebook.id)
+        let hint = index.pages
+            .map(\.text)
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .joined(separator: " ")
+            .prefix(4000)
+        return (sheet.image, sheet.pageCount, String(hint))
     }
 
     /// Writes every live canvas's ink to disk so an export sees it.

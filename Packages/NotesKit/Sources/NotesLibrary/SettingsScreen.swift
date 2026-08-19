@@ -17,8 +17,13 @@ public struct SettingsScreen: View {
     @State private var exportPayload: ThemeJSONFile?
     @State private var themeError: String?
     @State private var helpSheet: HelpSheet?
+    /// True when this is one of the library's own tabs rather than a sheet —
+    /// there's nothing to dismiss back to, so the "Done" button doesn't apply.
+    private let isTab: Bool
 
-    public init() {}
+    public init(isTab: Bool = false) {
+        self.isTab = isTab
+    }
 
     public var body: some View {
         NavigationStack {
@@ -39,8 +44,10 @@ public struct SettingsScreen: View {
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
+                if !isTab {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { dismiss() }
+                    }
                 }
             }
         }

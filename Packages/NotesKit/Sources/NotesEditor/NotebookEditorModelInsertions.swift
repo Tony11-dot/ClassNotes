@@ -147,7 +147,7 @@ extension NotebookEditorModel {
     public func insertCodeBlock(
         at point: CGPoint, on pageID: UUID, fontName: String, fontSize: Double,
         textColorHex: String?, backgroundColorHex: String?, cornerRadius: Double,
-        language: String
+        language: String, transparentBackground: Bool = false
     ) async -> UUID? {
         let pageSize = page(pageID)?.logicalSize ?? PageGeometry.size
         let width = min(360.0, pageSize.width - 32)
@@ -159,7 +159,9 @@ extension NotebookEditorModel {
             width: width, height: height,
             text: "", fontName: fontName, textColorHex: textColorHex,
             codeLanguage: language,
-            codeCornerRadius: cornerRadius, fontSize: fontSize,
+            codeCornerRadius: cornerRadius,
+            backgroundIsTransparent: transparentBackground,
+            fontSize: fontSize,
             colorHex: backgroundColorHex
         )
         await append(element, to: pageID)
@@ -172,7 +174,8 @@ extension NotebookEditorModel {
     @discardableResult
     public func insertFunctionPlot(
         at point: CGPoint, on pageID: UUID, mode: PlotMode, window: Double,
-        lineColorHex: String?, backgroundColorHex: String?, cornerRadius: Double
+        lineColorHex: String?, backgroundColorHex: String?, cornerRadius: Double,
+        transparentBackground: Bool = false
     ) async -> UUID? {
         let pageSize = page(pageID)?.logicalSize ?? PageGeometry.size
         let width = min(320.0, pageSize.width - 32)
@@ -184,6 +187,7 @@ extension NotebookEditorModel {
             width: width, height: height,
             textColorHex: lineColorHex,
             functionExpression: "", functionMode: mode.rawValue, functionWindow: window,
+            backgroundIsTransparent: transparentBackground,
             colorHex: backgroundColorHex
         )
         await append(element, to: pageID)

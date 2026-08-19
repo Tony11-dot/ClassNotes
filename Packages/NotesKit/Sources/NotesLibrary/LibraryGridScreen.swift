@@ -19,10 +19,12 @@ public struct LibraryGridScreen<Destination: View>: View {
     /// The editor, given the notebook and — when the user came from a search hit
     /// or a bookmark — the page they were actually looking for.
     private let destination: (Notebook, UUID?) -> Destination
+    /// Owned by `LibraryTabScreen`: the tab bar's own `+` sets this the same way
+    /// the empty-state's "New notebook" button does, so both trigger the SAME
+    /// creation flow below rather than two separate ones.
+    @Binding var addChoice: AddContentChoice?
 
-    @State var opened: OpenRequest?
-    @State var addChoice: AddContentChoice?
-    @State var showSettings = false
+    @State var opened: LibraryOpenRequest?
     @State var renameTarget: Notebook?
     @State var renameText = ""
     @State var deleteTarget: Notebook?
@@ -31,22 +33,15 @@ public struct LibraryGridScreen<Destination: View>: View {
     @State var showAddBooks = false
     @State var selection = LibrarySelection()
     @State var confirmBulkDelete = false
-    @State var showTrash = false
-    @State var searchText = ""
-    @State var search = LibrarySearchModel()
     @State var sharedPDF: SharedFile?
     @State var exporting = false
 
-    public init(@ViewBuilder destination: @escaping (Notebook, UUID?) -> Destination) {
+    public init(
+        addChoice: Binding<AddContentChoice?>,
+        @ViewBuilder destination: @escaping (Notebook, UUID?) -> Destination
+    ) {
+        self._addChoice = addChoice
         self.destination = destination
-    }
-
-    /// Which notebook to open, and where in it. A struct rather than a bare
-    /// `Notebook?` so `navigationDestination(item:)` carries the page too.
-    struct OpenRequest: Identifiable, Hashable {
-        let notebook: Notebook
-        let pageID: UUID?
-        var id: UUID { notebook.id }
     }
 
     /// What the shelf bar is filtering by. Favourites is a filter, not a shelf —
@@ -74,7 +69,6 @@ public struct LibraryGridScreen<Destination: View>: View {
     }
 
     var favoritesCount: Int { liveNotebooks.filter(\.isFavorite).count }
-    private var trashCount: Int { notebooks.filter(\.isTrashed).count }
 
     public var body: some View {
         NavigationStack {
@@ -83,14 +77,7 @@ public struct LibraryGridScreen<Destination: View>: View {
                     shelfBar
                 }
                 Group {
-                    if search.hasQuery || search.isSearching {
-                        LibrarySearchResultsView(
-                            model: search, notebooks: liveNotebooks
-                        ) { notebook, pageID in
-                            services.repository.touch(notebook)
-                            opened = OpenRequest(notebook: notebook, pageID: pageID)
-                        }
-                    } else if visibleNotebooks.isEmpty {
+                    if visibleNotebooks.isEmpty {
                         emptyState
                     } else {
                         grid
@@ -102,32 +89,7 @@ public struct LibraryGridScreen<Destination: View>: View {
             .navigationTitle("Library")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                BrandTitle()
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showTrash = true
-                    } label: {
-                        Image(systemName: trashCount > 0 ? "trash.fill" : "trash")
-                    }
-                    .accessibilityLabel("Recently deleted")
-                }
-            }
-            .searchable(text: $searchText, prompt: "Search notebooks and pages")
-            .onChange(of: searchText) { _, query in
-                search.search(
-                    query, targets: services.repository.searchTargets(),
-                    indexer: services.searchIndexer
-                )
-                // A library that has never been read matches on titles only, and
-                // "it can't find my notes" is the impression that leaves. Reading
-                // starts the moment someone actually searches.
-                if !query.trimmingCharacters(in: .whitespaces).isEmpty {
-                    search.indexLibrary(
-                        targets: services.repository.searchTargets(),
-                        indexer: services.searchIndexer,
-                        thenRepeat: query
-                    )
-                }
+                BrandTitle(height: 64)
             }
             .navigationDestination(item: $opened) { request in
                 destination(request.notebook, request.pageID)
@@ -159,11 +121,9 @@ public struct LibraryGridScreen<Destination: View>: View {
             .animation(.spring(duration: 0.28), value: selection.isActive)
         }
         .addContentFlows(choice: $addChoice, shelfID: activeShelfID) { notebook in
-            opened = OpenRequest(notebook: notebook, pageID: nil)
+            opened = LibraryOpenRequest(notebook: notebook, pageID: nil)
         }
-        .sheet(isPresented: $showSettings) { SettingsScreen() }
         .sheet(isPresented: $showNewShelf) { NewShelfSheet() }
-        .sheet(isPresented: $showTrash) { TrashScreen() }
         .sheet(item: $sharedPDF) { file in
             ShareSheet(items: [file.url])
         }
@@ -295,10 +255,11 @@ public struct LibraryGridScreen<Destination: View>: View {
         }
     }
 
+    // Creation, Trash and Settings moved to `LibraryTabScreen`'s tab bar; this
+    // stays for what's specific to THIS tab — managing shelves.
     private var floatingToolbar: some View {
         GlassEffectContainer {
             HStack(spacing: 4) {
-                AddContentMenu { choice in addChoice = choice }
                 DSGlassIconButton("New shelf", systemImage: "tray.and.arrow.down") {
                     showNewShelf = true
                 }
@@ -306,9 +267,6 @@ public struct LibraryGridScreen<Destination: View>: View {
                     DSGlassIconButton("Add books to shelf", systemImage: "plus.rectangle.on.folder") {
                         showAddBooks = true
                     }
-                }
-                DSGlassIconButton("Settings", systemImage: "gearshape") {
-                    showSettings = true
                 }
             }
             .padding(.horizontal, 10)

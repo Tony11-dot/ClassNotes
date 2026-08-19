@@ -93,7 +93,7 @@ extension CanvasPageView.Coordinator {
               // A scrub is an erasure, not a shape. Fitting it to an ellipse
               // under the pencil would beat the eraser to the same ink.
               !(toolState.scribbleToErase && ScribbleDetector.isErasureScribble(points)),
-              let snap = ShapeSnapper.liveSnap(points),
+              let snap = ShapeSnapper.liveSnap(points, holdRadius: CGFloat(toolState.snapTolerance)),
               let settled = ShapeSnapper.resolve(snap, handle: snap.handle) else { return false }
         liveSnap = snap
         pendingSnapPath = settled.path

@@ -18,6 +18,12 @@ public struct NovaSidebar: View {
     private let store: NovaChatStore
     private let notebookID: UUID?
     private let onClose: () -> Void
+    /// Renders the whole notebook down to one contact-sheet image plus a text
+    /// hint, for the "Read notebook" button. Nil hides the button — `NovaSidebar`
+    /// itself only knows the notebook's id, not how to render its pages, so
+    /// whoever presents it (the editor, which already has the notebook and the
+    /// document store) supplies this.
+    private let onReadNotebook: (() async -> (image: Data, pageCount: Int, textHint: String)?)?
 
     @State private var chat: NovaChat?
     @State private var draft = ""
@@ -27,17 +33,20 @@ public struct NovaSidebar: View {
     @State private var editingMessageID: UUID?
     /// Debounces transcript writes while a reply streams in token by token.
     @State private var saveTask: Task<Void, Never>?
+    @State private var readingNotebook = false
 
     public init(
         conversation: NovaConversation,
         store: NovaChatStore,
         notebookID: UUID?,
         chat: NovaChat? = nil,
+        onReadNotebook: (() async -> (image: Data, pageCount: Int, textHint: String)?)? = nil,
         onClose: @escaping () -> Void
     ) {
         self.conversation = conversation
         self.store = store
         self.notebookID = notebookID
+        self.onReadNotebook = onReadNotebook
         self.onClose = onClose
         _chat = State(initialValue: chat)
     }
@@ -88,6 +97,22 @@ public struct NovaSidebar: View {
                     .foregroundStyle(theme.inkSecondary.color)
             }
             Spacer()
+            if let onReadNotebook {
+                Button {
+                    readNotebook(using: onReadNotebook)
+                } label: {
+                    if readingNotebook {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: "doc.text.magnifyingglass")
+                    }
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(theme.ink.color)
+                .disabled(readingNotebook || conversation.streaming)
+                .accessibilityLabel("Read this notebook")
+                .help("Have NOVA read every page of this notebook")
+            }
             Button {
                 startNewChat()
             } label: {
@@ -134,7 +159,8 @@ public struct NovaSidebar: View {
                             onEdit: message.role == .user ? { beginEditing(message) } : nil
                         )
                         .id(message.id)
-                        if message.id == lastAssistantReplyID, !conversation.streaming {
+                        if message.id == lastAssistantReplyID, !conversation.streaming,
+                           !conversation.followUpSuggestions.isEmpty {
                             followUpRow
                         }
                     }
@@ -160,15 +186,14 @@ public struct NovaSidebar: View {
         return last.id
     }
 
-    /// A small fixed set of tappable follow-ups under NOVA's latest reply.
-    /// Client-side and static rather than model-generated — the response
-    /// shape is owned by the ClassMate backend (a separate repo), so adding a
-    /// real structured-suggestions field is out of scope here; these still
-    /// give the tap-to-send behaviour without needing a backend change.
+    /// Tappable follow-ups under NOVA's latest reply, generated from the real
+    /// conversation (`NovaConversation.followUpSuggestions`) rather than a fixed
+    /// list — no backend change needed, since generation reuses the same
+    /// chat-completion path a typed message already goes through.
     private var followUpRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                ForEach(Self.followUpSuggestions, id: \.self) { suggestion in
+                ForEach(conversation.followUpSuggestions, id: \.self) { suggestion in
                     Button {
                         conversation.send(suggestion)
                     } label: {
@@ -188,7 +213,18 @@ public struct NovaSidebar: View {
         .disabled(conversation.streaming)
     }
 
-    private static let followUpSuggestions = ["Explain further", "Summarize this", "Quiz me on this"]
+    private func readNotebook(
+        using render: @escaping () async -> (image: Data, pageCount: Int, textHint: String)?
+    ) {
+        readingNotebook = true
+        Task {
+            defer { readingNotebook = false }
+            guard let context = await render() else { return }
+            conversation.explainNotebook(
+                image: context.image, pageCount: context.pageCount, textHint: context.textHint
+            )
+        }
+    }
 
     private func beginEditing(_ message: AIMessage) {
         editingMessageID = message.id

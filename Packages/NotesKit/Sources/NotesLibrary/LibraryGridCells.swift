@@ -81,7 +81,7 @@ extension LibraryGridScreen {
                 return
             }
             services.repository.touch(notebook)
-            opened = OpenRequest(notebook: notebook, pageID: nil)
+            opened = LibraryOpenRequest(notebook: notebook, pageID: nil)
         } label: {
             VStack(alignment: .leading, spacing: 8) {
                 NotebookCoverTile(notebook: notebook)

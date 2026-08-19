@@ -430,7 +430,8 @@ extension EditorScreen {
                         textColorHex: toolState.codeBlockTextColorHex ?? CodeBlockSettings.defaultTextHex,
                         backgroundColorHex: toolState.codeBlockBackgroundColorHex ?? CodeBlockSettings.defaultBackgroundHex,
                         cornerRadius: toolState.codeBlockCornerRadius,
-                        language: toolState.codeBlockLanguage.rawValue
+                        language: toolState.codeBlockLanguage.rawValue,
+                        transparentBackground: toolState.codeBlockTransparentBackground
                     )
                 }
             }
@@ -445,7 +446,8 @@ extension EditorScreen {
                         lineColorHex: toolState.functionPlotLineColorHex ?? FunctionPlotSettings.defaultLineHex,
                         backgroundColorHex: toolState.functionPlotBackgroundColorHex
                             ?? FunctionPlotSettings.defaultBackgroundHex,
-                        cornerRadius: toolState.functionPlotCornerRadius
+                        cornerRadius: toolState.functionPlotCornerRadius,
+                        transparentBackground: toolState.functionPlotTransparentBackground
                     )
                 }
             }

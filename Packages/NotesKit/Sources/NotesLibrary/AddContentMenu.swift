@@ -54,34 +54,3 @@ public enum AddContentChoice: String, CaseIterable, Identifiable, Sendable {
         }
     }
 }
-
-/// The list that drops out of `+`. A menu (not a sheet) so a quick note is one tap
-/// away from anywhere in the library.
-struct AddContentMenu: View {
-    @Environment(\.theme) private var theme
-
-    let onChoose: (AddContentChoice) -> Void
-
-    var body: some View {
-        Menu {
-            ForEach(AddContentChoice.allCases) { choice in
-                // A scanner needs a camera; hide the row on hardware without one
-                // rather than opening a dead sheet.
-                if choice != .scan || DocumentScannerView.isSupported {
-                    Button {
-                        onChoose(choice)
-                    } label: {
-                        Label(choice.title, systemImage: choice.symbolName)
-                    }
-                }
-            }
-        } label: {
-            Image(systemName: "plus")
-                .font(.dsSystem(size: 17, weight: .medium))
-                .foregroundStyle(theme.ink.color)
-                .frame(width: 44, height: 44)
-                .contentShape(Circle())
-        }
-        .accessibilityLabel("New")
-    }
-}

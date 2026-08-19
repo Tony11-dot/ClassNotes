@@ -238,6 +238,19 @@ struct PenSettingsPanel: View {
                                     .font(.dsCaption).foregroundStyle(theme.inkSecondary.color)
                             }
                         }
+                        if toolState.snapShapes {
+                            PanelSlider(
+                                title: "Snap tolerance",
+                                readout: "\(Int(toolState.snapTolerance)) pt",
+                                value: Binding(
+                                    get: { toolState.snapTolerance },
+                                    set: { toolState.snapTolerance = $0 }
+                                ),
+                                range: ToolPreferences.snapToleranceRange,
+                                step: 1,
+                                hint: "How much the pencil may drift during the hold and still count as resting. Higher forgives more hand tremor."
+                            )
+                        }
                         Color.clear.frame(height: 1).id(Self.advancedAnchor)
                     }
                 }

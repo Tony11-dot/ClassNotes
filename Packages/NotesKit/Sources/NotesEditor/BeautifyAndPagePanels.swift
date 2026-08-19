@@ -328,10 +328,20 @@ struct CodeBlockPanel: View {
                     step: 1,
                     showsSteppers: true
                 )
+
+                Divider().overlay(theme.separator.color)
+                Toggle(isOn: $toolState.codeBlockTransparentBackground) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("No background")
+                            .font(.dsSubheadline).foregroundStyle(theme.ink.color)
+                        Text("Just the code, with no frame or box behind it.")
+                            .font(.dsCaption).foregroundStyle(theme.inkSecondary.color)
+                    }
+                }
             }
             .padding(18)
         }
-        .frame(width: 288, height: 460)
+        .frame(width: 288, height: 500)
         .background(theme.surfaceRaised.color)
     }
 }
@@ -389,10 +399,20 @@ struct FunctionPlotPanel: View {
                     step: 1,
                     showsSteppers: true
                 )
+
+                Divider().overlay(theme.separator.color)
+                Toggle(isOn: $toolState.functionPlotTransparentBackground) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("No background")
+                            .font(.dsSubheadline).foregroundStyle(theme.ink.color)
+                        Text("Just the axes and curve, with no frame or box behind them.")
+                            .font(.dsCaption).foregroundStyle(theme.inkSecondary.color)
+                    }
+                }
             }
             .padding(18)
         }
-        .frame(width: 288, height: 460)
+        .frame(width: 288, height: 500)
         .background(theme.surfaceRaised.color)
     }
 }

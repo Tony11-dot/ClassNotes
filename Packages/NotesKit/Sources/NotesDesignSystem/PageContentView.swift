@@ -202,6 +202,7 @@ public struct PageContentView: View {
             ?? theme.surfaceRaised
         let foreground = ThemeColor(hex: element.textColorHex ?? CodeBlockSettings.defaultTextHex)
             ?? theme.ink
+        let transparent = element.backgroundIsTransparent ?? false
         return Text(CodeBlockText.attributed(
             element.text ?? "",
             language: CodeLanguage(rawValue: element.codeLanguage ?? "") ?? .plaintext,
@@ -211,11 +212,13 @@ public struct PageContentView: View {
             .lineSpacing(element.extraLeading * scale)
             .padding(10 * scale)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(background.color, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(theme.separator.color, lineWidth: 0.5)
-            )
+            .background(transparent ? Color.clear : background.color, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .overlay {
+                if !transparent {
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .strokeBorder(theme.separator.color, lineWidth: 0.5)
+                }
+            }
     }
 
     /// Read-only render of a function-plot block — same styling rule as the
@@ -227,19 +230,25 @@ public struct PageContentView: View {
             ?? theme.surfaceRaised
         let lineColor = ThemeColor(hex: element.textColorHex ?? FunctionPlotSettings.defaultLineHex)
             ?? theme.accent
+        let transparent = element.backgroundIsTransparent ?? false
         return FunctionPlotView(
             expression: element.functionExpression ?? "",
             secondaryExpression: element.functionSecondaryExpression,
+            tertiaryExpression: element.functionTertiaryExpression,
             mode: element.resolvedPlotMode,
             window: element.functionWindow ?? FunctionPlotSettings().window,
-            lineColor: lineColor.color, axisColor: lineColor.color
+            lineColor: lineColor.color, axisColor: lineColor.color,
+            axisXLabel: element.resolvedAxisXLabel, axisYLabel: element.resolvedAxisYLabel,
+            axisZLabel: element.resolvedAxisZLabel
         )
             .padding(6 * scale)
-            .background(background.color, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(theme.separator.color, lineWidth: 0.5)
-            )
+            .background(transparent ? Color.clear : background.color, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .overlay {
+                if !transparent {
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .strokeBorder(theme.separator.color, lineWidth: 0.5)
+                }
+            }
     }
 
     private func font(for element: PageElement) -> Font {

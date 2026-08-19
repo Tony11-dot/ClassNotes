@@ -18,8 +18,13 @@ public struct TrashScreen: View {
 
     @State private var confirmEmpty = false
     @State private var purgeTarget: Notebook?
+    /// True when this is one of the library's own tabs rather than a sheet —
+    /// there's nothing to dismiss back to, so the "Done" button doesn't apply.
+    private let isTab: Bool
 
-    public init() {}
+    public init(isTab: Bool = false) {
+        self.isTab = isTab
+    }
 
     private var trashed: [Notebook] {
         allNotebooks
@@ -45,8 +50,10 @@ public struct TrashScreen: View {
             .navigationTitle("Recently Deleted")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
+                if !isTab {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Done") { dismiss() }
+                    }
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Button("Empty", role: .destructive) { confirmEmpty = true }

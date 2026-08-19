@@ -433,6 +433,7 @@ struct PageElementsLayer: View {
             ?? theme.surfaceRaised
         let foreground = ThemeColor(hex: element.textColorHex ?? CodeBlockSettings.defaultTextHex)
             ?? theme.ink
+        let transparent = element.backgroundIsTransparent ?? toolState.codeBlockTransparentBackground
 
         Group {
             if editingTextID == element.id {
@@ -468,11 +469,13 @@ struct PageElementsLayer: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
-        .background(background.color, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: radius, style: .continuous)
-                .strokeBorder(theme.separator.color, lineWidth: 0.5)
-        )
+        .background(transparent ? Color.clear : background.color, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+        .overlay {
+            if !transparent {
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .strokeBorder(theme.separator.color, lineWidth: 0.5)
+            }
+        }
     }
 
     // MARK: - Function plots
@@ -484,19 +487,24 @@ struct PageElementsLayer: View {
             ?? theme.surfaceRaised
         let lineColor = ThemeColor(hex: element.textColorHex ?? FunctionPlotSettings.defaultLineHex)
             ?? theme.accent
+        let transparent = element.backgroundIsTransparent ?? toolState.functionPlotTransparentBackground
 
         Group {
             if editingTextID == element.id {
                 FunctionPlotEditor(
                     element: element, scale: scale, lineColor: lineColor.color, backgroundColor: background,
-                    onCommit: { expression, secondary, window in
+                    onCommit: { draft in
                         var updated = element
-                        updated.functionExpression = expression
-                        updated.functionSecondaryExpression = secondary
-                        updated.functionWindow = window
+                        updated.functionExpression = draft.expression
+                        updated.functionSecondaryExpression = draft.secondary
+                        updated.functionTertiaryExpression = draft.tertiary
+                        updated.functionWindow = draft.window
+                        updated.axisXLabel = draft.axisXLabel
+                        updated.axisYLabel = draft.axisYLabel
+                        updated.axisZLabel = draft.axisZLabel
                         Task {
-                            let blank = expression.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                                && (secondary ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            let blank = [draft.expression, draft.secondary, draft.tertiary]
+                                .allSatisfy { ($0 ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                             if blank {
                                 await model.deleteElement(element.id, on: pageID)
                             } else {
@@ -511,18 +519,23 @@ struct PageElementsLayer: View {
                 FunctionPlotView(
                     expression: element.functionExpression ?? "",
                     secondaryExpression: element.functionSecondaryExpression,
+                    tertiaryExpression: element.functionTertiaryExpression,
                     mode: element.resolvedPlotMode,
                     window: element.functionWindow ?? toolState.functionPlotWindow,
-                    lineColor: lineColor.color, axisColor: lineColor.color
+                    lineColor: lineColor.color, axisColor: lineColor.color,
+                    axisXLabel: element.resolvedAxisXLabel, axisYLabel: element.resolvedAxisYLabel,
+                    axisZLabel: element.resolvedAxisZLabel
                 )
                 .padding(6 * scale)
             }
         }
-        .background(background.color, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: radius, style: .continuous)
-                .strokeBorder(theme.separator.color, lineWidth: 0.5)
-        )
+        .background(transparent ? Color.clear : background.color, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+        .overlay {
+            if !transparent {
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .strokeBorder(theme.separator.color, lineWidth: 0.5)
+            }
+        }
     }
 
     // MARK: - Chrome
@@ -735,10 +748,25 @@ private struct CodeBlockEditor: View {
     }
 }
 
+/// Everything a function-plot commit needs, bundled so `onCommit` doesn't grow
+/// an ever-longer tuple as the block gains fields (3D added a third
+/// expression and three axis labels).
+struct FunctionPlotDraft {
+    var expression: String
+    var secondary: String?
+    var tertiary: String?
+    var window: Double
+    var axisXLabel: String?
+    var axisYLabel: String?
+    var axisZLabel: String?
+}
+
 /// The in-place editor for a function-plot block: the curve, LIVE from the
 /// draft text as it's typed (validated through the same parser the read-only
-/// render uses), with the expression field(s) and a zoom stepper underneath.
-/// Parametric mode gets a second field for `y(t)`; every other mode gets one.
+/// render uses), with the expression field(s), a zoom control, and a math
+/// symbol keyboard — all fully editable, nothing locked to the panel.
+/// Parametric mode gets a second field for `y(t)`; 3D gets a third (`z(t)`)
+/// plus three axis-name fields; every other mode gets one.
 private struct FunctionPlotEditor: View {
     @Environment(\.theme) private var theme
 
@@ -746,17 +774,24 @@ private struct FunctionPlotEditor: View {
     let scale: CGFloat
     let lineColor: Color
     let backgroundColor: ThemeColor
-    let onCommit: (String, String?, Double) -> Void
+    let onCommit: (FunctionPlotDraft) -> Void
 
     @State private var draft: String
     @State private var secondaryDraft: String
+    @State private var tertiaryDraft: String
     @State private var window: Double
+    @State private var axisXDraft: String
+    @State private var axisYDraft: String
+    @State private var axisZDraft: String
+
+    private enum Field: Hashable { case primary, secondary, tertiary, axisX, axisY, axisZ }
+    @FocusState private var focusedField: Field?
 
     private var mode: PlotMode { element.resolvedPlotMode }
 
     init(
         element: PageElement, scale: CGFloat, lineColor: Color, backgroundColor: ThemeColor,
-        onCommit: @escaping (String, String?, Double) -> Void
+        onCommit: @escaping (FunctionPlotDraft) -> Void
     ) {
         self.element = element
         self.scale = scale
@@ -765,20 +800,35 @@ private struct FunctionPlotEditor: View {
         self.onCommit = onCommit
         _draft = State(initialValue: element.functionExpression ?? "")
         _secondaryDraft = State(initialValue: element.functionSecondaryExpression ?? "")
+        _tertiaryDraft = State(initialValue: element.functionTertiaryExpression ?? "")
         _window = State(initialValue: element.functionWindow ?? FunctionPlotSettings().window)
+        _axisXDraft = State(initialValue: element.axisXLabel ?? "")
+        _axisYDraft = State(initialValue: element.axisYLabel ?? "")
+        _axisZDraft = State(initialValue: element.axisZLabel ?? "")
     }
 
     var body: some View {
         VStack(spacing: 0) {
             FunctionPlotView(
-                expression: draft, secondaryExpression: secondaryDraft, mode: mode, window: window,
-                lineColor: lineColor, axisColor: lineColor
+                expression: draft, secondaryExpression: secondaryDraft, tertiaryExpression: tertiaryDraft,
+                mode: mode, window: window, lineColor: lineColor, axisColor: lineColor,
+                axisXLabel: axisXDraft.isEmpty ? "X" : axisXDraft,
+                axisYLabel: axisYDraft.isEmpty ? "Y" : axisYDraft,
+                axisZLabel: axisZDraft.isEmpty ? "Z" : axisZDraft
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             VStack(alignment: .leading, spacing: 4 * scale) {
-                fieldRow(mode.needsSecondaryExpression ? "x(t) =" : "\(mode.variableLabel) =", text: $draft)
+                fieldRow(mode.needsSecondaryExpression ? "x(t) =" : "\(mode.variableLabel) =", text: $draft, field: .primary)
                 if mode.needsSecondaryExpression {
-                    fieldRow("y(t) =", text: $secondaryDraft)
+                    fieldRow("y(t) =", text: $secondaryDraft, field: .secondary)
+                }
+                if mode.needsTertiaryExpression {
+                    fieldRow("z(t) =", text: $tertiaryDraft, field: .tertiary)
+                }
+                if mode == .threeD {
+                    fieldRow("X axis", text: $axisXDraft, field: .axisX, placeholder: "X")
+                    fieldRow("Y axis", text: $axisYDraft, field: .axisY, placeholder: "Y")
+                    fieldRow("Z axis", text: $axisZDraft, field: .axisZ, placeholder: "Z")
                 }
                 HStack(spacing: 6 * scale) {
                     Text("Zoom").font(.dsCaption2).foregroundStyle(lineColor.opacity(0.75))
@@ -792,6 +842,15 @@ private struct FunctionPlotEditor: View {
                     } label: {
                         Image(systemName: "minus.magnifyingglass")
                     }
+                    Spacer(minLength: 4)
+                    TextField("", value: $window, format: .number.precision(.fractionLength(0...1)))
+                        .keyboardType(.decimalPad)
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 44 * scale)
+                        .onChange(of: window) { _, newValue in
+                            window = min(max(newValue, FunctionPlotSettings.windowRange.lowerBound),
+                                         FunctionPlotSettings.windowRange.upperBound)
+                        }
                 }
                 .font(.dsCaption)
                 .foregroundStyle(lineColor)
@@ -800,28 +859,61 @@ private struct FunctionPlotEditor: View {
             .padding(8 * scale)
             .background(backgroundColor.color.opacity(0.6))
         }
-        .onDisappear {
-            onCommit(draft, mode.needsSecondaryExpression ? secondaryDraft : nil, window)
-        }
+        .onDisappear { commit() }
         .toolbar {
-            ToolbarItem(placement: .keyboard) {
-                Button("Done") {
-                    onCommit(draft, mode.needsSecondaryExpression ? secondaryDraft : nil, window)
+            ToolbarItemGroup(placement: .keyboard) {
+                ForEach(Self.mathTokens, id: \.label) { token in
+                    Button(token.label) { insert(token.insert) }
+                        .font(.dsCaption.monospaced())
                 }
-                .font(.dsSubheadline.weight(.semibold))
+                Spacer()
+                Button("Done") { commit() }
+                    .font(.dsSubheadline.weight(.semibold))
             }
         }
     }
 
-    private func fieldRow(_ label: String, text: Binding<String>) -> some View {
+    private func commit() {
+        onCommit(FunctionPlotDraft(
+            expression: draft,
+            secondary: mode.needsSecondaryExpression ? secondaryDraft : nil,
+            tertiary: mode.needsTertiaryExpression ? tertiaryDraft : nil,
+            window: window,
+            axisXLabel: mode == .threeD ? axisXDraft : nil,
+            axisYLabel: mode == .threeD ? axisYDraft : nil,
+            axisZLabel: mode == .threeD ? axisZDraft : nil
+        ))
+    }
+
+    /// Quick-insert math symbols — appended to whichever field is currently
+    /// focused (the primary field when none is), not cursor-precise: a plain
+    /// `TextField` doesn't expose a cursor position to insert at without a
+    /// UIKit bridge, and appending still covers writing an expression
+    /// left-to-right, the common case.
+    private static let mathTokens: [(label: String, insert: String)] = [
+        ("√(", "sqrt("), ("^", "^"), ("|x|", "abs("), ("/", "/"),
+        ("π", "pi"), ("θ", "theta"), ("sin(", "sin("), ("cos(", "cos("), ("tan(", "tan(")
+    ]
+
+    private func insert(_ token: String) {
+        switch focusedField {
+        case .secondary: secondaryDraft += token
+        case .tertiary: tertiaryDraft += token
+        case .axisX, .axisY, .axisZ: break // math tokens don't apply to axis names
+        case .primary, .none: draft += token
+        }
+    }
+
+    private func fieldRow(_ label: String, text: Binding<String>, field: Field, placeholder: String = "") -> some View {
         HStack(spacing: 6 * scale) {
             Text(label).font(.dsCaption.weight(.semibold)).foregroundStyle(lineColor)
-            TextField("", text: text)
+            TextField(placeholder, text: text)
                 .font(.dsCaption.monospaced())
                 .foregroundStyle(lineColor)
                 .textFieldStyle(.plain)
                 .autocorrectionDisabled(true)
                 .textInputAutocapitalization(.never)
+                .focused($focusedField, equals: field)
         }
     }
 }
@@ -834,6 +926,7 @@ private extension PlotMode {
         case .cartesianX: "x"
         case .polar: "r"
         case .parametric: "x(t)"
+        case .threeD: "x(t)"
         }
     }
 }

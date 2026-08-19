@@ -175,6 +175,56 @@ public struct NotebookExporter {
         }
     }
 
+    /// One downscaled "contact sheet" image — every page (up to `maxPages`)
+    /// tiled into a grid — for handing the WHOLE notebook to a vision model in
+    /// one attachment.
+    ///
+    /// The backend only accepts one `imageBase64` per turn, so there's no way to
+    /// send an actual multi-page PDF — this is the same "a picture, not a
+    /// document format" idea the AI snip already relies on (`NovaSnip`), scaled
+    /// up to the whole notebook instead of one crop. Tiles are rendered small
+    /// and JPEG-compressed, the same "shrink it first so it stays affordable"
+    /// posture the snip flow uses.
+    public func contactSheet(
+        notebook: Notebook, pageIDs: Set<UUID>? = nil, maxPages: Int = 24
+    ) async -> (image: Data, pageCount: Int)? {
+        guard let manifest = try? await store.manifest(for: notebook.id) else { return nil }
+        let wanted = manifest.pages.filter { pageIDs?.contains($0.id) ?? true }
+        guard !wanted.isEmpty else { return nil }
+        let capped = Array(wanted.prefix(maxPages))
+
+        let tileWidth: CGFloat = 320
+        var tiles: [UIImage] = []
+        for page in capped {
+            guard let full = await render(page: page, of: notebook, scale: 1) else { continue }
+            let tileHeight = tileWidth * (full.size.height / max(full.size.width, 1))
+            let tile = UIGraphicsImageRenderer(size: CGSize(width: tileWidth, height: tileHeight))
+                .image { _ in full.draw(in: CGRect(x: 0, y: 0, width: tileWidth, height: tileHeight)) }
+            tiles.append(tile)
+        }
+        guard !tiles.isEmpty else { return nil }
+
+        let columns = min(4, tiles.count)
+        let rows = Int((Double(tiles.count) / Double(columns)).rounded(.up))
+        let spacing: CGFloat = 8
+        let maxTileHeight = tiles.map(\.size.height).max() ?? tileWidth
+        let sheetSize = CGSize(
+            width: CGFloat(columns) * tileWidth + CGFloat(columns + 1) * spacing,
+            height: CGFloat(rows) * maxTileHeight + CGFloat(rows + 1) * spacing
+        )
+        let sheet = UIGraphicsImageRenderer(size: sheetSize).image { context in
+            UIColor.white.setFill()
+            context.fill(CGRect(origin: .zero, size: sheetSize))
+            for (index, tile) in tiles.enumerated() {
+                let x = spacing + CGFloat(index % columns) * (tileWidth + spacing)
+                let y = spacing + CGFloat(index / columns) * (maxTileHeight + spacing)
+                tile.draw(in: CGRect(x: x, y: y, width: tile.size.width, height: tile.size.height))
+            }
+        }
+        guard let data = sheet.jpegData(compressionQuality: 0.7) else { return nil }
+        return (data, capped.count)
+    }
+
     private func render(page: PageRecord, of notebook: Notebook, scale: CGFloat) async -> UIImage? {
         let size = page.logicalSize
         let ink = await inkImage(page: page, notebook: notebook.id, scale: scale)

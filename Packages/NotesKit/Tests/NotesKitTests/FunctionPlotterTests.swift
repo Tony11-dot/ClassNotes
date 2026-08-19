@@ -224,4 +224,96 @@ struct FunctionPlotSamplerTests {
         let expression = try FunctionExpression("x", variable: "x")
         #expect(FunctionPlotSampler.explicit(expression, window: 0, swapped: false).isEmpty)
     }
+
+    @Test("A 3D parametric curve (a helix) samples real points via the isometric projection")
+    func parametric3DSamplesAHelix() throws {
+        let x = try FunctionExpression("cos(t)", variable: "t")
+        let y = try FunctionExpression("sin(t)", variable: "t")
+        let z = try FunctionExpression("t/3", variable: "t")
+        let runs = FunctionPlotSampler.parametric3D(x: x, y: y, z: z, window: 10)
+        #expect(!runs.isEmpty)
+        #expect(runs.flatMap { $0 }.count > 10)
+    }
+
+    @Test("Three expressions all evaluating to zero project to the isometric origin")
+    func parametric3DAllZeroIsOrigin() throws {
+        let zero = try FunctionExpression("0", variable: "t")
+        let runs = FunctionPlotSampler.parametric3D(x: zero, y: zero, z: zero, window: 5)
+        let allPoints = runs.flatMap { $0 }
+        #expect(!allPoints.isEmpty)
+        #expect(allPoints.allSatisfy { abs($0.x) < 0.01 && abs($0.y) < 0.01 })
+    }
+
+    @Test("isometric places a pure Y point straight up, and pure X/Z symmetrically")
+    func isometricProjection() {
+        let up = FunctionPlotSampler.isometric(x: 0, y: 5, z: 0)
+        #expect(abs(up.x) < 0.0001)
+        #expect(up.y == 5)
+        let x = FunctionPlotSampler.isometric(x: 5, y: 0, z: 0)
+        let z = FunctionPlotSampler.isometric(x: 0, y: 0, z: 5)
+        // X and Z are mirror images across the vertical axis in this projection.
+        #expect(abs(x.x + z.x) < 0.0001)
+        #expect(abs(x.y - z.y) < 0.0001)
+    }
+}
+
+@Suite("3D function-plot mode")
+struct ThreeDPlotModeTests {
+    @Test("threeD needs both a secondary AND a tertiary expression field")
+    func needsAllThreeFields() {
+        #expect(PlotMode.threeD.needsSecondaryExpression)
+        #expect(PlotMode.threeD.needsTertiaryExpression)
+        #expect(!PlotMode.cartesianY.needsTertiaryExpression)
+        #expect(!PlotMode.parametric.needsTertiaryExpression)
+    }
+
+    @Test("An element with 3D fields round-trips them all, including axis labels")
+    func threeDElementRoundTrips() throws {
+        let element = PageElement(
+            kind: .functionPlot, x: 0, y: 0, width: 200, height: 200,
+            functionExpression: "cos(t)", functionSecondaryExpression: "sin(t)",
+            functionTertiaryExpression: "t/3", functionMode: PlotMode.threeD.rawValue, functionWindow: 8,
+            axisXLabel: "Time (s)", axisYLabel: "Height (m)", axisZLabel: "Depth (m)"
+        )
+        let data = try JSONEncoder().encode(element)
+        let decoded = try JSONDecoder().decode(PageElement.self, from: data)
+        #expect(decoded.resolvedPlotMode == .threeD)
+        #expect(decoded.functionTertiaryExpression == "t/3")
+        #expect(decoded.axisXLabel == "Time (s)")
+        #expect(decoded.axisYLabel == "Height (m)")
+        #expect(decoded.axisZLabel == "Depth (m)")
+    }
+
+    @Test("Unlabeled axes resolve to plain letters")
+    func unlabeledAxesResolveToLetters() {
+        let element = PageElement(kind: .functionPlot, x: 0, y: 0, width: 100, height: 100)
+        #expect(element.resolvedAxisXLabel == "X")
+        #expect(element.resolvedAxisYLabel == "Y")
+        #expect(element.resolvedAxisZLabel == "Z")
+    }
+}
+
+@Suite("Transparent-background option")
+struct TransparentBackgroundTests {
+    @Test("CodeBlockSettings and FunctionPlotSettings default to a background, and total-decode when missing")
+    func defaultsAndTotalDecode() throws {
+        #expect(CodeBlockSettings().transparentBackground == false)
+        #expect(FunctionPlotSettings().transparentBackground == false)
+
+        let json = "{}"
+        let code = try JSONDecoder().decode(CodeBlockSettings.self, from: Data(json.utf8))
+        let plot = try JSONDecoder().decode(FunctionPlotSettings.self, from: Data(json.utf8))
+        #expect(code.transparentBackground == false)
+        #expect(plot.transparentBackground == false)
+    }
+
+    @Test("An element can override transparency independently of its tool's default")
+    func elementOverridesTool() {
+        let transparent = PageElement(kind: .codeBlock, x: 0, y: 0, width: 10, height: 10, backgroundIsTransparent: true)
+        let opaque = PageElement(kind: .codeBlock, x: 0, y: 0, width: 10, height: 10, backgroundIsTransparent: false)
+        let unset = PageElement(kind: .codeBlock, x: 0, y: 0, width: 10, height: 10)
+        #expect(transparent.backgroundIsTransparent == true)
+        #expect(opaque.backgroundIsTransparent == false)
+        #expect(unset.backgroundIsTransparent == nil)
+    }
 }

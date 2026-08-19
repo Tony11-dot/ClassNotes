@@ -190,9 +190,19 @@ final class PageCanvasView: PKCanvasView {
         // either". A whiteboard's own pinch/pan (`allowsZoom`) genuinely needs
         // finger touches, so it keeps claiming everything as before.
         guard allowsZoom else {
-            let isPencil = event?.allTouches?.contains { $0.type == .pencil } ?? true
-            guard isPencil else { return nil }
-            return super.hitTest(point, with: event)
+            // A touch's `type` can still be ambiguous at the exact instant
+            // `hitTest` runs for it — and whatever this call returns is what the
+            // WHOLE gesture is routed through, not just its first sample. Asking
+            // "is this positively a pencil?" meant any such ambiguity silently
+            // handed a real pencil stroke to the scroll view underneath for its
+            // entire duration — the pen stopped drawing and started panning the
+            // page instead. Asking the opposite question — "is this positively a
+            // FINGER?" — keeps that same ambiguity resolving to the canvas, so a
+            // mistake costs at worst a missed finger-scroll, never a missed
+            // pencil stroke.
+            let isFinger = event?.allTouches?.contains { $0.type == .direct } ?? false
+            guard isFinger else { return super.hitTest(point, with: event) }
+            return nil
         }
         return super.hitTest(point, with: event)
     }
@@ -362,6 +372,7 @@ struct CanvasPageView: UIViewRepresentable {
         // visually behind it (images, files, text, links) stay reachable.
         canvas.interceptsTouches = context.coordinator.shouldEnableDrawing() || allowsZoom
         canvas.overrideUserInterfaceStyle = theme.isDark ? .dark : .light
+        context.coordinator.dwellWatcher?.holdRadius = CGFloat(toolState.snapTolerance)
     }
 
     static func dismantleUIView(_ canvas: PageCanvasView, coordinator: Coordinator) {
@@ -600,7 +611,8 @@ struct CanvasPageView: UIViewRepresentable {
                     let stroke = drawing.strokes[index]
                     // Fallback for a hold the live watcher missed. Same result,
                     // just a beat later.
-                    if toolState.snapShapes, let snapped = ShapeSnapper.snapped(stroke) {
+                    if toolState.snapShapes,
+                       let snapped = ShapeSnapper.snapped(stroke, holdRadius: CGFloat(toolState.snapTolerance)) {
                         drawing.strokes[index] = snapped
                         changed = true
                         snappedLate = true

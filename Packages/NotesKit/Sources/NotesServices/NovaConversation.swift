@@ -10,9 +10,15 @@ public final class NovaConversation {
     public private(set) var messages: [AIMessage] = []
     public private(set) var streaming = false
     public private(set) var errorText: String?
+    /// Up to 3 tap-to-send follow-ups for the LATEST assistant reply, generated
+    /// from the real conversation — not a fixed list. Empty while none have
+    /// been generated yet (a fresh turn) or generation failed/returned nothing;
+    /// the UI simply hides the row rather than falling back to something stale.
+    public private(set) var followUpSuggestions: [String] = []
 
     private let provider: AIProvider
     private var streamTask: Task<Void, Never>?
+    private var followUpTask: Task<Void, Never>?
 
     /// The fallback identity. In proxy mode the server replaces this with NOVA's
     /// authoritative prompt, so keep the two in step (`ai.service.ts`).
@@ -88,6 +94,26 @@ public final class NovaConversation {
         beginAssistantReply()
     }
 
+    /// "Read this notebook": seeds NOVA with a contact-sheet picture of every
+    /// page (see `NotebookExporter.contactSheet`) plus each page's recognized
+    /// text, and asks for an overview. Mirrors `explainRegion` exactly — same
+    /// "picture is what the answer is based on, recognized text just rides
+    /// along as a hint" shape, just covering the whole notebook instead of one
+    /// snip.
+    public func explainNotebook(image: Data, pageCount: Int, textHint: String) {
+        errorText = nil
+        var prompt = "Here's a contact sheet of all \(pageCount) page"
+            + (pageCount == 1 ? "" : "s") + " of my notebook, laid out together. "
+            + "Give me a quick overview of what's in it, then answer anything else "
+            + "I ask using this as context."
+        let hint = textHint.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !hint.isEmpty {
+            prompt += "\n\n(Recognized text from the pages, in case it helps: \"\(hint)\")"
+        }
+        messages.append(AIMessage(role: .user, content: prompt, imageData: image))
+        beginAssistantReply()
+    }
+
     /// Edits a message the user already sent. Everything from that point on
     /// (the old reply included) is replaced, and NOVA answers again — as if
     /// the edited text had been what was sent to begin with, not a second
@@ -104,8 +130,10 @@ public final class NovaConversation {
 
     public func reset() {
         streamTask?.cancel()
+        followUpTask?.cancel()
         streaming = false
         errorText = nil
+        followUpSuggestions = []
         messages = [Self.systemPrompt]
     }
 
@@ -130,8 +158,10 @@ public final class NovaConversation {
     /// conversation state), so a restored turn carries its text alone.
     public func restore(turns: [NovaChatTurn]) {
         streamTask?.cancel()
+        followUpTask?.cancel()
         streaming = false
         errorText = nil
+        followUpSuggestions = []
         messages = [Self.systemPrompt] + turns.map { turn in
             AIMessage(
                 id: turn.id,
@@ -145,6 +175,8 @@ public final class NovaConversation {
         // Cancel any in-flight stream so two replies can never interleave into
         // the transcript (e.g. explain() seeded while a send() is still running).
         streamTask?.cancel()
+        followUpTask?.cancel()
+        followUpSuggestions = []
         streaming = true
         var assistant = AIMessage(role: .assistant, content: "")
         messages.append(assistant)
@@ -165,6 +197,7 @@ public final class NovaConversation {
                         messages[index] = assistant
                     }
                 }
+                if !assistant.content.isEmpty { generateFollowUps() }
             } catch AIError.missingKey {
                 errorText = "Sign in to use NOVA."
                 removeEmptyAssistant(at: index)
@@ -174,6 +207,52 @@ public final class NovaConversation {
             }
             streaming = false
         }
+    }
+
+    /// Asks the SAME provider for 2-3 short follow-ups grounded in the real
+    /// transcript, as a throwaway extra turn — never appended to `messages`, so
+    /// it never shows up as a message and never gets persisted. No backend
+    /// change needed: this reuses the exact chat-completion path `send` does,
+    /// just with a one-off trailing instruction. A failure or empty result just
+    /// leaves `followUpSuggestions` empty; the UI hides the row in that case.
+    private func generateFollowUps() {
+        let request = messages.filter { $0.role != .assistant || !$0.content.isEmpty } + [
+            AIMessage(role: .user, content: """
+                Suggest exactly 3 short follow-up questions about what we just \
+                discussed, one per line, no numbering, each under 6 words.
+                """)
+        ]
+        followUpTask = Task { [provider] in
+            var raw = ""
+            do {
+                for try await token in provider.streamReply(to: request) {
+                    if Task.isCancelled { return }
+                    raw += token
+                }
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            followUpSuggestions = Self.parseFollowUps(NovaReply.display(raw))
+        }
+    }
+
+    /// Splits a raw "one suggestion per line" reply into up to 3 clean, tappable
+    /// strings — stripping numbering/bullet prefixes the model adds despite being
+    /// asked not to, and dropping blank lines.
+    static func parseFollowUps(_ raw: String) -> [String] {
+        var results: [String] = []
+        for rawLine in raw.split(separator: "\n", omittingEmptySubsequences: true) {
+            var line = rawLine.trimmingCharacters(in: .whitespaces)
+            if let range = line.range(of: #"^(\d+[.)]|[-•*])\s*"#, options: .regularExpression) {
+                line.removeSubrange(range)
+            }
+            line = line.trimmingCharacters(in: .whitespaces)
+            guard !line.isEmpty else { continue }
+            results.append(line)
+            if results.count == 3 { break }
+        }
+        return results
     }
 
     private func removeEmptyAssistant(at index: Int) {
