@@ -699,23 +699,49 @@ struct EraseCatcherLayer: View {
                         x: (element.x + element.width / 2) * scale,
                         y: (element.y + element.height / 2) * scale
                     )
-                    .gesture(
-                        DragGesture(minimumDistance: 0)
-                            .onChanged { _ in
-                                guard erasedElementIDs.insert(element.id).inserted else { return }
-                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                let before = elements
-                                let after = before.filter { $0.id != element.id }
-                                tracker?.registerElementStep(
-                                    pageID: pageID, elementsBefore: before, elementsAfter: after, named: "Erase"
-                                )
-                                Task { await model.deleteElement(element.id, on: pageID) }
-                            }
-                    )
+                    .gesture(eraseGesture(for: element))
+            }
+            // Fills paint UNDER the ink (`PageFillLayer`) and are never part of
+            // either `PageElementsLayer` instance — so, like text/code/plots
+            // above, the eraser can only ever reach one by catching it up here,
+            // ABOVE the ink. Unlike those, a fill isn't a box: its outline is an
+            // arbitrary flood-fill polygon, so the hit area traces that same
+            // outline (scaled exactly as `PageFillLayer` draws it) instead of a
+            // rectangle — erasing only where the paint actually is, not the
+            // shape's whole bounding box.
+            ForEach(elements.filter { $0.kind == .fill }) { element in
+                Color.clear
+                    .contentShape(fillOutline(element))
+                    .frame(width: displaySize.width, height: displaySize.height)
+                    .gesture(eraseGesture(for: element))
             }
         }
         .frame(width: displaySize.width, height: displaySize.height)
         .allowsHitTesting(toolState.tool == .eraser)
+    }
+
+    private func fillOutline(_ element: PageElement) -> Path {
+        var path = Path()
+        let scaled = element.points.map { CGPoint(x: $0.x * scale, y: $0.y * scale) }
+        guard let first = scaled.first else { return path }
+        path.move(to: first)
+        for point in scaled.dropFirst() { path.addLine(to: point) }
+        path.closeSubpath()
+        return path
+    }
+
+    private func eraseGesture(for element: PageElement) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { _ in
+                guard erasedElementIDs.insert(element.id).inserted else { return }
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                let before = elements
+                let after = before.filter { $0.id != element.id }
+                tracker?.registerElementStep(
+                    pageID: pageID, elementsBefore: before, elementsAfter: after, named: "Erase"
+                )
+                Task { await model.deleteElement(element.id, on: pageID) }
+            }
     }
 }
 

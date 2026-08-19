@@ -100,12 +100,15 @@ public struct LibraryGridScreen<Destination: View>: View {
                 destination(request.notebook, request.pageID)
             }
             .onChange(of: opened) { _, new in isDetailOpen = new != nil }
-            .overlay(alignment: .bottom) {
+            // Both bars are safe-area INSETS, never an overlay: an overlay only
+            // aligns to this view's OWN frame, which is exactly the bug — it
+            // ignored the room the shell's own bottom tab bar already reserves,
+            // so this floated at the same 24pt-from-the-bottom spot the tab bar
+            // occupies and sat on top of "Add shelf". A safeAreaInset stacks
+            // with the ancestor's instead of competing with it.
+            .safeAreaInset(edge: .bottom) {
                 if !selection.isActive { floatingToolbar }
             }
-            // The bar is a safe-area INSET, not an overlay: it reserves its own
-            // room instead of floating over whatever the system has already put
-            // at the bottom edge, so nothing lands on top of its buttons.
             .safeAreaInset(edge: .bottom) {
                 if selection.isActive {
                     LibrarySelectionBar(
@@ -280,7 +283,7 @@ public struct LibraryGridScreen<Destination: View>: View {
             .dsGlass(in: Capsule(), interactive: true)
         }
         .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
-        .padding(.bottom, 24)
+        .padding(.bottom, 12)
     }
 
     private var renameAlertBinding: Binding<Bool> {

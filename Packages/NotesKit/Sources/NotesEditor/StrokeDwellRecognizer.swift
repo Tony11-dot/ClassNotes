@@ -30,6 +30,18 @@ final class StrokeDwellRecognizer: UIGestureRecognizer {
     /// hand that would comfortably hold still on a 1:1 page drifted the shape
     /// snap open on any page shown at less than full size.
     var holdRadius: CGFloat = ShapeSnapper.holdRadius
+    /// A real hold is never perfectly still — the hand tremors continuously,
+    /// often past `holdRadius` itself. The first version of this watcher reset
+    /// BOTH the anchor and the rest clock the instant any single sample crossed
+    /// `holdRadius`, which is why the dwell only ever seemed to fire on release:
+    /// tremor with an amplitude anywhere near the radius made nearly every
+    /// sample look like "moved again," so the 0.28s clock could never actually
+    /// accumulate. `escapeRadius` is a second, larger radius — only a sample
+    /// past THIS one is treated as a genuine, deliberate move; ordinary tremor
+    /// inside it is absorbed (the anchor doesn't move, the clock doesn't
+    /// restart), which is what holding still like any other app actually
+    /// requires of a hand that's never truly motionless.
+    private static let escapeMultiplier: CGFloat = 2.2
     /// The canvas's current zoom, read fresh on every sample — see `holdRadius`.
     var zoomScale: (() -> CGFloat)?
     /// How long it must rest before the shape settles. Shorter than the
@@ -156,8 +168,9 @@ final class StrokeDwellRecognizer: UIGestureRecognizer {
 
         guard let anchor = restAnchor else { return }
         let effectiveRadius = holdRadius / max(zoomScale?() ?? 1, 0.05)
-        if hypot(point.x - anchor.x, point.y - anchor.y) > effectiveRadius {
-            // Moving again before anything settled: restart the clock from here.
+        if hypot(point.x - anchor.x, point.y - anchor.y) > effectiveRadius * Self.escapeMultiplier {
+            // A genuine move away, not tremor: the anchor follows and the clock
+            // restarts from here.
             restAnchor = point
             restSince = CACurrentMediaTime()
             nextAttempt = 0
@@ -166,6 +179,9 @@ final class StrokeDwellRecognizer: UIGestureRecognizer {
             // it was drawn.
             if !isTakenOver { onResume?() }
         }
+        // Otherwise: ordinary tremor within the escape radius. Leaving the
+        // anchor and the clock alone is what lets a hand that never stops
+        // shaking still accumulate a hold — see `escapeMultiplier` above.
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {

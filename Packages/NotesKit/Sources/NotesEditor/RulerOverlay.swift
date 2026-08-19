@@ -108,6 +108,16 @@ struct RulerOverlay: View {
                 .overlay(
                     Rectangle().stroke(theme.accent.color.opacity(0.7), lineWidth: 1)
                 )
+                // Decoration only. Left hit-testable, this filled rectangle sits
+                // as a SIBLING of `FingerDragArea` below, covering the exact same
+                // frame — the ruler's own body, i.e. precisely where a line is
+                // drawn against it. `FingerHitTestView.hitTest` correctly passes
+                // a Pencil touch through, but that only means IT declines; a
+                // plain SwiftUI shape with no pencil-awareness at all was right
+                // there to claim it instead, which is why writing hard against
+                // the ruler could suddenly stop registering: the pencil was
+                // being swallowed by the ruler's own paint, not by its drag area.
+                .allowsHitTesting(false)
                 .overlay(
                     FingerDragArea(
                         onChanged: { value in
@@ -179,6 +189,10 @@ struct RulerOverlay: View {
         Circle()
             .fill(theme.accent.color)
             .overlay(Circle().stroke(.white, lineWidth: 2))
+            // Same reasoning as the ruler body: decoration must not be
+            // hit-testable, or it swallows touches `FingerDragArea` below
+            // deliberately passed through.
+            .allowsHitTesting(false)
             .overlay(
                 FingerDragArea(
                     onChanged: { value in

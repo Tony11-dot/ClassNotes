@@ -175,6 +175,15 @@ public struct FunctionPlotView: View {
         }
     }
 
+    /// How close a tick may come to an axis's own arrowhead before it's
+    /// skipped. The arrowhead's `headLength` is 8pt; a tick landing at or past
+    /// that point renders its number sitting under/past the arrow itself — an
+    /// axis is supposed to visibly END at the arrowhead, not keep sprouting
+    /// labelled values past it. Only the POSITIVE end of each axis has an
+    /// arrowhead (the negative side is a bare line), so only ticks approaching
+    /// that end are ever skipped.
+    private static let arrowheadClearance: CGFloat = 14
+
     /// A filled triangle at `tip`, pointing along the `from → tip` direction.
     private func drawArrowhead(at tip: CGPoint, from origin: CGPoint, in context: inout GraphicsContext) {
         let dx = tip.x - origin.x, dy = tip.y - origin.y
@@ -205,9 +214,14 @@ public struct FunctionPlotView: View {
         let length = max(hypot(dx, dy), 0.0001)
         let perpX = -dy / length, perpY = dx / length
         let tickHalf: CGFloat = 4
+        let clearanceT = length > 0 ? Self.arrowheadClearance / length : 0
         var value = interval
         while value <= abs(valueAtTip) + 0.0001 {
             let t = CGFloat(value / abs(valueAtTip))
+            if t > 1 - clearanceT {
+                value += interval
+                continue
+            }
             let point = CGPoint(x: origin.x + dx * t, y: origin.y + dy * t)
             drawTick(at: point, perpX: perpX, perpY: perpY, halfLength: tickHalf, label: display.tickFormat.label(for: value), in: &context)
             value += interval
@@ -223,6 +237,7 @@ public struct FunctionPlotView: View {
             for signedValue in [value, -value] {
                 let point = toView(CGPoint(x: signedValue, y: 0), size: size)
                 guard point.x >= 0, point.x <= size.width else { continue }
+                if signedValue > 0, size.width - point.x < Self.arrowheadClearance { continue }
                 drawTick(at: point, perpX: 0, perpY: 1, halfLength: 4, label: display.tickFormat.label(for: signedValue), in: &context)
             }
             value += interval
@@ -237,6 +252,7 @@ public struct FunctionPlotView: View {
             for signedValue in [value, -value] {
                 let point = toView(CGPoint(x: 0, y: signedValue), size: size)
                 guard point.y >= 0, point.y <= size.height else { continue }
+                if signedValue > 0, point.y < Self.arrowheadClearance { continue }
                 drawTick(at: point, perpX: 1, perpY: 0, halfLength: 4, label: display.tickFormat.label(for: signedValue), in: &context)
             }
             value += interval

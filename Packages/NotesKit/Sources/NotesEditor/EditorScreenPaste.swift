@@ -18,7 +18,7 @@ extension EditorScreen {
             } label: {
                 HStack(spacing: 8) {
                     if let snip = copiedSnip {
-                        Image(uiImage: snip)
+                        Image(uiImage: snip.image)
                             .resizable()
                             .scaledToFit()
                             .frame(width: 26, height: 26)

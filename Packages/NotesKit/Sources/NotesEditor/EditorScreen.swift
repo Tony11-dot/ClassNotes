@@ -32,8 +32,10 @@ public struct EditorScreen: View {
     /// page can work out where it crosses that page and rule the ink along it.
     @State var rulerLine: RulerLine?
     /// The last region the lasso copied, kept so it can be pasted back onto the
-    /// page rather than only into another app.
-    @State var copiedSnip: UIImage?
+    /// page rather than only into another app. Carries its own source page and
+    /// frame (see `CopiedSnip`) so Paste still lands in the right place even
+    /// after the lasso selection itself has been dismissed.
+    @State var copiedSnip: CopiedSnip?
     @State var explainMode = false
     @State var showPages = false
     @State var addingBottom = false
@@ -49,6 +51,16 @@ public struct EditorScreen: View {
     /// Pinch zoom over the page stack, and the value it started the pinch at.
     @State var pageZoom: CGFloat = 1
     @State var zoomAnchor: CGFloat = 1
+    /// Live-tracked scroll geometry of the page stack (offset, content/container
+    /// size, insets) — read continuously via `onScrollGeometryChange` so the pinch
+    /// gesture can anchor to it without ever reading UIKit directly.
+    @State var pageScrollGeo = PageScrollGeometry()
+    /// The point the current pinch is anchored to, captured once when the pinch
+    /// begins and held fixed for the rest of that gesture — see `zoomGesture`.
+    @State var pinchZoomAnchor: PinchZoomAnchor?
+    /// The scroll position bound to the page stack, driven programmatically to
+    /// keep the pinch anchor under the fingers while `pageZoom` changes.
+    @State var pageScrollPosition = ScrollPosition()
     /// What the lasso is currently holding, and on which page.
     @State var lassoSelection: PageSelection?
     /// Bumped when something outside the rail asks for the current pen's panel —
@@ -750,6 +762,51 @@ struct Overscroll: Equatable {
     var top: CGFloat
     var bottom: CGFloat
     var scrollable: Bool
+}
+
+/// The page stack's scroll geometry, read live via `onScrollGeometryChange` so
+/// pinch-to-zoom can anchor to the real on-screen offset instead of reading
+/// UIKit directly. `contentOffset` is in the same coordinate space UIScrollView
+/// always uses: the content-space point aligned with the viewport's top-left,
+/// already accounting for insets (rubber-banding aside).
+struct PageScrollGeometry: Equatable {
+    var contentOffset: CGPoint = .zero
+    var contentSize: CGSize = .zero
+    var containerSize: CGSize = .zero
+}
+
+/// Where a pinch is anchored, captured once when the gesture begins and held
+/// fixed for its whole duration — Photos-style zoom keeps the point under the
+/// fingers still, not a running average of where the fingers happen to be.
+///
+/// `pageFraction` is exact: the page stack is horizontally self-similar (every
+/// page and its centering margin scale by the same width ratio), so the anchor's
+/// position across the page's own width maps back losslessly at any zoom.
+/// `totalHeightFraction` is a deliberate approximation: the stack's vertical
+/// content is NOT self-similar (page heights scale with zoom, but the 32pt
+/// `LazyVStack` spacing and 28pt top/bottom padding between them don't), so
+/// there is no exact affine map from an arbitrary content-Y to a new zoom. We
+/// anchor to "the same fraction of total content height stays above the pinch
+/// point" instead. That is exact within a single page (which does scale
+/// uniformly) and only approximate for a pinch centered in the gap between two
+/// pages — an acceptable tradeoff since a gap has no ink to keep still under
+/// the finger anyway.
+struct PinchZoomAnchor {
+    /// Where the pinch started, in the page stack's own (viewport) coordinate
+    /// space — this is what stays fixed on screen for the whole gesture.
+    var viewportPoint: CGPoint
+    /// The zoom the pinch started from.
+    var startZoom: CGFloat
+    /// Horizontal position across the page, 0...1, clamped — 0/1 if the pinch
+    /// started in the side gutters rather than over a page.
+    var pageFraction: CGFloat
+    /// Vertical position as a fraction of the whole scrollable content height.
+    var totalHeightFraction: CGFloat
+    /// The total content height the pinch started from, so the vertical
+    /// content-height ratio can be reconstructed without re-reading live
+    /// geometry mid-gesture (which is what would risk the read/write feedback
+    /// loop the fix has to avoid).
+    var startContentHeight: CGFloat
 }
 
 /// Identifiable wrapper so recognized text can drive a `.sheet(item:)`.

@@ -134,6 +134,16 @@ public final class ActiveCanvasTracker {
     ) {
         guard let canvas = canvases[pageID]?.view as? PageCanvasView,
               let coordinator = canvas.delegate as? CanvasPageView.Coordinator else { return }
+        // Ink commits on a debounce (`scheduleInkPass`/`scheduleUndoCommit`),
+        // never synchronously the moment a stroke ends — so a stroke drawn a
+        // moment ago can still be sitting uncommitted when an element action
+        // (erase, drag, tape toggle) fires and pushes ITS step immediately.
+        // Left alone, the two steps land on the stack out of order — the ink
+        // step arrives late, on top of the element step that came after it in
+        // real time — so one Undo took back the wrong half of what the user
+        // just did. Flushing any pending ink into its own step first keeps
+        // every step on the stack in the order the user actually did them.
+        coordinator.commitUndoStep()
         coordinator.pushStep(
             restoring: drawingBefore ?? canvas.drawing, elements: elementsBefore,
             counterDrawing: drawingAfter ?? canvas.drawing, counterElements: elementsAfter,

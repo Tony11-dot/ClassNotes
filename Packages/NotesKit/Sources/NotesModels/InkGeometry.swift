@@ -195,8 +195,8 @@ public struct RulerGuide: Sendable, Equatable {
         guard points.count >= 2 else { return nil }
         var best: (edge: (start: CGPoint, end: CGPoint, outward: CGVector), distance: CGFloat)?
         for edge in edges {
-            let mean = meanDistance(points, from: (edge.start, edge.end))
-            if best == nil || mean < best!.distance { best = (edge, mean) }
+            let typical = typicalDistance(points, from: (edge.start, edge.end))
+            if best == nil || typical < best!.distance { best = (edge, typical) }
         }
         guard let chosen = best, chosen.distance <= Self.snapBand else { return nil }
 
@@ -210,19 +210,34 @@ public struct RulerGuide: Sendable, Equatable {
 
         var lowest = CGFloat.greatestFiniteMagnitude
         var highest = -CGFloat.greatestFiniteMagnitude
-        var widest: CGFloat = 0
+        var perpendiculars: [CGFloat] = []
+        perpendiculars.reserveCapacity(points.count)
         for point in points {
             let dx = point.x - chosen.edge.start.x
             let dy = point.y - chosen.edge.start.y
             let along = dx * unit.dx + dy * unit.dy
             lowest = min(lowest, along)
             highest = max(highest, along)
-            widest = max(widest, abs(dx * -unit.dy + dy * unit.dx))
+            perpendiculars.append(abs(dx * -unit.dy + dy * unit.dx))
         }
         let span = highest - lowest
         guard span >= Self.minimumLength else { return nil }
         // Near the ruler but drawn ACROSS it (a tick, a crossed t) is not a line
         // being ruled, and straightening it would flatten it into the edge.
+        //
+        // The strict MAX perpendicular distance used to gate this, which made it
+        // the most fragile check in the whole function: PencilKit reports one or
+        // two genuinely wild samples right as the pencil touches down or lifts
+        // off (pressure ramping in, contact angle settling), and a single such
+        // sample anywhere along an otherwise dead-straight run against the ruler
+        // was enough on its own to fail the aspect test and drop the WHOLE
+        // stroke back to freehand — which is what "sometimes doesn't stick to
+        // the ruler" looked like. The 90th percentile still requires the
+        // overwhelming majority of the stroke to run tight against the edge (a
+        // genuine crossed stroke, where most of it runs away from the edge,
+        // still fails this), but no longer lets one or two stray samples decide
+        // the whole stroke's fate.
+        let widest = perpendiculars.sorted()[Int(CGFloat(perpendiculars.count - 1) * 0.9)]
         guard span >= widest * Self.minimumAspect else { return nil }
 
         func point(at along: CGFloat) -> CGPoint {
@@ -240,17 +255,23 @@ public struct RulerGuide: Sendable, Equatable {
             : [point(at: highest), point(at: lowest)]
     }
 
-    private func meanDistance(_ points: [CGPoint], from edge: (start: CGPoint, end: CGPoint)) -> CGFloat {
+    /// The MEDIAN distance from `points` to `edge`'s infinite line — not the
+    /// mean. A line drawn against a physical ruler sits its whole length within
+    /// a point or two of the edge; the samples that don't are the pen touching
+    /// down and lifting off, which a straight arithmetic mean has no defence
+    /// against. On a short stroke (few points to begin with) one such outlier
+    /// was enough to drag the average past `snapBand` and silently drop the
+    /// stroke back to freehand — which read as the ruler working "sometimes."
+    private func typicalDistance(_ points: [CGPoint], from edge: (start: CGPoint, end: CGPoint)) -> CGFloat {
         let dx = edge.end.x - edge.start.x, dy = edge.end.y - edge.start.y
         let length = hypot(dx, dy)
         guard length > 0.0001 else { return .greatestFiniteMagnitude }
-        var total: CGFloat = 0
-        for point in points {
-            total += abs(
-                dy * point.x - dx * point.y + edge.end.x * edge.start.y - edge.end.y * edge.start.x
-            ) / length
-        }
-        return total / CGFloat(points.count)
+        let distances = points
+            .map { point in
+                abs(dy * point.x - dx * point.y + edge.end.x * edge.start.y - edge.end.y * edge.start.x) / length
+            }
+            .sorted()
+        return distances[distances.count / 2]
     }
 }
 

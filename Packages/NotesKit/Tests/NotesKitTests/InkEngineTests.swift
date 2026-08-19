@@ -769,6 +769,35 @@ struct RulerGuideTests {
         #expect(abs(ruled[1].y - 427) < 0.001)
     }
 
+    @Test("A single stray sample near touch-down/lift-off doesn't sink an otherwise-clean run")
+    func toleratesOneStraySampleInTheAspectTest() throws {
+        var points = (0...20).map { index -> CGPoint in
+            let t = CGFloat(index) / 20
+            return CGPoint(x: 150 + t * 400, y: 422 + sin(t * .pi * 2) * 2)
+        }
+        // A pencil that hasn't fully settled on touch-down can report one wild
+        // sample far from the edge. The strict-MAX version of the aspect check
+        // let that single point sink the whole stroke back to freehand even
+        // though every other sample hugs the ruler; the 90th-percentile version
+        // shouldn't.
+        points.insert(CGPoint(x: 150, y: 622), at: 1)
+        let ruled = try #require(guide.straightened(points))
+        #expect(abs(ruled[0].y - 422) < 1)
+        #expect(abs(ruled[1].y - 422) < 1)
+    }
+
+    @Test("A stroke genuinely drawn across the ruler still isn't flattened into it")
+    func stillRejectsATrueCrossStrokeDespitePercentileTolerance() {
+        // Unlike the single-outlier case above, HALF the samples run away from
+        // the edge — a real crossed stroke, not a settling artifact — so this
+        // must still fail the aspect test.
+        let crossed = (0...20).map { index -> CGPoint in
+            let t = CGFloat(index) / 20
+            return CGPoint(x: 300 + t * 20, y: 422 + t * 200)
+        }
+        #expect(guide.straightened(crossed) == nil)
+    }
+
     @Test("Inset pushes the OTHER way on the upper edge")
     func insetPushesOutwardOnTheUpperEdge() throws {
         let above = (0...30).map { index -> CGPoint in

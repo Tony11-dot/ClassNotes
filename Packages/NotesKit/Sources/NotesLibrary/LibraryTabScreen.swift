@@ -272,6 +272,14 @@ struct AddContentSheet: View {
                 }
             }
         }
-        .presentationDetents([.medium])
+        // Sized to fit all six rows with no scrolling — `.medium` clipped the
+        // list partway down, so "New" looked like it was missing entries until
+        // you dragged the sheet up to find them.
+        .presentationDetents([.height(AddContentSheet.contentHeight)])
     }
+
+    /// Nav bar (~50) + one row per choice (~60, icon + two-line label + vertical
+    /// padding) + a little breathing room, so the sheet opens already showing
+    /// every entry.
+    static let contentHeight: CGFloat = 50 + CGFloat(AddContentChoice.allCases.count) * 60 + 20
 }

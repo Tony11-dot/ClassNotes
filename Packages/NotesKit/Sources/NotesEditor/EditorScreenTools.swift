@@ -14,6 +14,25 @@ struct PageSelection: Equatable {
     var caught: LassoCatch
 }
 
+/// What Copy captured: the picture, and WHERE it came from.
+///
+/// The page and frame travel with the image itself rather than being read back
+/// off `lassoSelection` at paste time. `lassoSelection` is ephemeral — "Done",
+/// a tap elsewhere on the page, or drawing something new all clear it — but the
+/// Paste chip stays on screen as long as `copiedSnip` does, so a user who
+/// dismisses the marching-ants selection (or simply taps the page for any other
+/// reason) before pressing Paste must still get the region back exactly where
+/// it was copied from. Losing that origin the moment the selection UI closed is
+/// what silently downgraded Paste to a centered insert, which — on a page taller
+/// than the viewport — can land off-screen and read as "paste does nothing"
+/// even though it worked, the exact failure `insertImage(frame:on:)` exists to
+/// avoid.
+struct CopiedSnip {
+    let image: UIImage
+    let pageID: UUID
+    let frame: CGRect
+}
+
 /// Taps the page in fill mode. A bare tap surface rather than a gesture on the
 /// canvas, because the canvas's own drawing recognizer is disabled in this mode
 /// and its scroll view would otherwise swallow the touch.
@@ -180,7 +199,11 @@ extension EditorScreen {
         UIPasteboard.general.items = [item]
         // Kept in hand as well, so the Paste chip can put it straight back onto
         // the page. A Copy you can only spend in another app is half a Copy.
-        withAnimation(.spring(duration: 0.3)) { copiedSnip = image }
+        // The page and frame travel WITH the image (see `CopiedSnip`) rather
+        // than being read back off `lassoSelection`, which the user is free to
+        // dismiss before ever pressing Paste.
+        let snip = CopiedSnip(image: image, pageID: selection.pageID, frame: selection.caught.bounds)
+        withAnimation(.spring(duration: 0.3)) { copiedSnip = snip }
         editorNotice = "Copied — press Paste to place it."
     }
 
@@ -191,29 +214,43 @@ extension EditorScreen {
     /// logical center — a page taller than the viewport put a centered paste
     /// off-screen from wherever the user was actually looking, which read as
     /// "paste does nothing" even though the insert had genuinely succeeded.
+    /// That frame comes from `copiedSnip`, captured once at Copy time — NOT
+    /// from `lassoSelection`, which is often already gone by the time Paste is
+    /// pressed (its own "Done" button, or a tap anywhere else on the page,
+    /// clears it) while the Paste chip stays on screen regardless. Reading the
+    /// frame off `lassoSelection` here is exactly what silently reintroduced
+    /// the centered-and-invisible paste this fix is for.
     @MainActor
     func pasteSnip() async {
-        guard let snip = copiedSnip ?? UIPasteboard.general.image,
-              let data = snip.pngData() else {
-            editorNotice = "Nothing to paste."
-            return
-        }
-        let targetPageID = lassoSelection?.pageID ?? model.targetPageID
-        let targetFrame = lassoSelection.map { $0.caught.bounds } ?? .null
         lassoSelection = nil
-        let elementsBefore = targetPageID.flatMap { model.page($0)?.elements } ?? []
-        if let targetPageID, !targetFrame.isNull, targetFrame.width > 1, targetFrame.height > 1 {
-            await model.insertImage(data, fileExtension: "png", frame: targetFrame, on: targetPageID)
-        } else {
+        if let snip = copiedSnip {
+            guard let data = snip.image.pngData() else {
+                editorNotice = "Nothing to paste."
+                return
+            }
+            let elementsBefore = model.page(snip.pageID)?.elements ?? []
+            await model.insertImage(data, fileExtension: "png", frame: snip.frame, on: snip.pageID)
+            let elementsAfter = model.page(snip.pageID)?.elements ?? []
+            tracker.registerElementStep(
+                pageID: snip.pageID, elementsBefore: elementsBefore, elementsAfter: elementsAfter, named: "Paste"
+            )
+        } else if let pbImage = UIPasteboard.general.image, let data = pbImage.pngData() {
+            // Something copied from outside the app: there's no source page or
+            // frame to land it back at, so centering on the focused page is the
+            // only sensible default.
+            guard let insertedPageID = model.targetPageID else {
+                editorNotice = "Nothing to paste."
+                return
+            }
+            let elementsBefore = model.page(insertedPageID)?.elements ?? []
             await model.insertImage(data, fileExtension: "png")
-        }
-        // Resolve after the insert, since a paste with no lasso selection lands
-        // wherever `model.targetPageID` resolves internally.
-        if let insertedPageID = targetPageID ?? model.targetPageID {
             let elementsAfter = model.page(insertedPageID)?.elements ?? []
             tracker.registerElementStep(
                 pageID: insertedPageID, elementsBefore: elementsBefore, elementsAfter: elementsAfter, named: "Paste"
             )
+        } else {
+            editorNotice = "Nothing to paste."
+            return
         }
         // Drag and pinch only work when the pencil isn't drawing, so the mode that
         // makes the paste adjustable is the mode it should arrive in.

@@ -148,7 +148,17 @@ extension EditorScreen {
             // width, so the ink is re-rasterized at the new size and stays vector
             // crisp — and it stays in the page's own logical coordinates, which is
             // what keeps a drawing device-independent.
-            .simultaneousGesture(zoomGesture)
+            .simultaneousGesture(zoomGesture(containerWidth: containerWidth))
+            // Bound so `zoomGesture` can drive the scroll position programmatically
+            // (`ScrollPosition.scrollTo(x:y:)`) to keep the pinch anchor under the
+            // fingers. Reading is done separately, below, via
+            // `onScrollGeometryChange` — that path is already proven live in this
+            // view (the overscroll tracker next to it) where `ScrollPosition`'s own
+            // read side is not. Keeping read and write on two different channels
+            // also avoids a feedback loop: the zoom gesture never reads
+            // `pageScrollGeo` mid-gesture (only once, when the pinch begins), so
+            // writing to `pageScrollPosition` cannot trigger another write.
+            .scrollPosition($pageScrollPosition)
             .onScrollGeometryChange(for: Overscroll.self) { geo in
                 let topRest = -geo.contentInsets.top
                 let bottomRest = geo.contentSize.height - geo.containerSize.height + geo.contentInsets.bottom
@@ -159,6 +169,15 @@ extension EditorScreen {
                 )
             } action: { _, over in
                 handleOverscroll(over, proxy: proxy)
+            }
+            .onScrollGeometryChange(for: PageScrollGeometry.self) { geo in
+                PageScrollGeometry(
+                    contentOffset: geo.contentOffset,
+                    contentSize: geo.contentSize,
+                    containerSize: geo.containerSize
+                )
+            } action: { _, geo in
+                pageScrollGeo = geo
             }
             // Jumping to a page is a SCROLL, not a highlight. Setting
             // `focusedPageID` alone is what "Go to page" used to do: the thumbnail
@@ -181,13 +200,82 @@ extension EditorScreen {
     }
 
     /// Pinch-to-zoom over the page stack. Clamped so a stray pinch can't leave
-    /// the user on a page too small to find or too large to navigate.
-    var zoomGesture: some Gesture {
+    /// the user on a page too small to find or too large to navigate, and
+    /// anchored to where the pinch actually landed — like Photos, the point
+    /// under the fingers stays under them instead of the page jumping while the
+    /// scroll offset sits still. See `PinchZoomAnchor` for the anchor math and
+    /// its one deliberate approximation (the vertical axis).
+    func zoomGesture(containerWidth: CGFloat) -> some Gesture {
         MagnifyGesture(minimumScaleDelta: 0.01)
             .onChanged { value in
-                pageZoom = Self.clampZoom(zoomAnchor * value.magnification)
+                let anchor = pinchZoomAnchor ?? {
+                    let captured = capturePinchAnchor(at: value.startLocation, containerWidth: containerWidth)
+                    pinchZoomAnchor = captured
+                    return captured
+                }()
+                pageZoom = Self.clampZoom(anchor.startZoom * value.magnification)
+                applyPinchAnchor(anchor, containerWidth: containerWidth)
             }
-            .onEnded { _ in zoomAnchor = pageZoom }
+            .onEnded { _ in
+                zoomAnchor = pageZoom
+                pinchZoomAnchor = nil
+            }
+    }
+
+    /// Snapshots where a pinch that just started sits over the page stack, in
+    /// terms that survive a zoom change: a fraction across the page's own width,
+    /// and a fraction of the whole content's height. Captured once, from
+    /// `pageScrollGeo` as it stood the instant the pinch began — never re-read
+    /// mid-gesture, which is what keeps this a one-way write and not a loop.
+    func capturePinchAnchor(at viewportPoint: CGPoint, containerWidth: CGFloat) -> PinchZoomAnchor {
+        let zoom = pageZoom
+        let width = Self.pageWidth(in: containerWidth, zoom: zoom)
+        let contentWidth = max(containerWidth, width + Self.pageGutter * 2)
+        let marginX = (contentWidth - width) / 2
+        let contentX = pageScrollGeo.contentOffset.x + viewportPoint.x
+        let pageFraction = width > 0 ? min(max((contentX - marginX) / width, 0), 1) : 0.5
+
+        let contentY = pageScrollGeo.contentOffset.y + viewportPoint.y
+        let totalHeight = max(pageScrollGeo.contentSize.height, 1)
+        let heightFraction = min(max(contentY / totalHeight, 0), 1)
+
+        return PinchZoomAnchor(
+            viewportPoint: viewportPoint,
+            startZoom: zoom,
+            pageFraction: pageFraction,
+            totalHeightFraction: heightFraction,
+            startContentHeight: pageScrollGeo.contentSize.height
+        )
+    }
+
+    /// Reapplies a captured anchor at the CURRENT `pageZoom`: works out where
+    /// that same page-relative point now sits in content space, and scrolls so
+    /// it lands back under `anchor.viewportPoint`.
+    func applyPinchAnchor(_ anchor: PinchZoomAnchor, containerWidth: CGFloat) {
+        let zoom = pageZoom
+        let width = Self.pageWidth(in: containerWidth, zoom: zoom)
+        let contentWidth = max(containerWidth, width + Self.pageGutter * 2)
+        let marginX = (contentWidth - width) / 2
+        let targetContentX = marginX + anchor.pageFraction * width
+
+        // Every page's height scales by the same width ratio (height = width /
+        // that page's own fixed aspect ratio), and the constant 32pt gaps and
+        // 28pt top/bottom padding between pages don't scale at all — so the
+        // total content height can be reconstructed exactly from the ratio
+        // without re-summing every page.
+        let startWidth = Self.pageWidth(in: containerWidth, zoom: anchor.startZoom)
+        let widthRatio = startWidth > 0 ? width / startWidth : 1
+        let verticalConstant = 56 + CGFloat(max(model.pages.count - 1, 0)) * 32
+        let pagesHeightAtStart = max(anchor.startContentHeight - verticalConstant, 0)
+        let projectedContentHeight = pagesHeightAtStart * widthRatio + verticalConstant
+        let targetContentY = anchor.totalHeightFraction * projectedContentHeight
+
+        let maxOffsetX = max(0, contentWidth - pageScrollGeo.containerSize.width)
+        let maxOffsetY = max(0, projectedContentHeight - pageScrollGeo.containerSize.height)
+        let newOffsetX = min(max(targetContentX - anchor.viewportPoint.x, 0), maxOffsetX)
+        let newOffsetY = min(max(targetContentY - anchor.viewportPoint.y, 0), maxOffsetY)
+
+        pageScrollPosition.scrollTo(x: newOffsetX, y: newOffsetY)
     }
 
     static let zoomRange: ClosedRange<CGFloat> = 0.5...4
