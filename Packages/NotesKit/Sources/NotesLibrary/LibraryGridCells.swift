@@ -95,6 +95,17 @@ extension LibraryGridScreen {
                                 .padding(8)
                         }
                     }
+                    .overlay(alignment: .topLeading) {
+                        // So a notebook set to View Only reads as deliberately
+                        // read-only, not indistinguishable from any other tile.
+                        if notebook.isViewOnly {
+                            Image(systemName: "eye.fill")
+                                .font(.dsCaption)
+                                .foregroundStyle(.white)
+                                .shadow(color: .black.opacity(0.45), radius: 3)
+                                .padding(8)
+                        }
+                    }
                 HStack(spacing: 5) {
                     // A board / import reads as itself, not as "just a notebook".
                     if notebook.kind != .notebook {
@@ -138,6 +149,16 @@ extension LibraryGridScreen {
                 exportPDF(notebook)
             } label: {
                 Label("Export as PDF", systemImage: "square.and.arrow.up")
+            }
+            if !notebook.isRemoteOnly {
+                Button {
+                    try? services.repository.setViewOnly(!notebook.isViewOnly, for: notebook)
+                } label: {
+                    Label(
+                        notebook.isViewOnly ? "Make Editable" : "View Only",
+                        systemImage: notebook.isViewOnly ? "pencil" : "eye"
+                    )
+                }
             }
             Menu {
                 Button("None") { services.repository.assign(notebook, toShelf: nil) }

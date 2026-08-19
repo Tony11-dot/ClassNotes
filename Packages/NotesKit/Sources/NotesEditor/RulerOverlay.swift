@@ -33,6 +33,10 @@ struct RulerOverlay: View {
     /// entry rather than rattling for as long as the hand stays near axis.
     @State private var startOnDetent = false
     @State private var endOnDetent = false
+    /// Both endpoints as they were when a middle-drag began, so the translation
+    /// is relative to that moment rather than accumulating from wherever the
+    /// ruler happened to already be.
+    @State private var bodyDragBase: (start: CGPoint, end: CGPoint)?
 
     /// How wide the straight-edge is. Both long edges guide, so this is also how
     /// far apart the two guides are.
@@ -43,7 +47,7 @@ struct RulerOverlay: View {
             let a = start ?? CGPoint(x: geo.size.width * 0.25, y: geo.size.height * 0.5)
             let b = end ?? CGPoint(x: geo.size.width * 0.75, y: geo.size.height * 0.5)
             ZStack {
-                rulerBody(from: a, to: b)
+                rulerBody(from: a, to: b, in: geo.size)
                 readout(from: a, to: b)
                 handle(at: a, anchor: b, wasOnDetent: $startOnDetent) { start = clamp($0, in: geo.size) }
                 handle(at: b, anchor: a, wasOnDetent: $endOnDetent) { end = clamp($0, in: geo.size) }
@@ -69,7 +73,11 @@ struct RulerOverlay: View {
         line = isVisible ? RulerLine(start: a, end: b) : nil
     }
 
-    private func rulerBody(from a: CGPoint, to b: CGPoint) -> some View {
+    /// The straight-edge itself, draggable from the body: moving it this way
+    /// translates both ends by the same amount, which by construction can never
+    /// change the length or angle — rotation stays exclusively on the two
+    /// endpoint handles.
+    private func rulerBody(from a: CGPoint, to b: CGPoint, in size: CGSize) -> some View {
         let dx = b.x - a.x
         let dy = b.y - a.y
         let length = max(1, hypot(dx, dy))
@@ -96,6 +104,28 @@ struct RulerOverlay: View {
                 .frame(width: length, height: Self.thickness)
                 .rotationEffect(.radians(angle))
                 .position(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture()
+                        .onChanged { value in
+                            let base = bodyDragBase ?? (start: a, end: b)
+                            if bodyDragBase == nil { bodyDragBase = base }
+                            // Clamp the TRANSLATION, not each endpoint separately —
+                            // clamping the points independently would let one end
+                            // hit the edge before the other and silently change the
+                            // angle/length, defeating the whole point of a
+                            // pure-translation drag.
+                            let minDX = -min(base.start.x, base.end.x)
+                            let maxDX = size.width - max(base.start.x, base.end.x)
+                            let minDY = -min(base.start.y, base.end.y)
+                            let maxDY = size.height - max(base.start.y, base.end.y)
+                            let dx = min(max(value.translation.width, minDX), maxDX)
+                            let dy = min(max(value.translation.height, minDY), maxDY)
+                            start = CGPoint(x: base.start.x + dx, y: base.start.y + dy)
+                            end = CGPoint(x: base.end.x + dx, y: base.end.y + dy)
+                        }
+                        .onEnded { _ in bodyDragBase = nil }
+                )
         }
     }
 

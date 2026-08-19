@@ -119,6 +119,11 @@ public actor SearchIndexer {
             case .text, .codeBlock:
                 if let text = element.text?.trimmingCharacters(in: .whitespacesAndNewlines),
                    !text.isEmpty { parts.append(text) }
+            case .functionPlot:
+                if let expression = element.functionExpression?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !expression.isEmpty { parts.append(expression) }
+                if let secondary = element.functionSecondaryExpression?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !secondary.isEmpty { parts.append(secondary) }
             case .link:
                 // A link is findable by what it was CALLED as well as where it
                 // goes — nobody remembers the URL of the paper they saved.

@@ -13,8 +13,9 @@ enum ShapeSnapper {
     /// How far the pencil may drift during that rest and still be holding still,
     /// in SCREEN terms (the live watcher divides this back into whatever the
     /// page's own logical space needs — see `StrokeDwellRecognizer.holdRadius`).
-    /// Generous, because a hand resting on glass is never actually still.
-    static let holdRadius: CGFloat = 14
+    /// Generous, because a hand resting on glass is never actually still —
+    /// 14 still asked for more precision than a relaxed hold gives.
+    static let holdRadius: CGFloat = 22
     /// How far the ink may wander off the straight line between its endpoints and
     /// still be snapped to that line. A deliberate hold is a statement of intent,
     /// so this is looser than a passive straightness test would be — but not so

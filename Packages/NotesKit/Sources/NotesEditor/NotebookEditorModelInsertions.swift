@@ -30,6 +30,23 @@ extension NotebookEditorModel {
         ), to: pageID)
     }
 
+    /// Drops an image at an EXACT frame rather than centering it on the page.
+    ///
+    /// Used by lasso paste: pasting back at the page's logical center (what
+    /// `insertImage` does) put the result off-screen on any page taller than
+    /// the viewport, which read as "paste does nothing". Landing it exactly
+    /// where the copy was taken from guarantees it's somewhere the user is
+    /// already looking.
+    public func insertImage(_ data: Data, fileExtension: String, frame: CGRect, on pageID: UUID) async {
+        guard manifest?.pages.contains(where: { $0.id == pageID }) == true,
+              let filename = try? await store.saveMedia(data, notebook: notebookID, fileExtension: fileExtension)
+        else { return }
+        await append(PageElement(
+            kind: .image, x: frame.minX, y: frame.minY, width: frame.width, height: frame.height,
+            payloadFilename: filename
+        ), to: pageID)
+    }
+
     /// Imports a PDF: appends one annotatable page per PDF page (each with the
     /// rendered page as its background). Returns the first imported page id.
     @discardableResult
@@ -143,6 +160,30 @@ extension NotebookEditorModel {
             text: "", fontName: fontName, textColorHex: textColorHex,
             codeLanguage: language,
             codeCornerRadius: cornerRadius, fontSize: fontSize,
+            colorHex: backgroundColorHex
+        )
+        await append(element, to: pageID)
+        return element.id
+    }
+
+    /// Drops an empty function-plot block where the user tapped and returns its
+    /// id, so the editor can put the keyboard straight into it — same shape as
+    /// `insertCodeBlock`, styled instead from the function-plot settings.
+    @discardableResult
+    public func insertFunctionPlot(
+        at point: CGPoint, on pageID: UUID, mode: PlotMode, window: Double,
+        lineColorHex: String?, backgroundColorHex: String?, cornerRadius: Double
+    ) async -> UUID? {
+        let pageSize = page(pageID)?.logicalSize ?? PageGeometry.size
+        let width = min(320.0, pageSize.width - 32)
+        let height = width
+        let element = PageElement(
+            kind: .functionPlot,
+            x: min(max(point.x - width / 2, 12), max(12, pageSize.width - width - 12)),
+            y: min(max(point.y - height / 2, 12), max(12, pageSize.height - height - 12)),
+            width: width, height: height,
+            textColorHex: lineColorHex,
+            functionExpression: "", functionMode: mode.rawValue, functionWindow: window,
             colorHex: backgroundColorHex
         )
         await append(element, to: pageID)

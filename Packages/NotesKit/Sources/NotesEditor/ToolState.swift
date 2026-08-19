@@ -28,6 +28,9 @@ public final class ToolState {
         case text
         /// Tapping the page drops a typeset, styled block of source code.
         case codeBlock
+        /// Tapping the page drops a function/graph block — type an expression,
+        /// see the curve.
+        case functionPlot
         /// Moving / resizing the things already on the page; the pencil doesn't draw.
         case hand
         /// Tapping inside a shape floods it with the current colour.
@@ -44,6 +47,7 @@ public final class ToolState {
             case .tape: "Tape"
             case .text: "Text"
             case .codeBlock: "Code"
+            case .functionPlot: "Graph"
             case .hand: "Move"
             case .fill: "Fill"
             case .lasso: "Select"
@@ -57,6 +61,7 @@ public final class ToolState {
             case .tape: "square.on.square.dashed"
             case .text: "textformat"
             case .codeBlock: "chevron.left.forwardslash.chevron.right"
+            case .functionPlot: "function"
             case .hand: "hand.point.up.left"
             case .fill: "drop.fill"
             case .lasso: "lasso"
@@ -254,6 +259,33 @@ public final class ToolState {
         set { edit { $0.codeBlock.language = newValue } }
     }
 
+    // MARK: - Function-plot blocks
+
+    public var functionPlotMode: PlotMode {
+        get { preferences.functionPlot.mode }
+        set { edit { $0.functionPlot.mode = newValue } }
+    }
+
+    public var functionPlotLineColorHex: String? {
+        get { preferences.functionPlot.lineColorHex }
+        set { edit { $0.functionPlot.lineColorHex = newValue } }
+    }
+
+    public var functionPlotBackgroundColorHex: String? {
+        get { preferences.functionPlot.backgroundColorHex }
+        set { edit { $0.functionPlot.backgroundColorHex = newValue } }
+    }
+
+    public var functionPlotCornerRadius: Double {
+        get { preferences.functionPlot.cornerRadius }
+        set { edit { $0.functionPlot.cornerRadius = newValue } }
+    }
+
+    public var functionPlotWindow: Double {
+        get { preferences.functionPlot.window }
+        set { edit { $0.functionPlot.window = newValue } }
+    }
+
     // MARK: - Real-time beautification
 
     public var beautify: BeautifySettings {
@@ -426,7 +458,7 @@ public final class ToolState {
             // not erase anything in this mode — the tape layer handles the taps.
             case .tapeOnly: return PKInkingTool(.pen, color: .clear, width: 1)
             }
-        case .tape, .text, .codeBlock, .hand, .fill, .lasso:
+        case .tape, .text, .codeBlock, .functionPlot, .hand, .fill, .lasso:
             // Inert — drawing is disabled in these modes; the value is unused.
             return PKInkingTool(.pen, color: .clear, width: 1)
         }

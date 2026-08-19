@@ -139,7 +139,7 @@ public final class AppServices {
             await repository.applyRemoteChanges(changes)
         }
         await sync.pullFullLibrary { [repository, remoteNotebookCache] library in
-            repository.applyRemoteLibrary(library)
+            await repository.applyRemoteLibrary(library)
             for entry in library.notebooks {
                 guard let id = UUID(uuidString: entry.id) else { continue }
                 await remoteNotebookCache.cacheCover(entry.coverImage, for: id)

@@ -696,7 +696,7 @@ extension EditorScreen {
                     name: element.displayName ?? url,
                     url: url
                 )
-            case .image, .text, .tape, .fill, .codeBlock, .unknown:
+            case .image, .text, .tape, .fill, .codeBlock, .functionPlot, .unknown:
                 // Nothing to play or open: these are already in the page render.
                 return nil
             }

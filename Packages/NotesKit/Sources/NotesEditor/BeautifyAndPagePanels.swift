@@ -336,6 +336,67 @@ struct CodeBlockPanel: View {
     }
 }
 
+// MARK: - Function plots
+
+struct FunctionPlotPanel: View {
+    @Environment(\.theme) private var theme
+    @Bindable var toolState: ToolState
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                PanelHeader(title: "Function plot")
+                Text("Tap anywhere on the page to drop a graph, then type a function.")
+                    .font(.dsCaption).foregroundStyle(theme.inkSecondary.color)
+
+                Text("Type").font(.dsSubheadline.weight(.medium)).foregroundStyle(theme.ink.color)
+                Picker("Type", selection: $toolState.functionPlotMode) {
+                    ForEach(PlotMode.allCases) { mode in
+                        Text(mode.displayName).tag(mode)
+                    }
+                }
+                .pickerStyle(.menu)
+                .tint(theme.accent.color)
+
+                Text("Curve color").font(.dsSubheadline.weight(.medium)).foregroundStyle(theme.ink.color)
+                ColorSwatchRow(
+                    swatches: [FunctionPlotSettings.defaultLineHex] + theme.coverPalette.map(\.hexString),
+                    selection: $toolState.functionPlotLineColorHex,
+                    includesAuto: true
+                )
+
+                Text("Background").font(.dsSubheadline.weight(.medium)).foregroundStyle(theme.ink.color)
+                ColorSwatchRow(
+                    swatches: [FunctionPlotSettings.defaultBackgroundHex] + theme.coverPalette.map(\.hexString),
+                    selection: $toolState.functionPlotBackgroundColorHex,
+                    includesAuto: true
+                )
+
+                PanelSlider(
+                    title: "Zoom window",
+                    readout: "±\(Int(toolState.functionPlotWindow.rounded()))",
+                    value: $toolState.functionPlotWindow,
+                    range: FunctionPlotSettings.windowRange,
+                    step: 1,
+                    showsSteppers: true
+                )
+
+                PanelSlider(
+                    title: "Corner radius",
+                    readout: "\(Int(toolState.functionPlotCornerRadius.rounded()))",
+                    value: $toolState.functionPlotCornerRadius,
+                    range: FunctionPlotSettings.cornerRadiusRange,
+                    step: 1,
+                    showsSteppers: true
+                )
+            }
+            .padding(18)
+        }
+        .frame(width: 288, height: 460)
+        .background(theme.surfaceRaised.color)
+    }
+}
+
 // MARK: - Page settings panel (paper, geometry, rules)
 
 struct PageSettingsPanel: View {

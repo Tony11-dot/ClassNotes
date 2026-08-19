@@ -138,6 +138,55 @@ public struct CodeBlockSettings: Sendable, Equatable, Codable {
     public static let defaultTextHex = "#CDD6F4"
 }
 
+/// Styling and defaults for function-plot blocks — mirrors `CodeBlockSettings`.
+public struct FunctionPlotSettings: Sendable, Equatable, Codable {
+    public var mode: PlotMode
+    /// `nil` = `Self.defaultLineHex`.
+    public var lineColorHex: String?
+    /// `nil` = `Self.defaultBackgroundHex`.
+    public var backgroundColorHex: String?
+    public var cornerRadius: Double
+    /// Half-width of the default view window, in math units (so the default
+    /// window is roughly `-window...window` on the relevant axis/parameter).
+    public var window: Double
+
+    public init(
+        mode: PlotMode = .cartesianY,
+        lineColorHex: String? = nil,
+        backgroundColorHex: String? = nil,
+        cornerRadius: Double = 10,
+        window: Double = 10
+    ) {
+        self.mode = mode
+        self.lineColorHex = lineColorHex
+        self.backgroundColorHex = backgroundColorHex
+        self.cornerRadius = cornerRadius
+        self.window = window
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case mode, lineColorHex, backgroundColorHex, cornerRadius, window
+    }
+
+    /// Total decode: an older/corrupt blob still loads, defaulting whatever
+    /// it's missing rather than losing the rest of the settings.
+    public init(from decoder: any Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            mode: (try? box.decodeIfPresent(PlotMode.self, forKey: .mode)) ?? nil ?? .cartesianY,
+            lineColorHex: (try? box.decodeIfPresent(String.self, forKey: .lineColorHex)) ?? nil,
+            backgroundColorHex: (try? box.decodeIfPresent(String.self, forKey: .backgroundColorHex)) ?? nil,
+            cornerRadius: (try? box.decodeIfPresent(Double.self, forKey: .cornerRadius)) ?? nil ?? 10,
+            window: (try? box.decodeIfPresent(Double.self, forKey: .window)) ?? nil ?? 10
+        )
+    }
+
+    public static let cornerRadiusRange: ClosedRange<Double> = 0...24
+    public static let windowRange: ClosedRange<Double> = 2...100
+    public static let defaultBackgroundHex = "#1E1E2E"
+    public static let defaultLineHex = "#89B4FA"
+}
+
 /// Everything the editor's tools remember: which instrument is in hand, how each
 /// one is tuned, the eraser, tape, text boxes, beautification, and what the
 /// Pencil's gestures do.
@@ -177,6 +226,9 @@ public struct ToolPreferences: Codable, Sendable, Equatable {
     // Code blocks
     public var codeBlock: CodeBlockSettings
 
+    // Function-plot blocks
+    public var functionPlot: FunctionPlotSettings
+
     // Beautification
     public var beautify: BeautifySettings
 
@@ -199,6 +251,7 @@ public struct ToolPreferences: Codable, Sendable, Equatable {
         textSize: Double = 20,
         textColorHex: String? = nil,
         codeBlock: CodeBlockSettings = CodeBlockSettings(),
+        functionPlot: FunctionPlotSettings = FunctionPlotSettings(),
         beautify: BeautifySettings = BeautifySettings(),
         pencilDoubleTap: PencilAction = .toggleEraser,
         pencilSqueeze: PencilAction = .showColors
@@ -217,6 +270,7 @@ public struct ToolPreferences: Codable, Sendable, Equatable {
         self.textSize = textSize
         self.textColorHex = textColorHex
         self.codeBlock = codeBlock
+        self.functionPlot = functionPlot
         self.beautify = beautify
         self.pencilDoubleTap = pencilDoubleTap
         self.pencilSqueeze = pencilSqueeze
@@ -243,6 +297,7 @@ public struct ToolPreferences: Codable, Sendable, Equatable {
             textSize: value(.textSize, fallback.textSize),
             textColorHex: (try? box.decodeIfPresent(String.self, forKey: .textColorHex)) ?? nil,
             codeBlock: value(.codeBlock, fallback.codeBlock),
+            functionPlot: value(.functionPlot, fallback.functionPlot),
             beautify: value(.beautify, fallback.beautify),
             pencilDoubleTap: value(.pencilDoubleTap, fallback.pencilDoubleTap),
             pencilSqueeze: value(.pencilSqueeze, fallback.pencilSqueeze)

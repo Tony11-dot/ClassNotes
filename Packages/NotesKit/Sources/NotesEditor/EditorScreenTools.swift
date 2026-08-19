@@ -95,17 +95,28 @@ extension EditorScreen {
     @MainActor
     func deleteSelection() async {
         guard let selection = lassoSelection else { return }
+        let elementsBefore = model.page(selection.pageID)?.elements ?? []
+        var drawingBefore: PKDrawing?
+        var drawingAfter: PKDrawing?
         if !selection.caught.strokeIndices.isEmpty,
            let drawing = tracker.drawing(for: selection.pageID) {
+            drawingBefore = drawing
             let dropped = Set(selection.caught.strokeIndices)
             let survivors = drawing.strokes.enumerated()
                 .filter { !dropped.contains($0.offset) }
                 .map(\.element)
-            tracker.setDrawing(PKDrawing(strokes: survivors), for: selection.pageID)
+            let after = PKDrawing(strokes: survivors)
+            drawingAfter = after
+            tracker.setDrawing(after, for: selection.pageID)
         }
         for id in selection.caught.elementIDs {
             await model.deleteElement(id, on: selection.pageID)
         }
+        let elementsAfter = elementsBefore.filter { !selection.caught.elementIDs.contains($0.id) }
+        tracker.registerElementStep(
+            pageID: selection.pageID, drawingBefore: drawingBefore, drawingAfter: drawingAfter,
+            elementsBefore: elementsBefore, elementsAfter: elementsAfter, named: "Delete Selection"
+        )
         lassoSelection = nil
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
     }
@@ -115,8 +126,12 @@ extension EditorScreen {
         guard let selection = lassoSelection else { return }
         // A copy has to land somewhere you can see it, so it comes in offset.
         let offset = CGSize(width: 24, height: 24)
+        let elementsBefore = model.page(selection.pageID)?.elements ?? []
+        var drawingBefore: PKDrawing?
+        var drawingAfter: PKDrawing?
         if !selection.caught.strokeIndices.isEmpty,
            let drawing = tracker.drawing(for: selection.pageID) {
+            drawingBefore = drawing
             let copies = selection.caught.strokeIndices.compactMap { index -> PKStroke? in
                 guard drawing.strokes.indices.contains(index) else { return nil }
                 var stroke = drawing.strokes[index]
@@ -125,11 +140,18 @@ extension EditorScreen {
                 )
                 return stroke
             }
-            tracker.setDrawing(PKDrawing(strokes: drawing.strokes + copies), for: selection.pageID)
+            let after = PKDrawing(strokes: drawing.strokes + copies)
+            drawingAfter = after
+            tracker.setDrawing(after, for: selection.pageID)
         }
         for id in selection.caught.elementIDs {
             await model.duplicateElement(id, on: selection.pageID, offset: offset)
         }
+        let elementsAfter = model.page(selection.pageID)?.elements ?? []
+        tracker.registerElementStep(
+            pageID: selection.pageID, drawingBefore: drawingBefore, drawingAfter: drawingAfter,
+            elementsBefore: elementsBefore, elementsAfter: elementsAfter, named: "Duplicate Selection"
+        )
         lassoSelection = nil
     }
 
@@ -164,6 +186,11 @@ extension EditorScreen {
 
     /// Drops the copied region back onto the page as a picture you can move and
     /// resize, and hands the pencil to Move so it is adjustable straight away.
+    ///
+    /// Lands at the SAME frame the region was copied from, not the page's
+    /// logical center — a page taller than the viewport put a centered paste
+    /// off-screen from wherever the user was actually looking, which read as
+    /// "paste does nothing" even though the insert had genuinely succeeded.
     @MainActor
     func pasteSnip() async {
         guard let snip = copiedSnip ?? UIPasteboard.general.image,
@@ -171,8 +198,23 @@ extension EditorScreen {
             editorNotice = "Nothing to paste."
             return
         }
+        let targetPageID = lassoSelection?.pageID ?? model.targetPageID
+        let targetFrame = lassoSelection.map { $0.caught.bounds } ?? .null
         lassoSelection = nil
-        await model.insertImage(data, fileExtension: "png")
+        let elementsBefore = targetPageID.flatMap { model.page($0)?.elements } ?? []
+        if let targetPageID, !targetFrame.isNull, targetFrame.width > 1, targetFrame.height > 1 {
+            await model.insertImage(data, fileExtension: "png", frame: targetFrame, on: targetPageID)
+        } else {
+            await model.insertImage(data, fileExtension: "png")
+        }
+        // Resolve after the insert, since a paste with no lasso selection lands
+        // wherever `model.targetPageID` resolves internally.
+        if let insertedPageID = targetPageID ?? model.targetPageID {
+            let elementsAfter = model.page(insertedPageID)?.elements ?? []
+            tracker.registerElementStep(
+                pageID: insertedPageID, elementsBefore: elementsBefore, elementsAfter: elementsAfter, named: "Paste"
+            )
+        }
         // Drag and pinch only work when the pencil isn't drawing, so the mode that
         // makes the paste adjustable is the mode it should arrive in.
         toolState.select(.hand)
@@ -255,7 +297,10 @@ extension EditorScreen {
                 in: frame,
                 withAttributes: [.font: font, .foregroundColor: color, .paragraphStyle: style]
             )
-        case .file, .audio, .link, .tape, .unknown:
+        case .file, .audio, .link, .tape, .functionPlot, .unknown:
+            // A voice note, file, link or graph is a control/live render, not
+            // something drawable without a view hierarchy — same reasoning as
+            // the others already excluded here.
             break
         }
     }
@@ -271,8 +316,12 @@ extension EditorScreen {
     @MainActor
     func moveSelection(by offset: CGSize) async {
         guard let selection = lassoSelection, offset != .zero else { return }
+        let elementsBefore = model.page(selection.pageID)?.elements ?? []
+        var drawingBefore: PKDrawing?
+        var drawingAfter: PKDrawing?
         if !selection.caught.strokeIndices.isEmpty,
            let drawing = tracker.drawing(for: selection.pageID) {
+            drawingBefore = drawing
             let moving = Set(selection.caught.strokeIndices)
             let strokes = drawing.strokes.enumerated().map { index, stroke -> PKStroke in
                 guard moving.contains(index) else { return stroke }
@@ -282,11 +331,18 @@ extension EditorScreen {
                 )
                 return moved
             }
-            tracker.setDrawing(PKDrawing(strokes: strokes), for: selection.pageID)
+            let after = PKDrawing(strokes: strokes)
+            drawingAfter = after
+            tracker.setDrawing(after, for: selection.pageID)
         }
         for id in selection.caught.elementIDs {
             await model.moveElement(id, on: selection.pageID, by: offset)
         }
+        let elementsAfter = model.page(selection.pageID)?.elements ?? []
+        tracker.registerElementStep(
+            pageID: selection.pageID, drawingBefore: drawingBefore, drawingAfter: drawingAfter,
+            elementsBefore: elementsBefore, elementsAfter: elementsAfter, named: "Move Selection"
+        )
         lassoSelection?.caught.bounds = selection.caught.bounds
             .offsetBy(dx: offset.width, dy: offset.height)
     }

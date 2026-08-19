@@ -3,6 +3,7 @@ import NotesDesignSystem
 import NotesModels
 import NotesServices
 import SwiftUI
+import UIKit
 
 /// NOVA's in-notebook sidebar.
 ///
@@ -21,6 +22,9 @@ public struct NovaSidebar: View {
     @State private var chat: NovaChat?
     @State private var draft = ""
     @State private var showHistory = false
+    /// Non-nil while the composer holds an edited copy of a message the user
+    /// already sent, rather than a brand-new one.
+    @State private var editingMessageID: UUID?
     /// Debounces transcript writes while a reply streams in token by token.
     @State private var saveTask: Task<Void, Never>?
 
@@ -125,12 +129,13 @@ public struct NovaSidebar: View {
                         emptyState
                     }
                     ForEach(conversation.visibleMessages) { message in
-                        NovaMessageRow(message: message).id(message.id)
-                    }
-                    if conversation.streaming, conversation.visibleMessages.last?.content.isEmpty ?? true {
-                        HStack(spacing: 10) {
-                            NovaAvatar(size: 24, animated: true)
-                            TypingDots()
+                        NovaMessageRow(
+                            message: message,
+                            onEdit: message.role == .user ? { beginEditing(message) } : nil
+                        )
+                        .id(message.id)
+                        if message.id == lastAssistantReplyID, !conversation.streaming {
+                            followUpRow
                         }
                     }
                     if let error = conversation.errorText {
@@ -145,6 +150,49 @@ public struct NovaSidebar: View {
                 }
             }
         }
+    }
+
+    /// The last message in the transcript, when it's a finished assistant
+    /// reply — where the follow-up chips go.
+    private var lastAssistantReplyID: UUID? {
+        guard let last = conversation.visibleMessages.last, last.role == .assistant,
+              !last.content.isEmpty else { return nil }
+        return last.id
+    }
+
+    /// A small fixed set of tappable follow-ups under NOVA's latest reply.
+    /// Client-side and static rather than model-generated — the response
+    /// shape is owned by the ClassMate backend (a separate repo), so adding a
+    /// real structured-suggestions field is out of scope here; these still
+    /// give the tap-to-send behaviour without needing a backend change.
+    private var followUpRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(Self.followUpSuggestions, id: \.self) { suggestion in
+                    Button {
+                        conversation.send(suggestion)
+                    } label: {
+                        Text(suggestion)
+                            .font(.dsCaption.weight(.medium))
+                            .foregroundStyle(theme.accent.color)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(theme.accentMuted.withAlpha(0.16).color, in: Capsule())
+                            .overlay(Capsule().strokeBorder(theme.accent.withAlpha(0.3).color, lineWidth: 0.5))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.leading, 34) // clears the avatar column above it
+        }
+        .disabled(conversation.streaming)
+    }
+
+    private static let followUpSuggestions = ["Explain further", "Summarize this", "Quiz me on this"]
+
+    private func beginEditing(_ message: AIMessage) {
+        editingMessageID = message.id
+        draft = message.content
     }
 
     private var emptyState: some View {
@@ -165,29 +213,58 @@ public struct NovaSidebar: View {
     }
 
     private var composer: some View {
-        HStack(spacing: 10) {
-            TextField("Message NOVA", text: $draft, axis: .vertical)
-                .lineLimit(1...5)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(
-                    theme.surfaceRaised.color,
-                    in: RoundedRectangle(cornerRadius: 20, style: .continuous)
-                )
-            Button {
-                conversation.send(draft)
-                draft = ""
-            } label: {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.dsSystem(size: 30))
-                    .foregroundStyle(theme.accent.color)
+        VStack(alignment: .leading, spacing: 0) {
+            if editingMessageID != nil {
+                HStack(spacing: 6) {
+                    Image(systemName: "pencil").font(.dsCaption2)
+                    Text("Editing message").font(.dsCaption2.weight(.medium))
+                    Spacer()
+                    Button {
+                        editingMessageID = nil
+                        draft = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Cancel edit")
+                }
+                .foregroundStyle(theme.accent.color)
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
             }
-            .buttonStyle(.plain)
-            .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty || conversation.streaming)
-            .accessibilityLabel("Send")
+            HStack(spacing: 10) {
+                TextField("Message NOVA", text: $draft, axis: .vertical)
+                    .lineLimit(1...5)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(
+                        theme.surfaceRaised.color,
+                        in: RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    )
+                Button {
+                    send()
+                } label: {
+                    Image(systemName: editingMessageID != nil ? "checkmark.circle.fill" : "arrow.up.circle.fill")
+                        .font(.dsSystem(size: 30))
+                        .foregroundStyle(theme.accent.color)
+                }
+                .buttonStyle(.plain)
+                .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty || conversation.streaming)
+                .accessibilityLabel(editingMessageID != nil ? "Save edit" : "Send")
+            }
+            .padding(12)
         }
-        .padding(12)
         .background(.ultraThinMaterial)
+    }
+
+    private func send() {
+        if let editingMessageID {
+            conversation.editUserMessage(id: editingMessageID, newText: draft)
+            self.editingMessageID = nil
+        } else {
+            conversation.send(draft)
+        }
+        draft = ""
     }
 
     // MARK: - Saved chats
@@ -311,6 +388,9 @@ public struct NovaSidebar: View {
 struct NovaMessageRow: View {
     @Environment(\.theme) private var theme
     let message: AIMessage
+    /// Non-nil (user messages only) puts the composer into edit mode for this
+    /// message on tap or from its context menu.
+    var onEdit: (() -> Void)?
 
     var body: some View {
         if message.role == .user {
@@ -332,6 +412,20 @@ struct NovaMessageRow: View {
                         )
                 }
             }
+            .contentShape(Rectangle())
+            .onTapGesture { onEdit?() }
+            .contextMenu {
+                Button {
+                    UIPasteboard.general.string = message.content
+                } label: {
+                    Label("Copy", systemImage: "doc.on.doc")
+                }
+                if let onEdit {
+                    Button(action: onEdit) {
+                        Label("Edit", systemImage: "pencil")
+                    }
+                }
+            }
         } else {
             HStack(alignment: .top, spacing: 10) {
                 NovaAvatar(size: 24)
@@ -342,6 +436,13 @@ struct NovaMessageRow: View {
                 } else {
                     NovaMarkdownText(message.content)
                         .foregroundStyle(theme.ink.color)
+                        .contextMenu {
+                            Button {
+                                UIPasteboard.general.string = message.content
+                            } label: {
+                                Label("Copy", systemImage: "doc.on.doc")
+                            }
+                        }
                 }
             }
         }

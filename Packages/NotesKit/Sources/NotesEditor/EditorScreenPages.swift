@@ -327,7 +327,8 @@ extension EditorScreen {
             logicalSize: page.logicalSize,
             allowsEditing: !toolState.isDrawingEnabled,
             editingTextID: $editingTextID,
-            layer: .belowInk
+            layer: .belowInk,
+            tracker: tracker
         )
         CanvasPageView(
             notebookID: notebook.id,
@@ -351,7 +352,17 @@ extension EditorScreen {
             logicalSize: page.logicalSize,
             allowsEditing: !toolState.isDrawingEnabled,
             editingTextID: $editingTextID,
-            layer: .aboveInk
+            layer: .aboveInk,
+            tracker: tracker
+        )
+        EraseCatcherLayer(
+            pageID: page.id,
+            elements: page.elements,
+            model: model,
+            toolState: toolState,
+            displaySize: displaySize,
+            logicalSize: page.logicalSize,
+            tracker: tracker
         )
         if toolState.tool == .tape {
             TapeDrawingLayer(
@@ -420,6 +431,21 @@ extension EditorScreen {
                         backgroundColorHex: toolState.codeBlockBackgroundColorHex ?? CodeBlockSettings.defaultBackgroundHex,
                         cornerRadius: toolState.codeBlockCornerRadius,
                         language: toolState.codeBlockLanguage.rawValue
+                    )
+                }
+            }
+        }
+        if toolState.tool == .functionPlot, editingTextID == nil {
+            TextPlacementLayer(displaySize: displaySize, logicalSize: page.logicalSize) { point in
+                Task {
+                    editingTextID = await model.insertFunctionPlot(
+                        at: point, on: page.id,
+                        mode: toolState.functionPlotMode,
+                        window: toolState.functionPlotWindow,
+                        lineColorHex: toolState.functionPlotLineColorHex ?? FunctionPlotSettings.defaultLineHex,
+                        backgroundColorHex: toolState.functionPlotBackgroundColorHex
+                            ?? FunctionPlotSettings.defaultBackgroundHex,
+                        cornerRadius: toolState.functionPlotCornerRadius
                     )
                 }
             }

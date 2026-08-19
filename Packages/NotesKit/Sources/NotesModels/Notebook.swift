@@ -59,6 +59,13 @@ public final class Notebook {
     /// device, until real content sync exists.
     public var isRemoteOnly: Bool = false
 
+    /// The user's own explicit choice, from the notebook's action menu — this
+    /// notebook opens read-only (on every device) until they turn it back off.
+    /// Unlike `isRemoteOnly` (which means "there's no ink here to edit"), a
+    /// view-only notebook has a real `.cmnote` package; it's just deliberately
+    /// not being written to right now.
+    public var isViewOnly: Bool = false
+
     public init(
         id: UUID = UUID(),
         title: String,

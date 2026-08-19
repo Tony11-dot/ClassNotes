@@ -123,6 +123,8 @@ public struct PageContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         case .codeBlock:
             codeBlockView(element)
+        case .functionPlot:
+            functionPlotView(element)
         case .unknown:
             // A kind this build doesn't recognise — nothing to draw, but the
             // page's other elements still render.
@@ -209,6 +211,30 @@ public struct PageContentView: View {
             .lineSpacing(element.extraLeading * scale)
             .padding(10 * scale)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(background.color, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .strokeBorder(theme.separator.color, lineWidth: 0.5)
+            )
+    }
+
+    /// Read-only render of a function-plot block — same styling rule as the
+    /// editor's, and the same `FunctionPlotView` renderer, so the curve reads
+    /// identically on both.
+    private func functionPlotView(_ element: PageElement) -> some View {
+        let radius = (element.codeCornerRadius ?? 10) * scale
+        let background = ThemeColor(hex: element.colorHex ?? FunctionPlotSettings.defaultBackgroundHex)
+            ?? theme.surfaceRaised
+        let lineColor = ThemeColor(hex: element.textColorHex ?? FunctionPlotSettings.defaultLineHex)
+            ?? theme.accent
+        return FunctionPlotView(
+            expression: element.functionExpression ?? "",
+            secondaryExpression: element.functionSecondaryExpression,
+            mode: element.resolvedPlotMode,
+            window: element.functionWindow ?? FunctionPlotSettings().window,
+            lineColor: lineColor.color, axisColor: lineColor.color
+        )
+            .padding(6 * scale)
             .background(background.color, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: radius, style: .continuous)

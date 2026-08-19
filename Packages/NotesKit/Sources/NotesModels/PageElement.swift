@@ -42,6 +42,10 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
         /// A typeset block of source code: monospaced, coloured, on its own
         /// background — reuses the same text/font/colour fields `.text` does.
         case codeBlock
+        /// A plotted curve from a typed expression (`y = f(x)`, `x = f(y)`,
+        /// `r = f(θ)`, or `x(t)`/`y(t)`) — see `functionExpression`/
+        /// `functionMode`.
+        case functionPlot
         /// An element kind this build doesn't recognise. Decoding to this
         /// instead of throwing is what keeps a page's OTHER elements intact
         /// when an older binary opens a document a newer one wrote to.
@@ -78,6 +82,17 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
     /// For codeBlock: the background box's corner radius in logical points
     /// (nil = `CodeBlockSettings.defaultCornerRadius`).
     public var codeCornerRadius: Double?
+    /// For functionPlot: the primary expression — `f(x)`, `f(y)`, `f(θ)`, or
+    /// `x(t)` in parametric mode, per `functionMode`.
+    public var functionExpression: String?
+    /// For functionPlot in parametric mode only: the `y(t)` half.
+    public var functionSecondaryExpression: String?
+    /// For functionPlot: `PlotMode.rawValue`. `nil`/unrecognized reads as
+    /// `.cartesianY`, never a throw.
+    public var functionMode: String?
+    /// For functionPlot: half-width of the view window in math units (nil =
+    /// `FunctionPlotSettings.window`).
+    public var functionWindow: Double?
     /// For text: the type size in logical page points (nil = the legacy 20 pt).
     public var fontSize: Double?
     /// For text: the line-height MULTIPLE the run was laid out at (nil = 1.0).
@@ -98,6 +113,9 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
     public var tapePattern: TapePattern?
     /// For tape: the strip's colour (`nil` = the theme's muted accent). For
     /// codeBlock: the background box's colour (`nil` = `CodeBlockSettings.defaultBackgroundHex`).
+    /// For functionPlot: the background box's colour (`nil` =
+    /// `FunctionPlotSettings.defaultBackgroundHex`) — the curve's own colour
+    /// is `textColorHex`, following codeBlock's fg/bg split.
     public var colorHex: String?
     /// For tape: the freeform / line path in logical page points, relative to the
     /// page (not the element frame). Empty for rectangles.
@@ -124,6 +142,10 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
         textColorHex: String? = nil,
         codeLanguage: String? = nil,
         codeCornerRadius: Double? = nil,
+        functionExpression: String? = nil,
+        functionSecondaryExpression: String? = nil,
+        functionMode: String? = nil,
+        functionWindow: Double? = nil,
         fontSize: Double? = nil,
         lineSpacing: Double? = nil,
         isBold: Bool = false,
@@ -150,6 +172,10 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
         self.textColorHex = textColorHex
         self.codeLanguage = codeLanguage
         self.codeCornerRadius = codeCornerRadius
+        self.functionExpression = functionExpression
+        self.functionSecondaryExpression = functionSecondaryExpression
+        self.functionMode = functionMode
+        self.functionWindow = functionWindow
         self.fontSize = fontSize
         self.lineSpacing = lineSpacing
         self.isBold = isBold
@@ -171,6 +197,12 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
 
     public var resolvedFontSize: Double { fontSize ?? Self.legacyTextSize }
 
+    /// For functionPlot: the mode to plot in, defaulting to `y = f(x)` for
+    /// anything missing or unrecognized rather than throwing.
+    public var resolvedPlotMode: PlotMode {
+        functionMode.flatMap(PlotMode.init(rawValue:)) ?? .cartesianY
+    }
+
     /// The line-height multiple to draw the run at. Single-spaced unless the run
     /// was laid out otherwise.
     public var resolvedLineSpacing: Double { max(lineSpacing ?? 1, 0.5) }
@@ -186,6 +218,7 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
         case payloadFilename, displayName, durationSeconds
         case text, fontName, textColorHex, fontSize, lineSpacing, isBold, urlString
         case codeLanguage, codeCornerRadius
+        case functionExpression, functionSecondaryExpression, functionMode, functionWindow
         case tapeShape, tapePattern, colorHex, points, strokeWidth, isHidden
     }
 
@@ -208,6 +241,10 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
         textColorHex = try c.decodeIfPresent(String.self, forKey: .textColorHex)
         codeLanguage = try c.decodeIfPresent(String.self, forKey: .codeLanguage)
         codeCornerRadius = try c.decodeIfPresent(Double.self, forKey: .codeCornerRadius)
+        functionExpression = try c.decodeIfPresent(String.self, forKey: .functionExpression)
+        functionSecondaryExpression = try c.decodeIfPresent(String.self, forKey: .functionSecondaryExpression)
+        functionMode = try c.decodeIfPresent(String.self, forKey: .functionMode)
+        functionWindow = try c.decodeIfPresent(Double.self, forKey: .functionWindow)
         fontSize = try c.decodeIfPresent(Double.self, forKey: .fontSize)
         lineSpacing = try c.decodeIfPresent(Double.self, forKey: .lineSpacing)
         isBold = try c.decodeIfPresent(Bool.self, forKey: .isBold) ?? false

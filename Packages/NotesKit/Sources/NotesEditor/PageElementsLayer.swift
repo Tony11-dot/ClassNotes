@@ -33,6 +33,11 @@ struct PageElementsLayer: View {
     @Binding var editingTextID: UUID?
     /// Which elements this instance renders, relative to the ink layer.
     var layer: Layer = .all
+    /// So element edits (move, resize, erase, tape toggle) register a real undo
+    /// step, the same way ink strokes and beautification already do. `nil` for
+    /// non-interactive render targets (page snapshots for NOVA/export), which
+    /// never fire these gestures in the first place.
+    var tracker: ActiveCanvasTracker?
 
     /// Ink paints ABOVE non-tape elements (images, files, text, audio, links)
     /// so a stroke drawn over one is actually visible on top of it — tape
@@ -168,9 +173,24 @@ struct PageElementsLayer: View {
                         (updated.width, updated.height) = resizedSize(for: element, translation: value.translation)
                         resizingID = nil
                         resizeDelta = .zero
+                        registerElementStep(before: element, after: updated, named: "Resize")
                         Task { await model.updateElement(updated, on: pageID) }
                     }
             )
+    }
+
+    /// Registers one undo step for a single element's before/after state — the
+    /// common case for drag, resize, tape toggle. `after == nil` means the
+    /// element was deleted.
+    private func registerElementStep(before: PageElement, after: PageElement?, named: String) {
+        let previous = elements
+        let updated: [PageElement]
+        if let after {
+            updated = previous.map { $0.id == before.id ? after : $0 }
+        } else {
+            updated = previous.filter { $0.id != before.id }
+        }
+        tracker?.registerElementStep(pageID: pageID, elementsBefore: previous, elementsAfter: updated, named: named)
     }
 
     /// Tape must stay tappable even while the pencil is drawing (that's the point
@@ -196,7 +216,7 @@ struct PageElementsLayer: View {
             ? .all : .subviews
     }
 
-    private static let erasableKinds: Set<PageElement.Kind> = [.tape, .text, .codeBlock]
+    private static let erasableKinds: Set<PageElement.Kind> = [.tape, .text, .codeBlock, .functionPlot]
 
     /// Touch down anywhere on a strip or a text box removes it — so scrubbing
     /// the eraser across a page takes out every one it passes over, which is
@@ -208,6 +228,7 @@ struct PageElementsLayer: View {
                 else { return }
                 guard erasedElementIDs.insert(element.id).inserted else { return }
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                registerElementStep(before: element, after: nil, named: "Erase")
                 Task { await model.deleteElement(element.id, on: pageID) }
             }
     }
@@ -218,6 +239,9 @@ struct PageElementsLayer: View {
         switch element.kind {
         case .tape:
             // Lift the strip to reveal what's underneath, or put it back.
+            var toggled = element
+            toggled.isHidden.toggle()
+            registerElementStep(before: element, after: toggled, named: "Tape")
             Task { await model.toggleTape(element.id, on: pageID) }
             UIImpactFeedbackGenerator(style: .soft).impactOccurred()
         case .file:
@@ -226,7 +250,7 @@ struct PageElementsLayer: View {
         case .link:
             guard let string = element.urlString, let url = URL(string: string) else { return }
             openURL(url)
-        case .text, .codeBlock:
+        case .text, .codeBlock, .functionPlot:
             guard allowsEditing else { return }
             editingTextID = element.id
             textFieldFocused = true
@@ -265,6 +289,14 @@ struct PageElementsLayer: View {
                 Label("Edit code", systemImage: "chevron.left.forwardslash.chevron.right")
             }
         }
+        if element.kind == .functionPlot {
+            Button {
+                editingTextID = element.id
+                textFieldFocused = true
+            } label: {
+                Label("Edit function", systemImage: "function")
+            }
+        }
         if element.kind == .tape {
             Button {
                 Task { await model.toggleTape(element.id, on: pageID) }
@@ -276,6 +308,7 @@ struct PageElementsLayer: View {
             }
         }
         Button(role: .destructive) {
+            registerElementStep(before: element, after: nil, named: "Delete")
             Task { await model.deleteElement(element.id, on: pageID) }
         } label: {
             Label("Delete", systemImage: "trash")
@@ -324,6 +357,8 @@ struct PageElementsLayer: View {
             textElement(element)
         case .codeBlock:
             codeBlockElement(element)
+        case .functionPlot:
+            functionPlotElement(element)
         case .unknown:
             // A kind this build doesn't recognise. Nothing to draw — the
             // point of decoding to `.unknown` rather than throwing is that
@@ -440,6 +475,56 @@ struct PageElementsLayer: View {
         )
     }
 
+    // MARK: - Function plots
+
+    @ViewBuilder
+    private func functionPlotElement(_ element: PageElement) -> some View {
+        let radius = (element.codeCornerRadius ?? toolState.functionPlotCornerRadius) * scale
+        let background = ThemeColor(hex: element.colorHex ?? FunctionPlotSettings.defaultBackgroundHex)
+            ?? theme.surfaceRaised
+        let lineColor = ThemeColor(hex: element.textColorHex ?? FunctionPlotSettings.defaultLineHex)
+            ?? theme.accent
+
+        Group {
+            if editingTextID == element.id {
+                FunctionPlotEditor(
+                    element: element, scale: scale, lineColor: lineColor.color, backgroundColor: background,
+                    onCommit: { expression, secondary, window in
+                        var updated = element
+                        updated.functionExpression = expression
+                        updated.functionSecondaryExpression = secondary
+                        updated.functionWindow = window
+                        Task {
+                            let blank = expression.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                && (secondary ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            if blank {
+                                await model.deleteElement(element.id, on: pageID)
+                            } else {
+                                await model.updateElement(updated, on: pageID)
+                            }
+                        }
+                        editingTextID = nil
+                    }
+                )
+                .focused($textFieldFocused)
+            } else {
+                FunctionPlotView(
+                    expression: element.functionExpression ?? "",
+                    secondaryExpression: element.functionSecondaryExpression,
+                    mode: element.resolvedPlotMode,
+                    window: element.functionWindow ?? toolState.functionPlotWindow,
+                    lineColor: lineColor.color, axisColor: lineColor.color
+                )
+                .padding(6 * scale)
+            }
+        }
+        .background(background.color, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                .strokeBorder(theme.separator.color, lineWidth: 0.5)
+        )
+    }
+
     // MARK: - Chrome
 
     private func chip(_ element: PageElement, systemImage: String, title: String) -> some View {
@@ -480,6 +565,7 @@ struct PageElementsLayer: View {
                                        element.y + value.translation.height / scale))
                 draggingID = nil
                 dragOffset = .zero
+                registerElementStep(before: element, after: updated, named: "Move")
                 Task { await model.updateElement(updated, on: pageID) }
             }
     }
@@ -497,8 +583,66 @@ struct PageElementsLayer: View {
                 updated.height = newH
                 updated.x = min(updated.x, logicalSize.width - newW)
                 updated.y = min(updated.y, logicalSize.height - newH)
+                registerElementStep(before: element, after: updated, named: "Resize")
                 Task { await model.updateElement(updated, on: pageID) }
             }
+    }
+}
+
+/// An invisible, eraser-only hit layer for elements that render BELOW the ink
+/// canvas (`.text`, `.codeBlock` — see `PageElementsLayer`'s `belowInk` pass).
+/// Ink is deliberately drawn ABOVE those elements so a stroke over one shows on
+/// top of it, but that also makes `PageCanvasView` the hit-test winner for the
+/// WHOLE page the instant the eraser tool is selected
+/// (`PageCanvasView.interceptsTouches`) — so the erase gesture already wired to
+/// those elements (`PageElementsLayer.eraseGesture`) can never actually be
+/// reached by a touch; it's correctly wired but structurally unreachable. This
+/// sits ABOVE the canvas instead (next to the tape layer, which needs the same
+/// "erase has to win" ordering) and is the only place that can receive the
+/// touch, without changing the visual z-order that ink-over-text depends on.
+struct EraseCatcherLayer: View {
+    let pageID: UUID
+    let elements: [PageElement]
+    let model: NotebookEditorModel
+    let toolState: ToolState
+    let displaySize: CGSize
+    let logicalSize: CGSize
+    var tracker: ActiveCanvasTracker?
+
+    @State private var erasedElementIDs: Set<UUID> = []
+
+    private var scale: CGFloat { displaySize.width / max(logicalSize.width, 1) }
+
+    static let catchableKinds: Set<PageElement.Kind> = [.text, .codeBlock, .functionPlot]
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            ForEach(elements.filter { Self.catchableKinds.contains($0.kind) }) { element in
+                Color.clear
+                    .contentShape(Rectangle())
+                    .frame(width: element.width * scale, height: element.height * scale)
+                    .rotationEffect(.degrees(element.rotation))
+                    .position(
+                        x: (element.x + element.width / 2) * scale,
+                        y: (element.y + element.height / 2) * scale
+                    )
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { _ in
+                                guard erasedElementIDs.insert(element.id).inserted else { return }
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                let before = elements
+                                let after = before.filter { $0.id != element.id }
+                                tracker?.registerElementStep(
+                                    pageID: pageID, elementsBefore: before, elementsAfter: after, named: "Erase"
+                                )
+                                Task { await model.deleteElement(element.id, on: pageID) }
+                            }
+                    )
+            }
+        }
+        .frame(width: displaySize.width, height: displaySize.height)
+        .allowsHitTesting(toolState.tool == .eraser)
     }
 }
 
@@ -588,5 +732,108 @@ private struct CodeBlockEditor: View {
                         .font(.dsSubheadline.weight(.semibold))
                 }
             }
+    }
+}
+
+/// The in-place editor for a function-plot block: the curve, LIVE from the
+/// draft text as it's typed (validated through the same parser the read-only
+/// render uses), with the expression field(s) and a zoom stepper underneath.
+/// Parametric mode gets a second field for `y(t)`; every other mode gets one.
+private struct FunctionPlotEditor: View {
+    @Environment(\.theme) private var theme
+
+    let element: PageElement
+    let scale: CGFloat
+    let lineColor: Color
+    let backgroundColor: ThemeColor
+    let onCommit: (String, String?, Double) -> Void
+
+    @State private var draft: String
+    @State private var secondaryDraft: String
+    @State private var window: Double
+
+    private var mode: PlotMode { element.resolvedPlotMode }
+
+    init(
+        element: PageElement, scale: CGFloat, lineColor: Color, backgroundColor: ThemeColor,
+        onCommit: @escaping (String, String?, Double) -> Void
+    ) {
+        self.element = element
+        self.scale = scale
+        self.lineColor = lineColor
+        self.backgroundColor = backgroundColor
+        self.onCommit = onCommit
+        _draft = State(initialValue: element.functionExpression ?? "")
+        _secondaryDraft = State(initialValue: element.functionSecondaryExpression ?? "")
+        _window = State(initialValue: element.functionWindow ?? FunctionPlotSettings().window)
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            FunctionPlotView(
+                expression: draft, secondaryExpression: secondaryDraft, mode: mode, window: window,
+                lineColor: lineColor, axisColor: lineColor
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            VStack(alignment: .leading, spacing: 4 * scale) {
+                fieldRow(mode.needsSecondaryExpression ? "x(t) =" : "\(mode.variableLabel) =", text: $draft)
+                if mode.needsSecondaryExpression {
+                    fieldRow("y(t) =", text: $secondaryDraft)
+                }
+                HStack(spacing: 6 * scale) {
+                    Text("Zoom").font(.dsCaption2).foregroundStyle(lineColor.opacity(0.75))
+                    Button {
+                        window = max(FunctionPlotSettings.windowRange.lowerBound, window / 1.4)
+                    } label: {
+                        Image(systemName: "plus.magnifyingglass")
+                    }
+                    Button {
+                        window = min(FunctionPlotSettings.windowRange.upperBound, window * 1.4)
+                    } label: {
+                        Image(systemName: "minus.magnifyingglass")
+                    }
+                }
+                .font(.dsCaption)
+                .foregroundStyle(lineColor)
+                .buttonStyle(.plain)
+            }
+            .padding(8 * scale)
+            .background(backgroundColor.color.opacity(0.6))
+        }
+        .onDisappear {
+            onCommit(draft, mode.needsSecondaryExpression ? secondaryDraft : nil, window)
+        }
+        .toolbar {
+            ToolbarItem(placement: .keyboard) {
+                Button("Done") {
+                    onCommit(draft, mode.needsSecondaryExpression ? secondaryDraft : nil, window)
+                }
+                .font(.dsSubheadline.weight(.semibold))
+            }
+        }
+    }
+
+    private func fieldRow(_ label: String, text: Binding<String>) -> some View {
+        HStack(spacing: 6 * scale) {
+            Text(label).font(.dsCaption.weight(.semibold)).foregroundStyle(lineColor)
+            TextField("", text: text)
+                .font(.dsCaption.monospaced())
+                .foregroundStyle(lineColor)
+                .textFieldStyle(.plain)
+                .autocorrectionDisabled(true)
+                .textInputAutocapitalization(.never)
+        }
+    }
+}
+
+private extension PlotMode {
+    /// The left-hand side of the equation shown next to the expression field.
+    var variableLabel: String {
+        switch self {
+        case .cartesianY: "y"
+        case .cartesianX: "x"
+        case .polar: "r"
+        case .parametric: "x(t)"
+        }
     }
 }

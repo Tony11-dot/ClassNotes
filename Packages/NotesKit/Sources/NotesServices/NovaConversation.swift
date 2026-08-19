@@ -88,6 +88,20 @@ public final class NovaConversation {
         beginAssistantReply()
     }
 
+    /// Edits a message the user already sent. Everything from that point on
+    /// (the old reply included) is replaced, and NOVA answers again — as if
+    /// the edited text had been what was sent to begin with, not a second
+    /// message appended after the first.
+    public func editUserMessage(id: UUID, newText: String) {
+        let trimmed = newText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !streaming,
+              let index = messages.firstIndex(where: { $0.id == id && $0.role == .user })
+        else { return }
+        errorText = nil
+        messages = Array(messages[..<index]) + [AIMessage(id: id, role: .user, content: trimmed)]
+        beginAssistantReply()
+    }
+
     public func reset() {
         streamTask?.cancel()
         streaming = false

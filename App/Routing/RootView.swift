@@ -62,9 +62,14 @@ struct RootView: View {
                 // A remote-only notebook (created on another device, never
                 // opened here) has no local ink package for the editor to
                 // open — route it to the read-only viewer on every device,
-                // iPad included, until real content sync exists.
+                // iPad included, until real content sync exists. A notebook
+                // the user explicitly marked View Only has real local ink —
+                // it opens through the SAME local viewer the iPhone always
+                // gets, not the remote-cache one.
                 if notebook.isRemoteOnly {
                     RemoteNotebookViewerScreen(notebook: notebook)
+                } else if notebook.isViewOnly {
+                    NotebookViewerScreen(notebook: notebook, openingPage: pageID)
                 } else {
                     EditorScreen(notebook: notebook, openingPage: pageID)
                 }

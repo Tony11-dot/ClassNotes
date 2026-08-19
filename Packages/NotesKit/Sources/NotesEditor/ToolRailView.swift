@@ -44,6 +44,7 @@ struct ToolRailView: View {
         case tape
         case text
         case codeBlock
+        case functionPlot
         case beautify
         case pageSettings
     }
@@ -81,7 +82,9 @@ struct ToolRailView: View {
             divider
             DSGlassIconButton("Ask NOVA", systemImage: "sparkles") { onNova() }
             // The page owns its undo stack (`PageCanvasView.pageUndoManager`),
-            // so these reach the same manager PencilKit registers into.
+            // driven directly by the coordinator's own history — NOT by
+            // PencilKit's registrations, which never reliably reach it (a
+            // `PKCanvasView` inside SwiftUI is never first responder).
             DSGlassIconButton("Undo", systemImage: "arrow.uturn.backward") {
                 tracker.undo()
             }
@@ -155,6 +158,18 @@ struct ToolRailView: View {
         }
         .popover(isPresented: binding(.codeBlock), arrowEdge: .leading) {
             CodeBlockPanel(toolState: toolState)
+                .presentationCompactAdaptation(.popover)
+        }
+
+        railButton(
+            "Function plot", systemImage: "function",
+            isActive: toolState.tool == .functionPlot
+        ) {
+            toolState.select(.functionPlot)
+            panel = .functionPlot
+        }
+        .popover(isPresented: binding(.functionPlot), arrowEdge: .leading) {
+            FunctionPlotPanel(toolState: toolState)
                 .presentationCompactAdaptation(.popover)
         }
 

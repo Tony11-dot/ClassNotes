@@ -185,13 +185,32 @@ struct RemoteLibraryDiscoveryTests {
         let (repo, context, container) = makeRepository()
         _ = container
         let remoteID = UUID()
-        repo.applyRemoteLibrary(RemoteLibrary(notebooks: [entry(id: remoteID.uuidString, title: "Physics")]))
+        await repo.applyRemoteLibrary(RemoteLibrary(notebooks: [entry(id: remoteID.uuidString, title: "Physics")]))
 
         let all = try context.fetch(FetchDescriptor<Notebook>())
         #expect(all.count == 1)
         #expect(all.first?.id == remoteID)
         #expect(all.first?.title == "Physics")
         #expect(all.first?.isRemoteOnly == true)
+    }
+
+    @Test("A local package already on disk is adopted, not shadowed as remote-only")
+    func selfHealsLocalPackageMistakenForRemoteOnly() async throws {
+        let (repo, context, container) = makeRepository()
+        _ = container
+        let id = UUID()
+        // A real .cmnote package exists on disk for this id, but (simulating
+        // the race the self-heal guards against) no local `Notebook` row
+        // exists — without the disk check, this would be recreated with
+        // `isRemoteOnly = true` and get stuck permanently read-only.
+        _ = try await repo.store.createDocument(id: id, firstPageTemplate: .ruled)
+
+        await repo.applyRemoteLibrary(RemoteLibrary(notebooks: [entry(id: id.uuidString, title: "Physics")]))
+
+        let all = try context.fetch(FetchDescriptor<Notebook>())
+        #expect(all.count == 1)
+        #expect(all.first?.id == id)
+        #expect(all.first?.isRemoteOnly == false)
     }
 
     @Test("A notebook already known locally keeps its own edit when the server's copy is no newer")
@@ -203,7 +222,7 @@ struct RemoteLibraryDiscoveryTests {
         context.insert(notebook)
         try context.save()
 
-        repo.applyRemoteLibrary(RemoteLibrary(
+        await repo.applyRemoteLibrary(RemoteLibrary(
             notebooks: [entry(
                 id: notebook.id.uuidString, title: "Stale server title",
                 updatedAt: Date(timeIntervalSinceNow: -60)
@@ -225,7 +244,7 @@ struct RemoteLibraryDiscoveryTests {
         context.insert(notebook)
         try context.save()
 
-        repo.applyRemoteLibrary(RemoteLibrary(
+        await repo.applyRemoteLibrary(RemoteLibrary(
             notebooks: [entry(
                 id: notebook.id.uuidString, title: "Renamed on the iPad",
                 updatedAt: Date(timeIntervalSinceNow: 60)
@@ -247,7 +266,7 @@ struct RemoteLibraryDiscoveryTests {
         context.insert(Notebook(title: "Untouched", coverColorHex: "#111111"))
         try context.save()
 
-        repo.applyRemoteLibrary(RemoteLibrary(notebooks: []))
+        await repo.applyRemoteLibrary(RemoteLibrary(notebooks: []))
 
         let all = try context.fetch(FetchDescriptor<Notebook>())
         #expect(all.count == 1)

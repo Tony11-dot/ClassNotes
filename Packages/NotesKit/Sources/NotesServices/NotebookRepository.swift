@@ -236,6 +236,16 @@ public final class NotebookRepository {
         sync?.pushNotebook(snapshot(notebook))
     }
 
+    /// The user's explicit "View Only" choice from the notebook's action menu.
+    /// Local-only, same as `isFavorite` — the synced notebook DTO
+    /// (`NotebookSnapshot`/`NotebookSyncBody`) is defined by the ClassMate
+    /// backend and doesn't carry this field, so it doesn't travel with the rest
+    /// of a rename/reshelve push.
+    public func setViewOnly(_ isViewOnly: Bool, for notebook: Notebook) throws {
+        notebook.isViewOnly = isViewOnly
+        try context.save()
+    }
+
     // MARK: - Destructive delete (used by remote changes and the trash)
 
     public func delete(_ notebook: Notebook) async throws {
@@ -390,7 +400,7 @@ public final class NotebookRepository {
     /// A notebook that's since vanished from this list is still NOT deleted
     /// here — "absent from the server" must never delete anything, same rule
     /// `applyRemoteChanges` follows for its own tombstone channel.
-    public func applyRemoteLibrary(_ remote: RemoteLibrary) {
+    public func applyRemoteLibrary(_ remote: RemoteLibrary) async {
         let all = (try? context.fetch(FetchDescriptor<Notebook>())) ?? []
         var byID: [UUID: Notebook] = [:]
         for notebook in all { byID[notebook.id] = notebook }
@@ -416,7 +426,13 @@ public final class NotebookRepository {
                 createdAt: entry.createdAt
             )
             notebook.updatedAt = entry.updatedAt
-            notebook.isRemoteOnly = true
+            // Self-heal: if a real `.cmnote` package already exists on disk for
+            // this id, this was never actually remote-only — a local row that
+            // ended up missing from `byID` (e.g. a pull racing this device's own
+            // push) would otherwise be recreated permanently stuck read-only,
+            // indistinguishable in the library from the notebook it's shadowing.
+            let existsLocally = await store.documentExists(id: id)
+            notebook.isRemoteOnly = !existsLocally
             context.insert(notebook)
             byID[id] = notebook
             didChange = true

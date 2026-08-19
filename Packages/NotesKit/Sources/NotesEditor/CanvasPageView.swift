@@ -115,6 +115,33 @@ public final class ActiveCanvasTracker {
         canvases[pageID]?.view
     }
 
+    /// Registers one undo step for a change to the page's ELEMENTS — a drag,
+    /// resize, eraser delete of tape/text/a code block, tape toggle, or a lasso
+    /// action — reusing the exact step mechanism ink strokes and beautification
+    /// already register (`CanvasPageHistory.pushStep`, same as `applyBeautified`
+    /// above). Before this, every one of those actions wrote straight to the
+    /// manifest with no undo registration at all.
+    ///
+    /// `drawingBefore`/`drawingAfter` are only needed when the same action also
+    /// changed ink (a lasso delete/move can touch strokes and elements
+    /// together); left `nil`, the current drawing is passed unchanged on both
+    /// sides so only the elements half of the step does anything.
+    public func registerElementStep(
+        pageID: UUID,
+        drawingBefore: PKDrawing? = nil, drawingAfter: PKDrawing? = nil,
+        elementsBefore: [PageElement], elementsAfter: [PageElement],
+        named: String = "Edit"
+    ) {
+        guard let canvas = canvases[pageID]?.view as? PageCanvasView,
+              let coordinator = canvas.delegate as? CanvasPageView.Coordinator else { return }
+        coordinator.pushStep(
+            restoring: drawingBefore ?? canvas.drawing, elements: elementsBefore,
+            counterDrawing: drawingAfter ?? canvas.drawing, counterElements: elementsAfter,
+            named: named, on: canvas
+        )
+        undoStackChanged()
+    }
+
     /// The bounding box of a page's ink in logical page space, or nil if empty.
     public func inkBounds(for pageID: UUID) -> CGRect? {
         guard let bounds = canvases[pageID]?.view?.drawing.bounds,
@@ -154,6 +181,19 @@ final class PageCanvasView: PKCanvasView {
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         guard interceptsTouches else { return nil }
+        // `drawingPolicy = .pencilOnly` stops PencilKit from INKING with a
+        // finger, but does nothing about hit-testing: without this, a finger
+        // touch while the pen or eraser is selected still made this view the
+        // hit-test winner for the whole page, so the outer page scroll view
+        // (and any element behind it) never saw the touch at all — "the pen is
+        // selected" silently meant "fingers can't scroll or drag anything
+        // either". A whiteboard's own pinch/pan (`allowsZoom`) genuinely needs
+        // finger touches, so it keeps claiming everything as before.
+        guard allowsZoom else {
+            let isPencil = event?.allTouches?.contains { $0.type == .pencil } ?? true
+            guard isPencil else { return nil }
+            return super.hitTest(point, with: event)
+        }
         return super.hitTest(point, with: event)
     }
 

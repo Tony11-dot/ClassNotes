@@ -2,6 +2,7 @@ import ClassMateTheme
 import NotesDesignSystem
 import NotesServices
 import SwiftUI
+import UIKit
 
 /// NOVA chat surface: user messages as accent bubbles, assistant replies as
 /// avatar + plain streaming text (ClassMate style — no assistant bubble).
@@ -51,12 +52,6 @@ public struct NovaChatView: View {
                     ForEach(conversation.visibleMessages) { message in
                         messageRow(message).id(message.id)
                     }
-                    if conversation.streaming, conversation.visibleMessages.last?.content.isEmpty ?? true {
-                        HStack(spacing: 10) {
-                            NovaAvatar(size: 26, animated: true)
-                            TypingDots()
-                        }
-                    }
                     if let error = conversation.errorText {
                         Text(error)
                             .font(.dsFootnote)
@@ -92,6 +87,13 @@ public struct NovaChatView: View {
                 } else {
                     NovaMarkdownText(message.content)
                         .foregroundStyle(theme.ink.color)
+                        .contextMenu {
+                            Button {
+                                UIPasteboard.general.string = message.content
+                            } label: {
+                                Label("Copy", systemImage: "doc.on.doc")
+                            }
+                        }
                 }
             }
         }
