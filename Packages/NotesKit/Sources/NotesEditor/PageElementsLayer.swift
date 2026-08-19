@@ -64,6 +64,11 @@ struct PageElementsLayer: View {
     @State private var erasedElementIDs: Set<UUID> = []
     @State private var previewURL: URL?
     @FocusState private var textFieldFocused: Bool
+    /// Which function-plot element is open in the big settings sheet — for
+    /// BOTH a hold on an existing graph and (via `TextPlacementLayer`'s own
+    /// commit) never a brand-new one, since creation goes through
+    /// `ToolRailView`'s own sheet instead.
+    @State private var editingFunctionPlotID: PageElement.ID?
 
     private var scale: CGFloat { displaySize.width / max(logicalSize.width, 1) }
 
@@ -120,6 +125,13 @@ struct PageElementsLayer: View {
                     // Erasing tape wins over lifting it, so a rubbed-out strip is
                     // gone rather than merely revealed.
                     .highPriorityGesture(eraseGesture(for: element), including: eraseMask(for: element))
+                    // Holding a function plot opens the big settings sheet
+                    // directly — no detour through the system context menu,
+                    // which is a second gesture recognizer listening for the
+                    // same hold and reads, from the user's side, as "holding
+                    // doesn't do anything" when the menu's own preview
+                    // animation is mistaken for nothing happening.
+                    .highPriorityGesture(functionPlotHoldGesture(for: element), including: functionPlotHoldMask(for: element))
                     // Press and hold: the thing you pressed lifts off the page,
                     // the page behind it blurs, and the actions drop out
                     // underneath it. That's the system context menu — a popover
@@ -129,6 +141,77 @@ struct PageElementsLayer: View {
         }
         .frame(width: displaySize.width, height: displaySize.height)
         .quickLookPreview($previewURL)
+        .sheet(item: editingFunctionPlotBinding) { element in
+            FunctionPlotSettingsSheet(
+                isNew: false,
+                mode: element.resolvedPlotMode,
+                expression: element.functionExpression ?? "",
+                secondary: element.functionSecondaryExpression,
+                tertiary: element.functionTertiaryExpression,
+                window: element.functionWindow ?? toolState.functionPlotWindow,
+                axisXLabel: element.axisXLabel, axisYLabel: element.axisYLabel, axisZLabel: element.axisZLabel,
+                axisXUnit: element.axisXUnit, axisYUnit: element.axisYUnit, axisZUnit: element.axisZUnit,
+                axisXDisplay: element.axisXDisplay, axisYDisplay: element.axisYDisplay, axisZDisplay: element.axisZDisplay,
+                lineColorHex: element.textColorHex ?? FunctionPlotSettings.defaultLineHex,
+                backgroundColorHex: element.colorHex ?? FunctionPlotSettings.defaultBackgroundHex,
+                transparentBackground: element.backgroundIsTransparent ?? toolState.functionPlotTransparentBackground,
+                cornerRadius: element.codeCornerRadius ?? toolState.functionPlotCornerRadius,
+                onCommit: { draft, lineHex, backgroundHex, cornerRadius, transparent in
+                    var updated = element
+                    updated.functionExpression = draft.expression
+                    updated.functionSecondaryExpression = draft.secondary
+                    updated.functionTertiaryExpression = draft.tertiary
+                    updated.functionMode = draft.mode.rawValue
+                    updated.functionWindow = draft.window
+                    updated.axisXLabel = draft.axisXLabel
+                    updated.axisYLabel = draft.axisYLabel
+                    updated.axisZLabel = draft.axisZLabel
+                    updated.axisXUnit = draft.axisXUnit
+                    updated.axisYUnit = draft.axisYUnit
+                    updated.axisZUnit = draft.axisZUnit
+                    updated.axisXTickFormat = draft.axisXTickFormat?.rawValue
+                    updated.axisYTickFormat = draft.axisYTickFormat?.rawValue
+                    updated.axisZTickFormat = draft.axisZTickFormat?.rawValue
+                    updated.axisXTickInterval = draft.axisXTickInterval
+                    updated.axisYTickInterval = draft.axisYTickInterval
+                    updated.axisZTickInterval = draft.axisZTickInterval
+                    updated.textColorHex = lineHex
+                    updated.colorHex = backgroundHex
+                    updated.codeCornerRadius = cornerRadius
+                    updated.backgroundIsTransparent = transparent
+                    registerElementStep(before: element, after: updated, named: "Edit graph")
+                    Task { await model.updateElement(updated, on: pageID) }
+                    editingFunctionPlotID = nil
+                },
+                onDelete: {
+                    registerElementStep(before: element, after: nil, named: "Delete graph")
+                    Task { await model.deleteElement(element.id, on: pageID) }
+                    editingFunctionPlotID = nil
+                }
+            )
+        }
+    }
+
+    /// `.sheet(item:)` needs an `Identifiable` binding — looks the id back up
+    /// against the live `elements` array each time, so the sheet always shows
+    /// the CURRENT element (not a stale copy from when the hold happened).
+    private var editingFunctionPlotBinding: Binding<PageElement?> {
+        Binding(
+            get: { editingFunctionPlotID.flatMap { id in elements.first { $0.id == id } } },
+            set: { if $0 == nil { editingFunctionPlotID = nil } }
+        )
+    }
+
+    private func functionPlotHoldMask(for element: PageElement) -> GestureMask {
+        allowsEditing && element.kind == .functionPlot ? .all : .subviews
+    }
+
+    private func functionPlotHoldGesture(for element: PageElement) -> some Gesture {
+        LongPressGesture(minimumDuration: 0.35)
+            .onEnded { _ in
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                editingFunctionPlotID = element.id
+            }
     }
 
     /// The element's size for a given resize translation (view-space points).
@@ -250,10 +333,15 @@ struct PageElementsLayer: View {
         case .link:
             guard let string = element.urlString, let url = URL(string: string) else { return }
             openURL(url)
-        case .text, .codeBlock, .functionPlot:
+        case .text, .codeBlock:
             guard allowsEditing else { return }
             editingTextID = element.id
             textFieldFocused = true
+        case .functionPlot:
+            // A tap works too, not only the hold — the settings sheet is the
+            // same either way.
+            guard allowsEditing else { return }
+            editingFunctionPlotID = element.id
         case .image, .audio, .fill, .unknown:
             break
         }
@@ -289,14 +377,12 @@ struct PageElementsLayer: View {
                 Label("Edit code", systemImage: "chevron.left.forwardslash.chevron.right")
             }
         }
-        if element.kind == .functionPlot {
-            Button {
-                editingTextID = element.id
-                textFieldFocused = true
-            } label: {
-                Label("Edit function", systemImage: "function")
-            }
-        }
+        // Function plots skip this menu entirely: `functionPlotHoldGesture`
+        // opens the settings sheet directly on the SAME hold gesture the
+        // context menu would otherwise also be listening for, and having
+        // both meant holding could just as easily surface a menu with an
+        // "Edit function" row still one more tap away, which is exactly the
+        // "holding doesn't do anything" feeling this was meant to fix.
         if element.kind == .tape {
             Button {
                 Task { await model.toggleTape(element.id, on: pageID) }
@@ -480,6 +566,10 @@ struct PageElementsLayer: View {
 
     // MARK: - Function plots
 
+    /// Editing a function plot ALWAYS goes through the big
+    /// `FunctionPlotSettingsSheet` now — never the compact inline editor a
+    /// tap used to open directly at the block's own (often tiny) on-page
+    /// size, which is exactly what made it feel too cramped to use.
     @ViewBuilder
     private func functionPlotElement(_ element: PageElement) -> some View {
         let radius = (element.codeCornerRadius ?? toolState.functionPlotCornerRadius) * scale
@@ -489,57 +579,16 @@ struct PageElementsLayer: View {
             ?? theme.accent
         let transparent = element.backgroundIsTransparent ?? toolState.functionPlotTransparentBackground
 
-        Group {
-            if editingTextID == element.id {
-                FunctionPlotEditor(
-                    element: element, scale: scale, lineColor: lineColor.color, backgroundColor: background,
-                    onCommit: { draft in
-                        var updated = element
-                        updated.functionExpression = draft.expression
-                        updated.functionSecondaryExpression = draft.secondary
-                        updated.functionTertiaryExpression = draft.tertiary
-                        updated.functionMode = draft.mode.rawValue
-                        updated.functionWindow = draft.window
-                        updated.axisXLabel = draft.axisXLabel
-                        updated.axisYLabel = draft.axisYLabel
-                        updated.axisZLabel = draft.axisZLabel
-                        updated.axisXUnit = draft.axisXUnit
-                        updated.axisYUnit = draft.axisYUnit
-                        updated.axisZUnit = draft.axisZUnit
-                        updated.axisXTickFormat = draft.axisXTickFormat?.rawValue
-                        updated.axisYTickFormat = draft.axisYTickFormat?.rawValue
-                        updated.axisZTickFormat = draft.axisZTickFormat?.rawValue
-                        updated.axisXTickInterval = draft.axisXTickInterval
-                        updated.axisYTickInterval = draft.axisYTickInterval
-                        updated.axisZTickInterval = draft.axisZTickInterval
-                        Task {
-                            // A 1-axis number line has no expression at all by
-                            // design — blank there is normal, not "delete me".
-                            let blank = draft.mode != .axis && [draft.expression, draft.secondary, draft.tertiary]
-                                .allSatisfy { ($0 ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                            if blank {
-                                await model.deleteElement(element.id, on: pageID)
-                            } else {
-                                await model.updateElement(updated, on: pageID)
-                            }
-                        }
-                        editingTextID = nil
-                    }
-                )
-                .focused($textFieldFocused)
-            } else {
-                FunctionPlotView(
-                    expression: element.functionExpression ?? "",
-                    secondaryExpression: element.functionSecondaryExpression,
-                    tertiaryExpression: element.functionTertiaryExpression,
-                    mode: element.resolvedPlotMode,
-                    window: element.functionWindow ?? toolState.functionPlotWindow,
-                    lineColor: lineColor.color, axisColor: lineColor.color,
-                    axisX: element.axisXDisplay, axisY: element.axisYDisplay, axisZ: element.axisZDisplay
-                )
-                .padding(6 * scale)
-            }
-        }
+        FunctionPlotView(
+            expression: element.functionExpression ?? "",
+            secondaryExpression: element.functionSecondaryExpression,
+            tertiaryExpression: element.functionTertiaryExpression,
+            mode: element.resolvedPlotMode,
+            window: element.functionWindow ?? toolState.functionPlotWindow,
+            lineColor: lineColor.color, axisColor: lineColor.color,
+            axisX: element.axisXDisplay, axisY: element.axisYDisplay, axisZ: element.axisZDisplay
+        )
+        .padding(6 * scale)
         .background(transparent ? Color.clear : background.color, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
         .overlay {
             if !transparent {
@@ -756,340 +805,5 @@ private struct CodeBlockEditor: View {
                         .font(.dsSubheadline.weight(.semibold))
                 }
             }
-    }
-}
-
-/// Everything a function-plot commit needs, bundled so `onCommit` doesn't grow
-/// an ever-longer tuple as the block gains fields (3D added a third
-/// expression and three axis labels; the axis overhaul added mode itself,
-/// since axis count/curve type are now editable after placement too).
-struct FunctionPlotDraft {
-    var mode: PlotMode
-    var expression: String
-    var secondary: String?
-    var tertiary: String?
-    var window: Double
-    var axisXLabel: String?
-    var axisYLabel: String?
-    var axisZLabel: String?
-    var axisXUnit: String?
-    var axisYUnit: String?
-    var axisZUnit: String?
-    var axisXTickFormat: AxisTickFormat?
-    var axisYTickFormat: AxisTickFormat?
-    var axisZTickFormat: AxisTickFormat?
-    var axisXTickInterval: Double?
-    var axisYTickInterval: Double?
-    var axisZTickInterval: Double?
-}
-
-/// One axis's editable settings, bundled so the editor doesn't carry four
-/// separate `@State` vars per axis times three axes.
-private struct AxisFieldState {
-    var name = ""
-    var unit = ""
-    var tickFormat: AxisTickFormat = .decimal
-    var tickInterval: Double?
-
-    init() {}
-
-    init(label: String?, unit: String?, display: AxisDisplay) {
-        self.name = label ?? ""
-        self.unit = unit ?? ""
-        self.tickFormat = display.tickFormat
-        self.tickInterval = display.tickInterval
-    }
-}
-
-/// The in-place editor for a function-plot block: the curve, LIVE from the
-/// draft text as it's typed (validated through the same parser the read-only
-/// render uses), an "Axes" count picker (1/2/3) that gates which curve-type
-/// and axis settings show, the expression field(s), per-axis name/unit/tick
-/// settings, a zoom control, and a math symbol keyboard — all fully editable,
-/// nothing locked to the panel. Parametric mode gets a second field for
-/// `y(t)`; 3D gets a third (`z(t)`); 1-axis gets none (it's a bare number
-/// line, not a curve).
-private struct FunctionPlotEditor: View {
-    @Environment(\.theme) private var theme
-
-    let element: PageElement
-    let scale: CGFloat
-    let lineColor: Color
-    let backgroundColor: ThemeColor
-    let onCommit: (FunctionPlotDraft) -> Void
-
-    @State private var mode: PlotMode
-    /// The last 2-axis curve type picked, so toggling the axis count away from
-    /// 2 and back doesn't lose which of cartesianY/cartesianX/polar/parametric
-    /// was selected.
-    @State private var twoAxisMode: PlotMode
-    @State private var draft: String
-    @State private var secondaryDraft: String
-    @State private var tertiaryDraft: String
-    @State private var window: Double
-    @State private var axisX: AxisFieldState
-    @State private var axisY: AxisFieldState
-    @State private var axisZ: AxisFieldState
-
-    private enum Field: Hashable { case primary, secondary, tertiary, axisX, axisY, axisZ }
-    @FocusState private var focusedField: Field?
-
-    private var axisCount: Int { mode.axisCount }
-
-    init(
-        element: PageElement, scale: CGFloat, lineColor: Color, backgroundColor: ThemeColor,
-        onCommit: @escaping (FunctionPlotDraft) -> Void
-    ) {
-        self.element = element
-        self.scale = scale
-        self.lineColor = lineColor
-        self.backgroundColor = backgroundColor
-        self.onCommit = onCommit
-        let startMode = element.resolvedPlotMode
-        _mode = State(initialValue: startMode)
-        _twoAxisMode = State(initialValue: startMode.axisCount == 2 ? startMode : .cartesianY)
-        _draft = State(initialValue: element.functionExpression ?? "")
-        _secondaryDraft = State(initialValue: element.functionSecondaryExpression ?? "")
-        _tertiaryDraft = State(initialValue: element.functionTertiaryExpression ?? "")
-        _window = State(initialValue: element.functionWindow ?? FunctionPlotSettings().window)
-        _axisX = State(initialValue: AxisFieldState(label: element.axisXLabel, unit: element.axisXUnit, display: element.axisXDisplay))
-        _axisY = State(initialValue: AxisFieldState(label: element.axisYLabel, unit: element.axisYUnit, display: element.axisYDisplay))
-        _axisZ = State(initialValue: AxisFieldState(label: element.axisZLabel, unit: element.axisZUnit, display: element.axisZDisplay))
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            FunctionPlotView(
-                expression: draft, secondaryExpression: secondaryDraft, tertiaryExpression: tertiaryDraft,
-                mode: mode, window: window, lineColor: lineColor, axisColor: lineColor,
-                axisX: axisDisplay(axisX, fallback: "X"),
-                axisY: axisDisplay(axisY, fallback: "Y"),
-                axisZ: axisDisplay(axisZ, fallback: "Z")
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            VStack(alignment: .leading, spacing: 8 * scale) {
-                Picker("Axes", selection: axisCountBinding) {
-                    Text("1 axis").tag(1)
-                    Text("2 axes").tag(2)
-                    Text("3 axes").tag(3)
-                }
-                .pickerStyle(.segmented)
-                if axisCount == 2 {
-                    Picker("Curve", selection: twoAxisModeBinding) {
-                        ForEach([PlotMode.cartesianY, .cartesianX, .polar, .parametric]) { option in
-                            Text(option.displayName).tag(option)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                }
-                if mode != .axis {
-                    fieldRow(mode.needsSecondaryExpression ? "x(t) =" : "\(mode.variableLabel) =", text: $draft, field: .primary)
-                }
-                if mode.needsSecondaryExpression {
-                    fieldRow("y(t) =", text: $secondaryDraft, field: .secondary)
-                }
-                if mode.needsTertiaryExpression {
-                    fieldRow("z(t) =", text: $tertiaryDraft, field: .tertiary)
-                }
-                axisSettingsRow(title: "X axis", state: $axisX, field: .axisX, placeholder: "X")
-                if axisCount >= 2 {
-                    axisSettingsRow(title: "Y axis", state: $axisY, field: .axisY, placeholder: "Y")
-                }
-                if axisCount == 3 {
-                    axisSettingsRow(title: "Z axis", state: $axisZ, field: .axisZ, placeholder: "Z")
-                }
-                HStack(spacing: 6 * scale) {
-                    Text("Zoom").font(.dsCaption2).foregroundStyle(lineColor.opacity(0.75))
-                    Button {
-                        window = max(FunctionPlotSettings.windowRange.lowerBound, window / 1.4)
-                    } label: {
-                        Image(systemName: "plus.magnifyingglass")
-                    }
-                    Button {
-                        window = min(FunctionPlotSettings.windowRange.upperBound, window * 1.4)
-                    } label: {
-                        Image(systemName: "minus.magnifyingglass")
-                    }
-                    Spacer(minLength: 4)
-                    TextField("", value: $window, format: .number.precision(.fractionLength(0...1)))
-                        .keyboardType(.decimalPad)
-                        .multilineTextAlignment(.trailing)
-                        .frame(width: 44 * scale)
-                        .onChange(of: window) { _, newValue in
-                            window = min(max(newValue, FunctionPlotSettings.windowRange.lowerBound),
-                                         FunctionPlotSettings.windowRange.upperBound)
-                        }
-                }
-                .font(.dsCaption)
-                .foregroundStyle(lineColor)
-                .buttonStyle(.plain)
-            }
-            .padding(8 * scale)
-            .background(backgroundColor.color.opacity(0.6))
-        }
-        .onDisappear { commit() }
-        .toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
-                ForEach(Self.mathTokens, id: \.label) { token in
-                    Button(token.label) { insert(token.insert) }
-                        .font(.dsCaption.monospaced())
-                }
-                Spacer()
-                Button("Done") { commit() }
-                    .font(.dsSubheadline.weight(.semibold))
-            }
-        }
-    }
-
-    private func commit() {
-        onCommit(FunctionPlotDraft(
-            mode: mode,
-            expression: draft,
-            secondary: mode.needsSecondaryExpression ? secondaryDraft : nil,
-            tertiary: mode.needsTertiaryExpression ? tertiaryDraft : nil,
-            window: window,
-            axisXLabel: axisX.name,
-            axisYLabel: axisCount >= 2 ? axisY.name : nil,
-            axisZLabel: axisCount == 3 ? axisZ.name : nil,
-            axisXUnit: axisX.unit,
-            axisYUnit: axisCount >= 2 ? axisY.unit : nil,
-            axisZUnit: axisCount == 3 ? axisZ.unit : nil,
-            axisXTickFormat: axisX.tickFormat,
-            axisYTickFormat: axisCount >= 2 ? axisY.tickFormat : nil,
-            axisZTickFormat: axisCount == 3 ? axisZ.tickFormat : nil,
-            axisXTickInterval: axisX.tickInterval,
-            axisYTickInterval: axisCount >= 2 ? axisY.tickInterval : nil,
-            axisZTickInterval: axisCount == 3 ? axisZ.tickInterval : nil
-        ))
-    }
-
-    /// 1 ↔ `.axis`, 3 ↔ `.threeD`; 2 restores whichever 2-axis curve type was
-    /// last selected so the choice isn't lost when hopping away and back.
-    private var axisCountBinding: Binding<Int> {
-        Binding(
-            get: { axisCount },
-            set: { newValue in
-                switch newValue {
-                case 1: mode = .axis
-                case 3: mode = .threeD
-                default: mode = twoAxisMode
-                }
-            }
-        )
-    }
-
-    private var twoAxisModeBinding: Binding<PlotMode> {
-        Binding(
-            get: { twoAxisMode },
-            set: { newValue in
-                twoAxisMode = newValue
-                mode = newValue
-            }
-        )
-    }
-
-    private func axisDisplay(_ state: AxisFieldState, fallback: String) -> AxisDisplay {
-        AxisDisplay(
-            label: state.name.isEmpty ? fallback : state.name,
-            unit: state.unit.isEmpty ? nil : state.unit,
-            tickFormat: state.tickFormat,
-            tickInterval: state.tickInterval
-        )
-    }
-
-    private func axisSettingsRow(title: String, state: Binding<AxisFieldState>, field: Field, placeholder: String) -> some View {
-        VStack(alignment: .leading, spacing: 3 * scale) {
-            HStack(spacing: 6 * scale) {
-                Text(title).font(.dsCaption.weight(.semibold)).foregroundStyle(lineColor)
-                TextField(placeholder, text: state.name)
-                    .font(.dsCaption.monospaced())
-                    .foregroundStyle(lineColor)
-                    .textFieldStyle(.plain)
-                    .autocorrectionDisabled(true)
-                    .textInputAutocapitalization(.never)
-                    .focused($focusedField, equals: field)
-                TextField("unit (optional)", text: state.unit)
-                    .font(.dsCaption.monospaced())
-                    .foregroundStyle(lineColor.opacity(0.8))
-                    .textFieldStyle(.plain)
-                    .autocorrectionDisabled(true)
-                    .textInputAutocapitalization(.never)
-            }
-            HStack(spacing: 6 * scale) {
-                Picker("", selection: state.tickFormat) {
-                    ForEach(AxisTickFormat.allCases) { format in
-                        Text(format.displayName).tag(format)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .onChange(of: state.wrappedValue.tickFormat) { _, _ in
-                    // A stored interval from the OLD format (say, a plain "5")
-                    // makes no sense once ticks are formatted as π-fractions —
-                    // fall back to auto so the new format's own presets apply.
-                    state.wrappedValue.tickInterval = nil
-                }
-                Menu {
-                    Button("Auto") { state.wrappedValue.tickInterval = nil }
-                    ForEach(state.wrappedValue.tickFormat.intervalPresets, id: \.self) { preset in
-                        Button(state.wrappedValue.tickFormat.label(for: preset)) {
-                            state.wrappedValue.tickInterval = preset
-                        }
-                    }
-                } label: {
-                    Label(
-                        state.wrappedValue.tickInterval.map { "Every \(state.wrappedValue.tickFormat.label(for: $0))" } ?? "Ticks: Auto",
-                        systemImage: "ruler"
-                    )
-                }
-            }
-            .font(.dsCaption2)
-            .foregroundStyle(lineColor.opacity(0.85))
-        }
-    }
-
-    /// Quick-insert math symbols — appended to whichever field is currently
-    /// focused (the primary field when none is), not cursor-precise: a plain
-    /// `TextField` doesn't expose a cursor position to insert at without a
-    /// UIKit bridge, and appending still covers writing an expression
-    /// left-to-right, the common case.
-    private static let mathTokens: [(label: String, insert: String)] = [
-        ("√(", "sqrt("), ("^", "^"), ("|x|", "abs("), ("/", "/"),
-        ("π", "pi"), ("θ", "theta"), ("sin(", "sin("), ("cos(", "cos("), ("tan(", "tan(")
-    ]
-
-    private func insert(_ token: String) {
-        switch focusedField {
-        case .secondary: secondaryDraft += token
-        case .tertiary: tertiaryDraft += token
-        case .axisX, .axisY, .axisZ: break // math tokens don't apply to axis names
-        case .primary, .none: draft += token
-        }
-    }
-
-    private func fieldRow(_ label: String, text: Binding<String>, field: Field, placeholder: String = "") -> some View {
-        HStack(spacing: 6 * scale) {
-            Text(label).font(.dsCaption.weight(.semibold)).foregroundStyle(lineColor)
-            TextField(placeholder, text: text)
-                .font(.dsCaption.monospaced())
-                .foregroundStyle(lineColor)
-                .textFieldStyle(.plain)
-                .autocorrectionDisabled(true)
-                .textInputAutocapitalization(.never)
-                .focused($focusedField, equals: field)
-        }
-    }
-}
-
-private extension PlotMode {
-    /// The left-hand side of the equation shown next to the expression field.
-    var variableLabel: String {
-        switch self {
-        case .cartesianY: "y"
-        case .cartesianX: "x"
-        case .polar: "r"
-        case .parametric: "x(t)"
-        case .threeD: "x(t)"
-        case .axis: ""
-        }
     }
 }

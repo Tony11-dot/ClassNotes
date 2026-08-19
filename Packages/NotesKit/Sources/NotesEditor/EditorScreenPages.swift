@@ -436,22 +436,10 @@ extension EditorScreen {
                 }
             }
         }
-        if toolState.tool == .functionPlot, editingTextID == nil {
-            TextPlacementLayer(displaySize: displaySize, logicalSize: page.logicalSize) { point in
-                Task {
-                    editingTextID = await model.insertFunctionPlot(
-                        at: point, on: page.id,
-                        mode: toolState.functionPlotMode,
-                        window: toolState.functionPlotWindow,
-                        lineColorHex: toolState.functionPlotLineColorHex ?? FunctionPlotSettings.defaultLineHex,
-                        backgroundColorHex: toolState.functionPlotBackgroundColorHex
-                            ?? FunctionPlotSettings.defaultBackgroundHex,
-                        cornerRadius: toolState.functionPlotCornerRadius,
-                        transparentBackground: toolState.functionPlotTransparentBackground
-                    )
-                }
-            }
-        }
+        // Function plots no longer place-on-tap: picking the tool opens a big
+        // settings sheet (`FunctionPlotSettingsSheet`, from `ToolRailView`)
+        // with a Create button, and the block is dropped already fully
+        // configured, centred on the page — see `insertFunctionPlot(draft:)`.
     }
 
     /// Where the straight-edge lies on this page, in the page's own logical

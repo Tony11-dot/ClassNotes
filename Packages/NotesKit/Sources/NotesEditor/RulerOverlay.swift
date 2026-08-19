@@ -37,6 +37,9 @@ struct RulerOverlay: View {
     /// is relative to that moment rather than accumulating from wherever the
     /// ruler happened to already be.
     @State private var bodyDragBase: (start: CGPoint, end: CGPoint)?
+    /// Same idea, per handle: where IT was when its own drag began.
+    @State private var startHandleDragBase: CGPoint?
+    @State private var endHandleDragBase: CGPoint?
 
     /// How wide the straight-edge is. Both long edges guide, so this is also how
     /// far apart the two guides are.
@@ -49,8 +52,12 @@ struct RulerOverlay: View {
             ZStack {
                 rulerBody(from: a, to: b, in: geo.size)
                 readout(from: a, to: b)
-                handle(at: a, anchor: b, wasOnDetent: $startOnDetent) { start = clamp($0, in: geo.size) }
-                handle(at: b, anchor: a, wasOnDetent: $endOnDetent) { end = clamp($0, in: geo.size) }
+                handle(at: a, anchor: b, wasOnDetent: $startOnDetent, dragBase: $startHandleDragBase) {
+                    start = clamp($0, in: geo.size)
+                }
+                handle(at: b, anchor: a, wasOnDetent: $endOnDetent, dragBase: $endHandleDragBase) {
+                    end = clamp($0, in: geo.size)
+                }
                 closeButton(near: midpoint(a, b))
             }
             .onAppear {
@@ -101,12 +108,8 @@ struct RulerOverlay: View {
                 .overlay(
                     Rectangle().stroke(theme.accent.color.opacity(0.7), lineWidth: 1)
                 )
-                .frame(width: length, height: Self.thickness)
-                .rotationEffect(.radians(angle))
-                .position(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
-                .contentShape(Rectangle())
-                .gesture(
-                    FingerDragGesture(
+                .overlay(
+                    FingerDragArea(
                         onChanged: { value in
                             let base = bodyDragBase ?? (start: a, end: b)
                             if bodyDragBase == nil { bodyDragBase = base }
@@ -127,6 +130,13 @@ struct RulerOverlay: View {
                         onEnded: { _ in bodyDragBase = nil }
                     )
                 )
+                // The drag area rotates and positions WITH the rectangle it
+                // covers by sitting inside the same transform chain — applied
+                // after it, this would be an axis-aligned hit area over a
+                // rotated shape.
+                .frame(width: length, height: Self.thickness)
+                .rotationEffect(.radians(angle))
+                .position(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
         }
     }
 
@@ -163,27 +173,35 @@ struct RulerOverlay: View {
     /// axis, with a haptic tap on the way in so it can be felt, not squinted
     /// at.
     private func handle(
-        at point: CGPoint, anchor: CGPoint, wasOnDetent: Binding<Bool>,
+        at point: CGPoint, anchor: CGPoint, wasOnDetent: Binding<Bool>, dragBase: Binding<CGPoint?>,
         onMove: @escaping (CGPoint) -> Void
     ) -> some View {
         Circle()
             .fill(theme.accent.color)
             .overlay(Circle().stroke(.white, lineWidth: 2))
-            .frame(width: 30, height: 30)
-            .position(point)
-            .gesture(
-                FingerDragGesture(
+            .overlay(
+                FingerDragArea(
                     onChanged: { value in
-                        let settled = ShapeSnapper.detented(value.location, from: anchor)
+                        let base = dragBase.wrappedValue ?? point
+                        if dragBase.wrappedValue == nil { dragBase.wrappedValue = base }
+                        let dragged = CGPoint(
+                            x: base.x + value.translation.width, y: base.y + value.translation.height
+                        )
+                        let settled = ShapeSnapper.detented(dragged, from: anchor)
                         if settled.isDetent, !wasOnDetent.wrappedValue {
                             UIImpactFeedbackGenerator(style: .soft).impactOccurred()
                         }
                         wasOnDetent.wrappedValue = settled.isDetent
                         onMove(settled.point)
                     },
-                    onEnded: { _ in wasOnDetent.wrappedValue = false }
+                    onEnded: { _ in
+                        wasOnDetent.wrappedValue = false
+                        dragBase.wrappedValue = nil
+                    }
                 )
             )
+            .frame(width: 30, height: 30)
+            .position(point)
             .accessibilityLabel("Ruler handle")
     }
 

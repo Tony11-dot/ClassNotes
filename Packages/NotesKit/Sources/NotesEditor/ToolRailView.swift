@@ -168,9 +168,41 @@ struct ToolRailView: View {
             toolState.select(.functionPlot)
             panel = .functionPlot
         }
-        .popover(isPresented: binding(.functionPlot), arrowEdge: .leading) {
-            FunctionPlotPanel(toolState: toolState)
-                .presentationCompactAdaptation(.popover)
+        // A big settings sheet, not a small popover: picking the tool goes
+        // straight to configuring every setting — axis count, curve type,
+        // expressions, axis names/units/ticks, colours — with a Create button
+        // at the bottom, rather than waiting for a tap on the page to drop a
+        // blank block first. The block appears already fully configured,
+        // centred on the page; from there it's just dragged/resized into
+        // place like any other element.
+        .sheet(isPresented: binding(.functionPlot), onDismiss: { toolState.select(.hand) }) {
+            FunctionPlotSettingsSheet(
+                isNew: true,
+                mode: toolState.functionPlotMode, expression: "", secondary: nil, tertiary: nil,
+                window: toolState.functionPlotWindow,
+                axisXLabel: nil, axisYLabel: nil, axisZLabel: nil,
+                axisXUnit: nil, axisYUnit: nil, axisZUnit: nil,
+                axisXDisplay: AxisDisplay(label: "X"), axisYDisplay: AxisDisplay(label: "Y"),
+                axisZDisplay: AxisDisplay(label: "Z"),
+                lineColorHex: toolState.functionPlotLineColorHex ?? FunctionPlotSettings.defaultLineHex,
+                backgroundColorHex: toolState.functionPlotBackgroundColorHex ?? FunctionPlotSettings.defaultBackgroundHex,
+                transparentBackground: toolState.functionPlotTransparentBackground,
+                cornerRadius: toolState.functionPlotCornerRadius,
+                onCommit: { draft, lineHex, backgroundHex, cornerRadius, transparent in
+                    guard let pageID = model.focusedPageID else { panel = nil; return }
+                    let center = model.page(pageID).map {
+                        CGPoint(x: $0.logicalSize.width / 2, y: $0.logicalSize.height / 2)
+                    } ?? .zero
+                    Task {
+                        await model.insertFunctionPlot(
+                            at: center, on: pageID, draft: draft,
+                            lineColorHex: lineHex, backgroundColorHex: backgroundHex,
+                            cornerRadius: cornerRadius, transparentBackground: transparent
+                        )
+                    }
+                    panel = nil
+                }
+            )
         }
 
         railButton("File", systemImage: "paperclip") { onFile() }

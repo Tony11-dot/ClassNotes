@@ -168,12 +168,13 @@ extension NotebookEditorModel {
         return element.id
     }
 
-    /// Drops an empty function-plot block where the user tapped and returns its
-    /// id, so the editor can put the keyboard straight into it — same shape as
-    /// `insertCodeBlock`, styled instead from the function-plot settings.
+    /// Drops a FULLY configured function-plot block — every setting the user
+    /// chose in `FunctionPlotSettingsSheet` before tapping Create — centred on
+    /// `point` (typically the page's own centre, since creation no longer
+    /// waits for a canvas tap to place it). Returns its id.
     @discardableResult
     public func insertFunctionPlot(
-        at point: CGPoint, on pageID: UUID, mode: PlotMode, window: Double,
+        at point: CGPoint, on pageID: UUID, draft: FunctionPlotDraft,
         lineColorHex: String?, backgroundColorHex: String?, cornerRadius: Double,
         transparentBackground: Bool = false
     ) async -> UUID? {
@@ -186,7 +187,16 @@ extension NotebookEditorModel {
             y: min(max(point.y - height / 2, 12), max(12, pageSize.height - height - 12)),
             width: width, height: height,
             textColorHex: lineColorHex,
-            functionExpression: "", functionMode: mode.rawValue, functionWindow: window,
+            functionExpression: draft.expression,
+            functionSecondaryExpression: draft.secondary,
+            functionTertiaryExpression: draft.tertiary,
+            functionMode: draft.mode.rawValue, functionWindow: draft.window,
+            axisXLabel: draft.axisXLabel, axisYLabel: draft.axisYLabel, axisZLabel: draft.axisZLabel,
+            axisXUnit: draft.axisXUnit, axisYUnit: draft.axisYUnit, axisZUnit: draft.axisZUnit,
+            axisXTickFormat: draft.axisXTickFormat?.rawValue, axisYTickFormat: draft.axisYTickFormat?.rawValue,
+            axisZTickFormat: draft.axisZTickFormat?.rawValue,
+            axisXTickInterval: draft.axisXTickInterval, axisYTickInterval: draft.axisYTickInterval,
+            axisZTickInterval: draft.axisZTickInterval,
             backgroundIsTransparent: transparentBackground,
             colorHex: backgroundColorHex
         )
