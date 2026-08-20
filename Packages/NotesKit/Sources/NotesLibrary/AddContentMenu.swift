@@ -18,6 +18,10 @@ public enum AddContentChoice: String, CaseIterable, Identifiable, Sendable {
     case file
     /// A camera scan turned into annotatable pages.
     case scan
+    /// Not a document — a new shelf to organize notebooks onto. Lives in this
+    /// same list because it's the same "start something new" gesture, and the
+    /// `+` button has nowhere else to offer it from.
+    case shelf
 
     public var id: String { rawValue }
 
@@ -29,6 +33,7 @@ public enum AddContentChoice: String, CaseIterable, Identifiable, Sendable {
         case .image: "Image"
         case .file: "Import from Files"
         case .scan: "Scan Document"
+        case .shelf: "Add Shelf"
         }
     }
 
@@ -40,6 +45,7 @@ public enum AddContentChoice: String, CaseIterable, Identifiable, Sendable {
         case .image: "Pick a photo and draw on it"
         case .file: "A PDF or document you can annotate"
         case .scan: "Scan pages with the camera, then annotate"
+        case .shelf: "Organize your notebooks into a new shelf"
         }
     }
 
@@ -51,6 +57,7 @@ public enum AddContentChoice: String, CaseIterable, Identifiable, Sendable {
         case .image: "photo.fill"
         case .file: "folder.fill"
         case .scan: "doc.viewfinder.fill"
+        case .shelf: "folder.badge.plus"
         }
     }
 }

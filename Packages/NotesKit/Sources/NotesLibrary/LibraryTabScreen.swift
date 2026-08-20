@@ -234,52 +234,83 @@ struct AddContentSheet: View {
     @Environment(\.dismiss) private var dismiss
     let onChoose: (AddContentChoice) -> Void
 
-    var body: some View {
-        NavigationStack {
-            List {
-                ForEach(AddContentChoice.allCases) { choice in
-                    if choice != .scan || DocumentScannerView.isSupported {
-                        Button {
-                            onChoose(choice)
-                        } label: {
-                            HStack(spacing: 14) {
-                                Image(systemName: choice.symbolName)
-                                    .font(.dsSystem(size: 20))
-                                    .foregroundStyle(theme.accent.color)
-                                    .frame(width: 32)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(choice.title)
-                                        .font(.dsSubheadline.weight(.semibold))
-                                        .foregroundStyle(theme.ink.color)
-                                    Text(choice.subtitle)
-                                        .font(.dsCaption)
-                                        .foregroundStyle(theme.inkSecondary.color)
-                                }
-                            }
-                            .padding(.vertical, 4)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
-            .scrollContentBackground(.hidden)
-            .background(theme.surface.color)
-            .navigationTitle("New")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-            }
-        }
-        // Sized to fit all six rows with no scrolling — `.medium` clipped the
-        // list partway down, so "New" looked like it was missing entries until
-        // you dragged the sheet up to find them.
-        .presentationDetents([.height(AddContentSheet.contentHeight)])
+    /// `List` was the reason this still needed a scroll after the first fix:
+    /// it adds its own row insets and minimum row height on top of whatever a
+    /// row's content asks for, so a `contentHeight` computed from OUR numbers
+    /// under-counted what `List` actually rendered at — the sheet was sized
+    /// for content shorter than what it held. Plain rows in a `VStack` have no
+    /// hidden padding to guess at: every point in `contentHeight` below is a
+    /// number this view actually uses, so the two can never disagree again.
+    private var choices: [AddContentChoice] {
+        AddContentChoice.allCases.filter { $0 != .scan || DocumentScannerView.isSupported }
     }
 
-    /// Nav bar (~50) + one row per choice (~60, icon + two-line label + vertical
-    /// padding) + a little breathing room, so the sheet opens already showing
-    /// every entry.
-    static let contentHeight: CGFloat = 50 + CGFloat(AddContentChoice.allCases.count) * 60 + 20
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            ForEach(choices) { choice in
+                row(choice)
+                if choice != choices.last {
+                    Divider().padding(.leading, 66)
+                }
+            }
+            Spacer(minLength: 8)
+        }
+        .background(theme.surface.color)
+        .presentationDetents([.height(AddContentSheet.contentHeight(for: choices.count))])
+        .presentationDragIndicator(.visible)
+    }
+
+    private var header: some View {
+        HStack {
+            Text("New")
+                .font(.dsHeadline)
+                .foregroundStyle(theme.ink.color)
+            Spacer()
+            Button("Cancel") { dismiss() }
+                .font(.dsBody)
+                .foregroundStyle(theme.accent.color)
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 20)
+        .padding(.bottom, 14)
+        .frame(height: Self.headerHeight, alignment: .bottom)
+    }
+
+    private func row(_ choice: AddContentChoice) -> some View {
+        Button {
+            onChoose(choice)
+        } label: {
+            HStack(spacing: 14) {
+                Image(systemName: choice.symbolName)
+                    .font(.dsSystem(size: 20))
+                    .foregroundStyle(theme.accent.color)
+                    .frame(width: 32)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(choice.title)
+                        .font(.dsSubheadline.weight(.semibold))
+                        .foregroundStyle(theme.ink.color)
+                    Text(choice.subtitle)
+                        .font(.dsCaption)
+                        .foregroundStyle(theme.inkSecondary.color)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 20)
+            .frame(height: Self.rowHeight)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private static let headerHeight: CGFloat = 54
+    private static let rowHeight: CGFloat = 68
+
+    /// Header + one fixed-height row per choice + a little breathing room below
+    /// the last row, plus the drag indicator's own reserved space — every term
+    /// here is a size this view itself lays out at, not an estimate of what a
+    /// system component might do.
+    static func contentHeight(for count: Int) -> CGFloat {
+        headerHeight + CGFloat(count) * rowHeight + 24
+    }
 }

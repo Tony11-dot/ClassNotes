@@ -12,6 +12,12 @@ import UIKit
 @Observable
 public final class ActiveCanvasTracker {
     public weak var activeCanvas: PKCanvasView?
+    /// True between `canvasViewDidBeginUsingTool` and `…DidEndUsingTool` on
+    /// whichever page currently has the pencil down. Drives the tool rail's
+    /// auto-hide: it has no business covering the hand while it's writing, and
+    /// PencilKit already gives a reliable begin/end pair for exactly that
+    /// window — no separate gesture tracking needed.
+    public var isPencilDown = false
     /// Live canvases by page, so tools (OCR, beautify, circle-to-explain) can read
     /// a page's current ink without waiting for the debounced save.
     private var canvases: [UUID: Weak] = [:]
@@ -534,6 +540,7 @@ struct CanvasPageView: UIViewRepresentable {
         func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
             isUsingTool = true
             tracker.activeCanvas = canvasView
+            tracker.isPencilDown = true
             // Anything queued would land under the moving pencil — hold it.
             inkPassTask?.cancel()
             commitTask?.cancel()
@@ -541,6 +548,7 @@ struct CanvasPageView: UIViewRepresentable {
 
         func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
             isUsingTool = false
+            tracker.isPencilDown = false
             scheduleInkPass()
             // Re-arm beautification on the LIFT, not just on the last drawing
             // change. Rest the tip on the page after a word and the drawing stops

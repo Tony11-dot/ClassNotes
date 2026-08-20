@@ -132,6 +132,16 @@ public struct LibraryGridScreen<Destination: View>: View {
         .addContentFlows(choice: $addChoice, shelfID: activeShelfID) { notebook in
             opened = LibraryOpenRequest(notebook: notebook, pageID: nil)
         }
+        // `.shelf` isn't a document kind `addContentFlows` knows how to create —
+        // it reuses the SAME "New" sheet the tab bar's `+` shows because that's
+        // the same "start something new" gesture, but it opens the existing
+        // shelf sheet instead, exactly like the floating toolbar's own
+        // "Add shelf" button.
+        .onChange(of: addChoice) { _, new in
+            guard new == .shelf else { return }
+            addChoice = nil
+            showNewShelf = true
+        }
         .sheet(isPresented: $showNewShelf) { NewShelfSheet() }
         .sheet(item: $sharedPDF) { file in
             ShareSheet(items: [file.url])

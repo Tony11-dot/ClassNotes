@@ -50,18 +50,35 @@ struct ToolRailView: View {
     }
 
     private static let edgeInset: CGFloat = 30
-    private static let railWidth: CGFloat = 68
+    private static let railWidth: CGFloat = 84
     /// The instruments are drawn as objects, not icons, so they need the room to
     /// show a clip, a ferrule, a nib. Below about this size the detail turns into
     /// texture and every pen starts to look like the same coloured stick.
-    private static let glyphWidth: CGFloat = 56
-    private static let glyphHeight: CGFloat = 24
+    private static let glyphWidth: CGFloat = 68
+    private static let glyphHeight: CGFloat = 30
 
     var body: some View {
         GeometryReader { geo in
-            rail
-                .position(center ?? defaultCenter(in: geo.size))
-                .gesture(dragGesture(in: geo.size))
+            Group {
+                // Hidden for exactly as long as the pencil is down, so the rail
+                // never sits under the writing hand — same idea as Apple Notes'
+                // own tool palette retracting while you write. `isPencilDown` is
+                // driven by PencilKit's own begin/end-using-tool pair
+                // (`ActiveCanvasTracker`), so this tracks genuine drawing, not
+                // just "a finger is somewhere on the glass". It reappears the
+                // instant the pencil lifts — no tap needed to bring it back.
+                if !tracker.isPencilDown {
+                    rail
+                        .position(center ?? defaultCenter(in: geo.size))
+                        .gesture(dragGesture(in: geo.size))
+                        .transition(
+                            .move(edge: currentEdge(in: geo.size)).combined(with: .opacity)
+                        )
+                }
+            }
+            // Same spring NOVA's own sidebar slides in and out with, so both
+            // panels in the editor feel like one consistent piece of motion.
+            .animation(.spring(duration: 0.3), value: tracker.isPencilDown)
         }
         .onChange(of: openPenPanel) { _, request in
             guard request != nil else { return }
@@ -75,7 +92,7 @@ struct ToolRailView: View {
     // a control that reacts to its own touches — here it re-rendered the whole
     // rail's material on every tap on a pen).
     private var rail: some View {
-        VStack(spacing: 2) {
+        VStack(spacing: 3) {
             modeButtons
             divider
             penTray
@@ -96,9 +113,9 @@ struct ToolRailView: View {
             .disabled(!tracker.canRedo)
             .opacity(tracker.canRedo ? 1 : 0.35)
         }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 5)
-        .dsGlass(in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .padding(.vertical, 10)
+        .padding(.horizontal, 6)
+        .dsGlass(in: RoundedRectangle(cornerRadius: 30, style: .continuous))
         .shadow(color: .black.opacity(0.22), radius: 16, y: 8)
         .frame(width: Self.railWidth)
     }
@@ -112,13 +129,13 @@ struct ToolRailView: View {
             _ = toolState.selectPen(toolState.pen)
         } label: {
             Image(systemName: "pencil")
-                .font(.dsSystem(size: 18, weight: .semibold))
+                .font(.dsSystem(size: 22, weight: .semibold))
                 .foregroundStyle(
                     toolState.tool == .pen
                         ? theme.contrastingInk(on: theme.accent).color
                         : theme.ink.color
                 )
-                .frame(width: 40, height: 40)
+                .frame(width: 48, height: 48)
                 .background {
                     if toolState.tool == .pen { Circle().fill(theme.accent.color) }
                 }
@@ -218,12 +235,12 @@ struct ToolRailView: View {
         } label: {
             VStack(spacing: -2) {
                 Image(systemName: "wand.and.sparkles")
-                    .font(.dsSystem(size: 16, weight: .medium))
+                    .font(.dsSystem(size: 19, weight: .medium))
                 Text(toolState.beautify.isEnabled ? "ON" : "OFF")
-                    .font(.dsSystem(size: 8, weight: .heavy))
+                    .font(.dsSystem(size: 9, weight: .heavy))
             }
             .foregroundStyle(toolState.beautify.isEnabled ? theme.accent.color : theme.inkSecondary.color)
-            .frame(width: 44, height: 42)
+            .frame(width: 54, height: 50)
             .background {
                 if toolState.beautify.isEnabled { Circle().fill(theme.accentMuted.color) }
             }
@@ -245,7 +262,7 @@ struct ToolRailView: View {
     // MARK: - Pen tray
 
     private var penTray: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 5) {
             ForEach(PenLibrary.all) { preset in
                 trayItem(preset)
             }
@@ -349,20 +366,20 @@ struct ToolRailView: View {
     ) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.dsSystem(size: 16, weight: .medium))
+                .font(.dsSystem(size: 19, weight: .medium))
                 .foregroundStyle(isActive ? theme.accent.color : theme.ink.color)
-                .frame(width: 44, height: 38)
+                .frame(width: 54, height: 46)
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
         .background {
-            if isActive { Circle().fill(theme.accentMuted.color).frame(width: 38, height: 38) }
+            if isActive { Circle().fill(theme.accentMuted.color).frame(width: 46, height: 46) }
         }
     }
 
     private var divider: some View {
-        Divider().frame(width: 26).overlay(theme.separator.color).padding(.vertical, 3)
+        Divider().frame(width: 32).overlay(theme.separator.color).padding(.vertical, 4)
     }
 
     private func binding(_ which: Panel) -> Binding<Bool> {
@@ -373,6 +390,12 @@ struct ToolRailView: View {
 
     private func defaultCenter(in size: CGSize) -> CGPoint {
         CGPoint(x: Self.edgeInset + Self.railWidth / 2, y: size.height / 2)
+    }
+
+    /// Which side the rail is currently snapped to, so hiding it slides it OUT
+    /// toward its own edge rather than through the middle of the page.
+    private func currentEdge(in size: CGSize) -> Edge {
+        (center ?? defaultCenter(in: size)).x < size.width / 2 ? .leading : .trailing
     }
 
     /// Dragging the rail. Every reported position is applied IMMEDIATELY and
@@ -398,7 +421,7 @@ struct ToolRailView: View {
                 let snappedX = current.x < size.width / 2
                     ? Self.edgeInset + half
                     : size.width - Self.edgeInset - half
-                let clampedY = min(max(current.y, 260), max(260, size.height - 260))
+                let clampedY = min(max(current.y, 300), max(300, size.height - 300))
                 withAnimation(.spring(duration: 0.32)) {
                     center = CGPoint(x: snappedX, y: clampedY)
                 }
