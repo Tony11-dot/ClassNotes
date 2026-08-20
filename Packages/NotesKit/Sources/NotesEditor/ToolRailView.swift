@@ -532,7 +532,19 @@ struct ToolRailView: View {
     /// with no fade lagging behind the finger. Only the release, where it
     /// docks to the nearer edge, is animated.
     private func dragGesture(in size: CGSize) -> some Gesture {
-        DragGesture(minimumDistance: 2, coordinateSpace: .named(Self.railSpace))
+        // `minimumDistance` used to be 2 — trivially crossed by the ordinary
+        // couple of points a real fingertip drifts between touch-down and
+        // touch-up on what's meant to be a tap. Every button in the expanded
+        // rail sits inside THIS gesture's hit area, and `onChanged` collapses
+        // the whole rail (unanimated, so it happens on the exact frame) the
+        // instant it fires — so tapping almost any button yanked the rail
+        // into a chip out from under the finger before the tap could
+        // complete. `.simultaneousGesture` (see `body`) was necessary but not
+        // sufficient: it's not a question of which gesture wins the touch,
+        // it's that the drag's OWN onChanged fired and collapsed the rail
+        // regardless of priority. A real drag still starts well past normal
+        // tap jitter at this threshold.
+        DragGesture(minimumDistance: 16, coordinateSpace: .named(Self.railSpace))
             .onChanged { value in
                 if !isCollapsed { isCollapsed = true }
                 center = value.location

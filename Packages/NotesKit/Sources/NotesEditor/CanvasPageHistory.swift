@@ -97,12 +97,19 @@ extension CanvasPageView.Coordinator {
     /// the pencil rests.
     func scheduleBeautification() {
         guard toolState.beautify.isEnabled else { return }
+        // Captured on the FIRST `drawing()` call the beautifier makes (its
+        // starting snapshot), left alone on the second — see `rewriteGeneration`.
+        var startGeneration: Int?
         beautifier.inkChanged(
             pageID: pageID,
             settings: toolState.beautify,
             fontName: beautifyFontName,
             pageSize: pageSize,
-            drawing: { [weak self] in self?.canvas?.drawing },
+            drawing: { [weak self] in
+                guard let self else { return nil }
+                if startGeneration == nil { startGeneration = self.rewriteGeneration }
+                return self.canvas?.drawing
+            },
             apply: { [weak self] plan, remaining in
                 guard let self, let canvas = self.canvas else { return false }
                 // Never swap the ink out from under a moving pencil — nor from
@@ -111,6 +118,15 @@ extension CanvasPageView.Coordinator {
                 // the beautifier's bookkeeping intact, and the pass re-runs
                 // when the hand next rests.
                 guard !self.isUsingTool, !self.isPencilDown else { return false }
+                // Something rewrote a stroke IN PLACE (pen shaping, a shape
+                // snap, ruling, scribble-erase) since this pass took its
+                // starting snapshot — `plan.consumedStrokes` are indices into
+                // that snapshot, and if the content at one of those indices
+                // changed underneath it, filtering `remaining` by index would
+                // delete whatever is there now, not what Vision actually read.
+                // Refuse and let the existing retry pick it up once things
+                // have settled, exactly like the pencil-down guard above.
+                guard startGeneration == self.rewriteGeneration else { return false }
                 // Everything the user did up to here is its own step; the
                 // beautification that follows must not swallow it.
                 self.commitUndoStep()

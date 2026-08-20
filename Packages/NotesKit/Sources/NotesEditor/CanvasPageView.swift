@@ -447,6 +447,18 @@ struct CanvasPageView: UIViewRepresentable {
         var processedStrokeCount = 0
         /// Guards the reentrant `drawing` assignments we make while reshaping.
         var isRewriting = false
+        /// Bumped by every `replace(_:on:)` that ISN'T a beautify pass applying its
+        /// own plan — pen shaping, a shape-snap commit, ruling, scribble-erase. A
+        /// beautify pass reads which stroke INDICES to wipe from a snapshot taken
+        /// when it started, then (after Vision, hundreds of ms later) filters the
+        /// LATEST drawing by those same indices. That's safe against strokes simply
+        /// being APPENDED since — nothing shifts — but `commitSettledShape`
+        /// sometimes rewrites a stroke IN PLACE at an existing index (replacing the
+        /// raw scribble PencilKit was still tracking with the clean shape). If a
+        /// stale plan reads that same index as consumed text, filtering by index
+        /// alone deletes the shape with no way to tell its content changed
+        /// underneath it. See `scheduleBeautification`.
+        var rewriteGeneration = 0
         /// True between `canvasViewDidBeginUsingTool` and `…DidEndUsingTool`, i.e.
         /// the pencil is DOWN. Assigning `PKCanvasView.drawing` in that window
         /// tears down the stroke in flight — which is why letters written straight
@@ -781,6 +793,7 @@ struct CanvasPageView: UIViewRepresentable {
         /// `commitUndoStep` closes the step once the pass is finished.
         func replace(_ drawing: PKDrawing, on canvas: PKCanvasView) {
             isRewriting = true
+            rewriteGeneration &+= 1
             canvas.drawing = drawing
             Task { @MainActor [weak self] in self?.isRewriting = false }
         }
