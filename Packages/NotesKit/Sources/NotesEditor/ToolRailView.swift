@@ -48,7 +48,6 @@ struct ToolRailView: View {
     /// The chip's position while collapsed, and the expanded rail's own
     /// along-the-edge anchor — see `expandedCenter`.
     @State private var center: CGPoint?
-    @State private var dragStart: CGPoint?
     @State private var panel: Panel?
     /// Starts collapsed the first time the rail is ever dropped near an edge,
     /// same as the chip a fresh drag turns it into — an already-expanded rail
@@ -88,29 +87,43 @@ struct ToolRailView: View {
     var body: some View {
         GeometryReader { geo in
             let edge = nearestEdge(of: center ?? defaultCenter(in: geo.size), in: geo.size)
-            Group {
-                if isCollapsed {
-                    chip
-                        .position(center ?? defaultCenter(in: geo.size))
-                        .gesture(dragGesture(in: geo.size))
-                        .transition(.scale.combined(with: .opacity))
-                } else {
-                    expandedRail(edge: edge, in: geo.size)
-                        .position(expandedCenter(edge: edge, in: geo.size))
-                        .gesture(dragGesture(in: geo.size))
-                        .transition(.scale.combined(with: .opacity))
-                }
+            // ONE view, always mounted, for both the chip and the expanded
+            // rail — cross-faded by opacity rather than swapped with
+            // `if/else`. Swapping between two different view types tears down
+            // and recreates whatever's on screen, and doing that from INSIDE
+            // the drag gesture's own `onChanged` (the instant a drag begins)
+            // broke the drag itself: SwiftUI has to reconcile a live gesture
+            // against a brand-new view, which is exactly the stutter reported
+            // as "it closes then moves" instead of tracking the finger the
+            // whole time. One stable container means the SAME gesture keeps
+            // running, uninterrupted, from touch-down to lift.
+            ZStack {
+                expandedRail(edge: edge, in: geo.size)
+                    .opacity(isCollapsed ? 0 : 1)
+                    .allowsHitTesting(!isCollapsed)
+                chip
+                    .opacity(isCollapsed ? 1 : 0)
+                    .allowsHitTesting(isCollapsed)
             }
-            // Same spring NOVA's own sidebar slides in and out with, so both
-            // panels in the editor feel like one consistent piece of motion.
-            .animation(.spring(duration: 0.3), value: isCollapsed)
+            // Constrains hit-testing (and the drag's own touch area) to
+            // roughly the size of whatever's actually visible, rather than
+            // the union of both — the expanded rail is much bigger than the
+            // chip, and without this a collapsed chip would still accept
+            // touches from the dead space the (invisible) full-size rail
+            // still occupies.
+            .frame(width: isCollapsed ? Self.chipSize : nil, height: isCollapsed ? Self.chipSize : nil)
+            .position(isCollapsed ? (center ?? defaultCenter(in: geo.size)) : expandedCenter(edge: edge, in: geo.size))
+            .gesture(dragGesture(in: geo.size))
         }
+        .coordinateSpace(name: Self.railSpace)
         .onChange(of: openPenPanel) { _, request in
             guard request != nil else { return }
             toolState.select(.pen)
             panel = .pen(toolState.penPresetID)
         }
     }
+
+    private static let railSpace = "toolRailSpace"
 
     /// The collapsed chip: a tap expands the rail back out; a drag (see
     /// `dragGesture`) moves it and re-docks it on release.
@@ -484,26 +497,35 @@ struct ToolRailView: View {
     }
 
     /// Dragging the rail (as the chip, or the moment a drag begins on the
-    /// expanded rail — see `body`). Every reported position is applied
-    /// IMMEDIATELY and unanimated, so the chip stays under the finger; only
-    /// the release — where it docks to the nearer edge — is animated.
+    /// expanded rail — see `body`).
     ///
-    /// A blanket `.animation(_:value: center)` on the rail animated the drag
-    /// itself: each `onChanged` started a fresh 0.32 s spring toward the finger,
-    /// so the rail trailed the whole way and only caught up after the lift. That
-    /// is what "it jumps to where the finger lifts" looks like.
+    /// `value.location` is used directly, not an anchor plus translation: the
+    /// chip's centre IS wherever the finger currently is, every sample, with
+    /// zero offset. An anchor-based scheme (start from `center`, add the
+    /// drag's translation) looked equivalent but wasn't, because the chip's
+    /// `center` and the expanded rail's own on-screen position
+    /// (`expandedCenter`) are different points — grabbing the expanded rail
+    /// anywhere but that exact anchor made the reappearing chip jump to be
+    /// offset from the finger by however far off the anchor the grab was, and
+    /// then merely track it from there. Using the raw touch location instead
+    /// means there is no anchor to be wrong about. `coordinateSpace(name:)`
+    /// on the whole rail (see `body`) is what makes `value.location` land in
+    /// the SAME space `.position()` expects — DragGesture's default `.local`
+    /// space is relative to the gesture's own (differently-sized, chip vs.
+    /// rail) view, which isn't usable as an absolute position on its own.
+    ///
+    /// Collapsing is a plain, unanimated assignment — not wrapped in
+    /// `withAnimation` — so it happens on the exact frame the drag starts,
+    /// with no fade lagging behind the finger. Only the release, where it
+    /// docks to the nearer edge, is animated.
     private func dragGesture(in size: CGSize) -> some Gesture {
-        DragGesture(minimumDistance: 2)
+        DragGesture(minimumDistance: 2, coordinateSpace: .named(Self.railSpace))
             .onChanged { value in
-                let start = dragStart ?? center ?? defaultCenter(in: size)
-                dragStart = start
                 if !isCollapsed { isCollapsed = true }
-                center = CGPoint(x: start.x + value.translation.width,
-                                 y: start.y + value.translation.height)
+                center = value.location
             }
-            .onEnded { _ in
-                dragStart = nil
-                guard let current = center else { return }
+            .onEnded { value in
+                let current = value.location
                 let edge = nearestEdge(of: current, in: size)
                 let half = Self.chipSize / 2
                 let docked: CGPoint

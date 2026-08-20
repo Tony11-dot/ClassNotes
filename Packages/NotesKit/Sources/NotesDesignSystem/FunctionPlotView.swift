@@ -72,6 +72,32 @@ public struct FunctionPlotView: View {
 
     @State private var cachedRuns: [[CGPoint]] = []
 
+    /// The vertical range actually worth showing for an explicit y=f(x) curve.
+    ///
+    /// `window` is one shared, symmetric bound applied to BOTH axes — fine for
+    /// a curve whose magnitude roughly matches its domain, but a parabola or an
+    /// exponential outgrows a linear window on Y long before it reaches
+    /// `window` on X: the top of the curve ran straight into the top edge of
+    /// the box with nothing above it (a `Canvas` clips to its own bounds, so
+    /// the curve just stopped there, looking exactly like a cut-off axis),
+    /// while the bottom of the box — the negative-Y region the curve barely
+    /// touches — sat almost entirely empty. Fitting Y to the curve's OWN
+    /// extent instead uses the box the way the curve actually needs it.
+    /// Deliberately keeps 0 at the vertical centre (a graphing tool's x-axis
+    /// should stay visible, not scroll out because the curve is one-sided)
+    /// rather than a true min/max fit, which would recentre the box away from
+    /// the origin.
+    ///
+    /// Left at plain `window` for every other mode: polar/parametric/3D curves
+    /// aren't a simple y=f(x) relationship, and warping only one of their axes
+    /// independently would distort their actual shape rather than fit it.
+    private var verticalWindow: Double {
+        guard mode == .cartesianY else { return window }
+        let maxAbs = cachedRuns.lazy.flatMap { $0 }.map { abs(Double($0.y)) }.max() ?? 0
+        guard maxAbs.isFinite, maxAbs > 0.0001 else { return window }
+        return maxAbs * 1.15
+    }
+
     /// Something was typed but nothing plotted — a typo, or (in 3D) not all
     /// three of x(t)/y(t)/z(t) filled in yet. Distinct from a genuinely blank,
     /// not-yet-started block, which shows nothing extra at all.
@@ -114,7 +140,7 @@ public struct FunctionPlotView: View {
     /// flipped since math points up and the canvas points down.
     private func toView(_ point: CGPoint, size: CGSize) -> CGPoint {
         let scaleX = size.width / CGFloat(window * 2)
-        let scaleY = size.height / CGFloat(window * 2)
+        let scaleY = size.height / CGFloat(verticalWindow * 2)
         return CGPoint(
             x: size.width / 2 + CGFloat(point.x) * scaleX,
             y: size.height / 2 - CGFloat(point.y) * scaleY
@@ -276,9 +302,9 @@ public struct FunctionPlotView: View {
 
     /// Ticks along a vertical axis (the 2D y-axis), above and below the origin.
     private func drawTicksAlongY(_ display: AxisDisplay, origin: CGPoint, size: CGSize, in context: inout GraphicsContext) {
-        let interval = display.interval(window: window)
+        let interval = display.interval(window: verticalWindow)
         var value = interval
-        while value <= window + 0.0001 {
+        while value <= verticalWindow + 0.0001 {
             for signedValue in [value, -value] {
                 let point = toView(CGPoint(x: 0, y: signedValue), size: size)
                 guard point.y >= 0, point.y <= size.height else { continue }

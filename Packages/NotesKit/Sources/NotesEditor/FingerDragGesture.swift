@@ -1,67 +1,105 @@
 import SwiftUI
 import UIKit
 
-/// A small transparent area only a FINGER can interact with — the Apple
-/// Pencil is invisible to it at the HIT-TEST level, not merely at gesture
-/// recognition, so a pencil touch anywhere over it falls straight through to
-/// whatever's behind (the drawing canvas). The ruler used to be draggable
-/// with the Pencil too, since plain SwiftUI `DragGesture` has no touch-type
-/// filter.
+/// A small transparent area only a FINGER can interact with, that a one-finger
+/// drag moves and a two-finger twist rotates — the ruler's whole "one hand
+/// places it, two fingers turn it" vocabulary, backed by ONE view.
 ///
-/// An earlier version of this used `UIGestureRecognizerRepresentable` with
-/// `allowedTouchTypes` on the `UIPanGestureRecognizer` alone — that stops the
-/// PAN from ever recognizing for a pencil touch, but does nothing about HIT
-/// TESTING: the bridge's hosting view still claimed every touch landing in
-/// its frame regardless of type, which is what actually delivers touches to a
-/// view in the first place. A declined recognizer doesn't hand a swallowed
-/// touch back to anything — the Pencil just stopped drawing wherever the
-/// ruler sat. A second version then swung the other way and only claimed a
-/// touch it could positively prove was a finger — which stopped the ruler
-/// moving AT ALL, by either hand, the moment that proof turned out to be less
-/// reliable for a small, nested, constantly-repositioned control than for the
-/// canvas the pattern was copied from. `FingerHitTestView.hitTest` now claims
-/// by default and only lets a touch through when it can positively prove
-/// PENCIL — see its own doc comment for why that direction is the safe one.
-struct FingerDragArea: UIViewRepresentable {
-    struct Value {
+/// This exists as a single view hosting both recognizers, not two views each
+/// hosting one, because two separately-overlaid `FingerHitTestView`s raced each
+/// other for hit-testing: the topmost one (the rotation view, added last so its
+/// two-finger gesture wasn't blocked by the pan view sitting over it) claimed
+/// every non-Pencil touch, INCLUDING a plain one-finger drag, before it could
+/// ever reach the pan view underneath — since `UIRotationGestureRecognizer`
+/// only ever recognizes with two touches down, a single finger was claimed and
+/// then simply never acted on by anything, which is exactly "the ruler can't
+/// move, only rotate." Two gesture recognizers on the SAME view don't have this
+/// problem — there's only one hit-test decision, not two competing ones.
+///
+/// The Pencil-transparent hit-testing itself is unchanged from the previous
+/// two-view version — see `FingerHitTestView.hitTest`'s own doc comment for why
+/// it claims by default and only lets a touch through when it can positively
+/// prove Pencil.
+struct FingerTransformArea: UIViewRepresentable {
+    struct PanValue {
         var translation: CGSize
     }
 
-    var onChanged: (Value) -> Void
-    var onEnded: (Value) -> Void
+    var onPanChanged: (PanValue) -> Void
+    var onPanEnded: (PanValue) -> Void
+    /// Radians, relative to wherever the two-finger gesture began — same
+    /// convention as `UIRotationGestureRecognizer.rotation` itself.
+    var onRotationChanged: (CGFloat) -> Void
+    var onRotationEnded: (CGFloat) -> Void
 
     func makeUIView(context: Context) -> FingerHitTestView {
         let view = FingerHitTestView()
         view.backgroundColor = .clear
-        let recognizer = UIPanGestureRecognizer(
+
+        let pan = UIPanGestureRecognizer(
             target: context.coordinator, action: #selector(Coordinator.handlePan(_:))
         )
-        recognizer.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
-        // Capped at one: this sits beside a `FingerRotationArea` on the same
-        // ruler body (two fingers = turn), and an uncapped pan also recognizes
-        // fine on two fingers — which raced the rotation for the same touches
-        // and moved the ruler AND turned it from the same two-finger gesture.
-        recognizer.maximumNumberOfTouches = 1
-        view.addGestureRecognizer(recognizer)
+        pan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        // Capped at one: a second touch landing mid-drag should hand off to
+        // rotation (see the delegate below), not have the pan keep tracking
+        // both fingers at once and fight rotation for the same touches.
+        pan.maximumNumberOfTouches = 1
+        pan.delegate = context.coordinator
+
+        let rotation = UIRotationGestureRecognizer(
+            target: context.coordinator, action: #selector(Coordinator.handleRotation(_:))
+        )
+        rotation.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        rotation.delegate = context.coordinator
+
+        view.addGestureRecognizer(pan)
+        view.addGestureRecognizer(rotation)
         return view
     }
 
     func updateUIView(_ uiView: FingerHitTestView, context: Context) {
-        context.coordinator.onChanged = onChanged
-        context.coordinator.onEnded = onEnded
+        context.coordinator.onPanChanged = onPanChanged
+        context.coordinator.onPanEnded = onPanEnded
+        context.coordinator.onRotationChanged = onRotationChanged
+        context.coordinator.onRotationEnded = onRotationEnded
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onChanged: onChanged, onEnded: onEnded)
+        Coordinator(
+            onPanChanged: onPanChanged, onPanEnded: onPanEnded,
+            onRotationChanged: onRotationChanged, onRotationEnded: onRotationEnded
+        )
     }
 
-    final class Coordinator: NSObject {
-        var onChanged: (Value) -> Void
-        var onEnded: (Value) -> Void
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var onPanChanged: (PanValue) -> Void
+        var onPanEnded: (PanValue) -> Void
+        var onRotationChanged: (CGFloat) -> Void
+        var onRotationEnded: (CGFloat) -> Void
 
-        init(onChanged: @escaping (Value) -> Void, onEnded: @escaping (Value) -> Void) {
-            self.onChanged = onChanged
-            self.onEnded = onEnded
+        init(
+            onPanChanged: @escaping (PanValue) -> Void, onPanEnded: @escaping (PanValue) -> Void,
+            onRotationChanged: @escaping (CGFloat) -> Void, onRotationEnded: @escaping (CGFloat) -> Void
+        ) {
+            self.onPanChanged = onPanChanged
+            self.onPanEnded = onPanEnded
+            self.onRotationChanged = onRotationChanged
+            self.onRotationEnded = onRotationEnded
+        }
+
+        /// Without this, UIKit's default exclusivity — only one recognizer per
+        /// touch sequence unless told otherwise — would let whichever of pan or
+        /// rotation recognizes FIRST silently fail the other, which is the same
+        /// class of bug that made the hold-to-snap watcher never fire (see its
+        /// own doc comment): a second finger landing to turn the ruler would
+        /// have its rotation killed before it ever got two touches to work
+        /// with, if the pan (already recognizing on the first finger) hadn't
+        /// been allowed to coexist with it.
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            true
         }
 
         @objc func handlePan(_ recognizer: UIPanGestureRecognizer) {
@@ -71,66 +109,23 @@ struct FingerDragArea: UIViewRepresentable {
             // itself rotated relative to the screen, which silently broke
             // dragging once the ruler had been angled away from level.
             let translation = recognizer.translation(in: nil)
-            let value = Value(translation: CGSize(width: translation.x, height: translation.y))
+            let value = PanValue(translation: CGSize(width: translation.x, height: translation.y))
             switch recognizer.state {
             case .began, .changed:
-                onChanged(value)
+                onPanChanged(value)
             case .ended, .cancelled, .failed:
-                onEnded(value)
+                onPanEnded(value)
             default:
                 break
             }
-        }
-    }
-}
-
-/// A small transparent area only TWO FINGERS can turn — same Pencil-transparent
-/// hit-testing as `FingerDragArea` (reuses `FingerHitTestView`), backed by a
-/// `UIRotationGestureRecognizer` instead of a pan. `UIRotationGestureRecognizer`
-/// already requires two simultaneous touches to recognize at all, so no extra
-/// touch-count bookkeeping is needed beyond the same touch-TYPE filter every
-/// other finger-only control here uses.
-struct FingerRotationArea: UIViewRepresentable {
-    /// Radians, relative to wherever the gesture began — same convention as
-    /// `UIRotationGestureRecognizer.rotation` itself.
-    var onChanged: (CGFloat) -> Void
-    var onEnded: (CGFloat) -> Void
-
-    func makeUIView(context: Context) -> FingerHitTestView {
-        let view = FingerHitTestView()
-        view.backgroundColor = .clear
-        let recognizer = UIRotationGestureRecognizer(
-            target: context.coordinator, action: #selector(Coordinator.handleRotation(_:))
-        )
-        recognizer.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
-        view.addGestureRecognizer(recognizer)
-        return view
-    }
-
-    func updateUIView(_ uiView: FingerHitTestView, context: Context) {
-        context.coordinator.onChanged = onChanged
-        context.coordinator.onEnded = onEnded
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(onChanged: onChanged, onEnded: onEnded)
-    }
-
-    final class Coordinator: NSObject {
-        var onChanged: (CGFloat) -> Void
-        var onEnded: (CGFloat) -> Void
-
-        init(onChanged: @escaping (CGFloat) -> Void, onEnded: @escaping (CGFloat) -> Void) {
-            self.onChanged = onChanged
-            self.onEnded = onEnded
         }
 
         @objc func handleRotation(_ recognizer: UIRotationGestureRecognizer) {
             switch recognizer.state {
             case .began, .changed:
-                onChanged(recognizer.rotation)
+                onRotationChanged(recognizer.rotation)
             case .ended, .cancelled, .failed:
-                onEnded(recognizer.rotation)
+                onRotationEnded(recognizer.rotation)
             default:
                 break
             }

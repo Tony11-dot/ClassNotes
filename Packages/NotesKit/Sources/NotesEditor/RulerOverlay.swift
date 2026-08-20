@@ -120,20 +120,16 @@ struct RulerOverlay: View {
                 // Pencil strokes drawn hard against the ruler's own paint.
                 .allowsHitTesting(false)
                 .overlay(
-                    FingerDragArea(
-                        onChanged: { value in
+                    FingerTransformArea(
+                        onPanChanged: { value in
                             let base = dragBase ?? center
                             if dragBase == nil { dragBase = base }
                             self.center = CGPoint(
                                 x: base.x + value.translation.width, y: base.y + value.translation.height
                             )
                         },
-                        onEnded: { _ in dragBase = nil }
-                    )
-                )
-                .overlay(
-                    FingerRotationArea(
-                        onChanged: { rotation in
+                        onPanEnded: { _ in dragBase = nil },
+                        onRotationChanged: { rotation in
                             let base = rotateBase ?? angle
                             if rotateBase == nil { rotateBase = base }
                             let settled = detented(base + rotation)
@@ -143,7 +139,7 @@ struct RulerOverlay: View {
                             wasOnDetent = settled.isDetent
                             self.angle = settled.angle
                         },
-                        onEnded: { _ in
+                        onRotationEnded: { _ in
                             rotateBase = nil
                             wasOnDetent = false
                         }

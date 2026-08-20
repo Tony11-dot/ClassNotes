@@ -16,7 +16,7 @@ import UIKit
 /// reports, and fails. `cancelsTouchesInView` is off and it always ends in
 /// `.failed`, so PencilKit's own drawing recognizer is untouched and the ink is
 /// never interrupted.
-final class StrokeDwellRecognizer: UIGestureRecognizer {
+final class StrokeDwellRecognizer: UIGestureRecognizer, UIGestureRecognizerDelegate {
     /// How far the pencil may drift and still count as resting, in the PAGE'S
     /// LOGICAL space.
     ///
@@ -116,6 +116,37 @@ final class StrokeDwellRecognizer: UIGestureRecognizer {
         delaysTouchesBegan = false
         delaysTouchesEnded = false
         requiresExclusiveTouchType = false
+        // Round 13's theory, after touch-type widening (round 12) produced
+        // ZERO change — not even a single haptic on any hold, of any length.
+        // That result rules out touch delivery being filtered at the door and
+        // points one layer deeper: UIKit's default gesture EXCLUSIVITY. The
+        // instant PencilKit's own `drawingGestureRecognizer` recognizes a
+        // stroke has begun — which happens almost immediately, well under the
+        // 0.28s `minimumHold` this recognizer waits for — UIKit's default
+        // behaviour is to force every SIBLING recognizer still sitting in
+        // `.possible` straight to `.failed`, with no delegate callback and no
+        // chance to opt out. This recognizer never asked to be exempted, so it
+        // was very likely being silently failed within the first touch sample
+        // of EVERY stroke, long before `checkRest()` ever got a chance to
+        // fire — which explains "doesn't matter how long I hold" perfectly:
+        // the recognizer wasn't losing a timing race, it was being killed
+        // before the race started. Declaring itself as its own delegate and
+        // always allowing simultaneous recognition keeps this recognizer alive
+        // for the whole stroke, purely OBSERVING (see the class doc — it still
+        // never inks anything, never blocks anything) alongside whatever else
+        // is recognizing. The one place this recognizer DOES need to win
+        // (taking over once a shape settles) is handled separately and
+        // explicitly, by disabling `drawingGestureRecognizer.isEnabled`
+        // (`suppressLiveInk`), not by relying on exclusivity — so this change
+        // doesn't touch that behaviour at all.
+        delegate = self
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        true
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {

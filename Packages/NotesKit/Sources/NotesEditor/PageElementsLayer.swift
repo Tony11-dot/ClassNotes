@@ -713,7 +713,20 @@ struct EraseCatcherLayer: View {
                 Color.clear
                     .contentShape(fillOutline(element))
                     .frame(width: displaySize.width, height: displaySize.height)
-                    .gesture(fillEraseGesture(for: element))
+                    // `.highPriorityGesture`, not `.gesture` — this drag has to
+                    // WIN outright the instant it starts, not merely compete.
+                    // SwiftUI's gesture system defaults to one winner per touch
+                    // sequence, and this view sits stacked among several other
+                    // full-page catcher layers here (plus the canvas itself,
+                    // still hit-testable during eraser mode). A plain `.gesture`
+                    // left this drag able to be silently pre-empted the instant
+                    // ANYTHING else nearby began recognizing — which reads as
+                    // exactly what was reported: erasing behaves like a single
+                    // tap (only the touch-down sample ever gets through) rather
+                    // than a continuous sweep, and which fill actually takes
+                    // the bite looks arbitrary because it's whichever recognizer
+                    // happened to win the race that particular time.
+                    .highPriorityGesture(fillEraseGesture(for: element))
             }
         }
         .frame(width: displaySize.width, height: displaySize.height)
