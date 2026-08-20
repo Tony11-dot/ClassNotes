@@ -113,7 +113,20 @@ struct ToolRailView: View {
             // still occupies.
             .frame(width: isCollapsed ? Self.chipSize : nil, height: isCollapsed ? Self.chipSize : nil)
             .position(isCollapsed ? (center ?? defaultCenter(in: geo.size)) : expandedCenter(edge: edge, in: geo.size))
-            .gesture(dragGesture(in: geo.size))
+            // `.gesture(_:)` gives its gesture priority OVER every descendant's
+            // own gesture — including a plain `Button`'s tap. That was invisible
+            // while the chip (a single button) and the expanded rail were two
+            // separate branches only one of which was ever mounted, but this
+            // round merged them into one permanently-mounted container so the
+            // SAME ancestor gesture now sits above the entire button tray any
+            // time it's expanded, not just the chip. `.simultaneousGesture`
+            // lets a stationary tap still reach the button underneath (this
+            // drag needs `minimumDistance` of real movement before it claims
+            // anything), while a genuine drag — starting on the glass or on a
+            // button — still moves the rail; a button that sees the touch
+            // travel cancels its own press-and-highlight the same way it would
+            // under a finger dragged off it normally.
+            .simultaneousGesture(dragGesture(in: geo.size))
         }
         .coordinateSpace(name: Self.railSpace)
         .onChange(of: openPenPanel) { _, request in

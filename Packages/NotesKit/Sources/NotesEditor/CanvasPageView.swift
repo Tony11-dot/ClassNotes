@@ -543,6 +543,22 @@ struct CanvasPageView: UIViewRepresentable {
 
         func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
             isUsingTool = false
+            // `suppressLiveInk()` disables `drawingGestureRecognizer` to hand a
+            // settled shape the pencil, and PencilKit reads THAT as "tool use
+            // ended" even though the hand is still down and the shape is still
+            // being sized — this fires again, for real, on the actual lift, so
+            // this call is a false alarm mid-hold. Scheduling off it anyway is
+            // what made a held shape's ink vanish the instant the pencil lifted:
+            // the beautify pass this arms computes which strokes to keep against
+            // a snapshot taken NOW, then applies that plan against a LATER
+            // snapshot taken after its Vision pass returns — and by then
+            // `commitSettledShape` has rewritten the in-progress stroke in place
+            // as the clean shape, at the same index the stale plan still reads as
+            // "consumed" scribble, silently deleting it. `finishHeldStroke`
+            // (driven by the dwell watcher's real `onEnd`) already calls
+            // `scheduleInkPass()` itself once the pencil truly lifts, so nothing
+            // is lost by skipping both here.
+            guard !isSuppressingLiveInk else { return }
             scheduleInkPass()
             // Re-arm beautification on the LIFT, not just on the last drawing
             // change. Rest the tip on the page after a word and the drawing stops
