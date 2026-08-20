@@ -37,6 +37,11 @@ struct FingerDragArea: UIViewRepresentable {
             target: context.coordinator, action: #selector(Coordinator.handlePan(_:))
         )
         recognizer.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        // Capped at one: this sits beside a `FingerRotationArea` on the same
+        // ruler body (two fingers = turn), and an uncapped pan also recognizes
+        // fine on two fingers — which raced the rotation for the same touches
+        // and moved the ruler AND turned it from the same two-finger gesture.
+        recognizer.maximumNumberOfTouches = 1
         view.addGestureRecognizer(recognizer)
         return view
     }
@@ -72,6 +77,60 @@ struct FingerDragArea: UIViewRepresentable {
                 onChanged(value)
             case .ended, .cancelled, .failed:
                 onEnded(value)
+            default:
+                break
+            }
+        }
+    }
+}
+
+/// A small transparent area only TWO FINGERS can turn — same Pencil-transparent
+/// hit-testing as `FingerDragArea` (reuses `FingerHitTestView`), backed by a
+/// `UIRotationGestureRecognizer` instead of a pan. `UIRotationGestureRecognizer`
+/// already requires two simultaneous touches to recognize at all, so no extra
+/// touch-count bookkeeping is needed beyond the same touch-TYPE filter every
+/// other finger-only control here uses.
+struct FingerRotationArea: UIViewRepresentable {
+    /// Radians, relative to wherever the gesture began — same convention as
+    /// `UIRotationGestureRecognizer.rotation` itself.
+    var onChanged: (CGFloat) -> Void
+    var onEnded: (CGFloat) -> Void
+
+    func makeUIView(context: Context) -> FingerHitTestView {
+        let view = FingerHitTestView()
+        view.backgroundColor = .clear
+        let recognizer = UIRotationGestureRecognizer(
+            target: context.coordinator, action: #selector(Coordinator.handleRotation(_:))
+        )
+        recognizer.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        view.addGestureRecognizer(recognizer)
+        return view
+    }
+
+    func updateUIView(_ uiView: FingerHitTestView, context: Context) {
+        context.coordinator.onChanged = onChanged
+        context.coordinator.onEnded = onEnded
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onChanged: onChanged, onEnded: onEnded)
+    }
+
+    final class Coordinator: NSObject {
+        var onChanged: (CGFloat) -> Void
+        var onEnded: (CGFloat) -> Void
+
+        init(onChanged: @escaping (CGFloat) -> Void, onEnded: @escaping (CGFloat) -> Void) {
+            self.onChanged = onChanged
+            self.onEnded = onEnded
+        }
+
+        @objc func handleRotation(_ recognizer: UIRotationGestureRecognizer) {
+            switch recognizer.state {
+            case .began, .changed:
+                onChanged(recognizer.rotation)
+            case .ended, .cancelled, .failed:
+                onEnded(recognizer.rotation)
             default:
                 break
             }

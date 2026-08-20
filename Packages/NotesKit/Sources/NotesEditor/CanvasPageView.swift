@@ -12,12 +12,6 @@ import UIKit
 @Observable
 public final class ActiveCanvasTracker {
     public weak var activeCanvas: PKCanvasView?
-    /// True between `canvasViewDidBeginUsingTool` and `…DidEndUsingTool` on
-    /// whichever page currently has the pencil down. Drives the tool rail's
-    /// auto-hide: it has no business covering the hand while it's writing, and
-    /// PencilKit already gives a reliable begin/end pair for exactly that
-    /// window — no separate gesture tracking needed.
-    public var isPencilDown = false
     /// Live canvases by page, so tools (OCR, beautify, circle-to-explain) can read
     /// a page's current ink without waiting for the debounced save.
     private var canvases: [UUID: Weak] = [:]
@@ -147,8 +141,10 @@ public final class ActiveCanvasTracker {
         // Left alone, the two steps land on the stack out of order — the ink
         // step arrives late, on top of the element step that came after it in
         // real time — so one Undo took back the wrong half of what the user
-        // just did. Flushing any pending ink into its own step first keeps
-        // every step on the stack in the order the user actually did them.
+        // just did. `flushInkPass()` runs the SHAPING pass too (not just the
+        // plain commit) — see its own doc comment for why stopping at
+        // `commitUndoStep()` alone still lost the shaping step silently.
+        coordinator.flushInkPass()
         coordinator.commitUndoStep()
         coordinator.pushStep(
             restoring: drawingBefore ?? canvas.drawing, elements: elementsBefore,
@@ -540,7 +536,6 @@ struct CanvasPageView: UIViewRepresentable {
         func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
             isUsingTool = true
             tracker.activeCanvas = canvasView
-            tracker.isPencilDown = true
             // Anything queued would land under the moving pencil — hold it.
             inkPassTask?.cancel()
             commitTask?.cancel()
@@ -548,7 +543,6 @@ struct CanvasPageView: UIViewRepresentable {
 
         func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
             isUsingTool = false
-            tracker.isPencilDown = false
             scheduleInkPass()
             // Re-arm beautification on the LIFT, not just on the last drawing
             // change. Rest the tip on the page after a word and the drawing stops
@@ -599,6 +593,34 @@ struct CanvasPageView: UIViewRepresentable {
                 guard !Task.isCancelled, let self, !self.isUsingTool else { return }
                 self.runInkPass()
             }
+        }
+
+        /// Runs a still-pending post-stroke pass RIGHT NOW instead of waiting out
+        /// its debounce, and folds its own step in before whatever's about to
+        /// close over it.
+        ///
+        /// `commitUndoStep()` alone only flushes the SEPARATE debounced *commit*
+        /// (`scheduleUndoCommit`/`commitTask`) — it says nothing about a still-
+        /// pending ink PASS (`scheduleInkPass`/`inkPassTask`), which does real
+        /// mutation (the shape-snap fallback, ruling, pen shaping) and pushes its
+        /// OWN step once it fires. An element action (erase a fill, drag a text
+        /// box) landing inside that 90ms window used to call `commitUndoStep()`
+        /// alone, which snapshotted the stroke BEFORE shaping as "the" step for
+        /// it — the ink pass then fired moments later, shaped that same stroke on
+        /// the live canvas, and found `hasUncommittedChange` already false
+        /// (`replace(...)` deliberately doesn't set it — see `isRewriting`), so
+        /// the shaping landed on the page but was never recorded on the undo
+        /// stack, and `undoBaseline` was left pointing at the pre-shaping
+        /// drawing. The next real commit then diffed against that stale baseline
+        /// and folded the orphaned shaping delta in with whatever was drawn
+        /// after it — one Undo either did nothing or took back two actions at
+        /// once, which is what "each Undo doesn't take back exactly the last
+        /// thing" looks like from the outside.
+        func flushInkPass() {
+            guard inkPassTask != nil else { return }
+            inkPassTask?.cancel()
+            inkPassTask = nil
+            runInkPass()
         }
 
         /// Scribble-to-erase, then shape-snap / ruler / pen tuning for every stroke

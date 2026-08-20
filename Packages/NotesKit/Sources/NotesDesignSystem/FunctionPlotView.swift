@@ -45,12 +45,32 @@ public struct FunctionPlotView: View {
         self.axisZ = axisZ
     }
 
-    private var runs: [[CGPoint]] {
-        (try? Self.sample(
+    /// Sampling depends only on the expressions/mode/window, never on the
+    /// element's on-screen box size — but `runs` used to be a plain computed
+    /// property, re-parsing and re-evaluating 400 samples (twice a body pass:
+    /// once for `hasUnresolvedInput`, once for `drawCurve`) on every SwiftUI
+    /// diff. A resize drag changes the box's `.frame` every touch delta,
+    /// which forces exactly that diff without touching a single one of these
+    /// inputs — so a plain resize was paying for a full re-sample 60 times a
+    /// second, which is the dropped-frame "shaking/glitching" while resizing.
+    /// Caching keyed on the sampling inputs alone means a size-only change
+    /// never re-triggers it.
+    private struct SampleKey: Hashable {
+        let expression: String
+        let secondary: String?
+        let tertiary: String?
+        let mode: PlotMode
+        let window: Double
+    }
+
+    private var sampleKey: SampleKey {
+        SampleKey(
             expression: expression, secondary: secondaryExpression, tertiary: tertiaryExpression,
             mode: mode, window: window
-        )) ?? []
+        )
     }
+
+    @State private var cachedRuns: [[CGPoint]] = []
 
     /// Something was typed but nothing plotted — a typo, or (in 3D) not all
     /// three of x(t)/y(t)/z(t) filled in yet. Distinct from a genuinely blank,
@@ -61,7 +81,7 @@ public struct FunctionPlotView: View {
         let secondary = !(secondaryExpression ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let tertiary = !(tertiaryExpression ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let anyTyped = mode.needsTertiaryExpression ? (primary || secondary || tertiary) : primary
-        return anyTyped && runs.isEmpty
+        return anyTyped && cachedRuns.isEmpty
     }
 
     public var body: some View {
@@ -72,7 +92,7 @@ public struct FunctionPlotView: View {
                 case .threeD: draw3DAxes(in: &context, size: size)
                 default: drawAxes(in: &context, size: size)
                 }
-                drawCurve(runs, in: &context, size: size)
+                drawCurve(cachedRuns, in: &context, size: size)
             }
             if hasUnresolvedInput {
                 Circle()
@@ -81,6 +101,12 @@ public struct FunctionPlotView: View {
                     .padding(6)
                     .accessibilityLabel("Can't plot this expression")
             }
+        }
+        .onChange(of: sampleKey, initial: true) {
+            cachedRuns = (try? Self.sample(
+                expression: expression, secondary: secondaryExpression, tertiary: tertiaryExpression,
+                mode: mode, window: window
+            )) ?? []
         }
     }
 
@@ -121,10 +147,14 @@ public struct FunctionPlotView: View {
         let yTip = CGPoint(x: origin.x, y: 0)
         drawArrowhead(at: yTip, from: origin, in: &context)
         drawTicksAlongY(axisY, origin: origin, size: size, in: &context)
-        // Vertical axis: the label sits ABOVE the arrow tip.
+        // Vertical axis: the label sits ABOVE the arrow tip. Clamped to the
+        // canvas the same way the X label already is — unclamped, a narrow
+        // plot box put `origin.x + 14` past `size.width`, and `Canvas` draws
+        // into a bitmap sized exactly to its bounds, so the glyph was
+        // silently clipped away entirely instead of just crowding the edge.
         context.draw(
             Text(axisY.displayLabel).font(Self.labelFont).foregroundStyle(axisColor.opacity(0.85)),
-            at: CGPoint(x: origin.x + 14, y: max(10, 10))
+            at: CGPoint(x: min(size.width - 8, origin.x + 14), y: 10)
         )
     }
 

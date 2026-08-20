@@ -4,16 +4,27 @@ import NotesModels
 import NotesServices
 import SwiftUI
 
-/// The editor's floating tool rail: draggable, snaps to the left/right edge.
+/// The editor's floating tool rail: draggable, docks to whichever of the four
+/// edges it's dropped nearest.
 ///
-/// Two halves, top to bottom:
+/// Moving it is two-stage, like picking a whole tray up versus nudging it: the
+/// instant a drag begins, the rail collapses into a small circular chip (the
+/// same idea as `NovaBubble`) that follows the finger, so a hand mid-drag is
+/// never trying to steer something the size of the whole rail. Letting go
+/// leaves it AS that chip — tapping it is what expands it back out, laid out
+/// for wherever it landed: a column when docked to the left/right edge, a row
+/// when docked to the top/bottom (`RailFlowLayout`), wrapping into more
+/// columns/rows on its own rather than running off the edge of the screen.
+///
+/// Expanded, two halves, top to bottom (or leading to trailing, docked
+/// horizontally):
 /// - **Modes and actions** — write, tape, text box, photo, file, voice note, the
 ///   page manager, and the real-time beautification switch.
 /// - **The pen tray** — every instrument in `PenLibrary` plus the eraser and the
 ///   ruler. The selected instrument lifts out of the rail; tapping it a second
 ///   time opens its settings, exactly like picking a pen up off a desk and then
 ///   inspecting it.
-/// - **NOVA**, at the foot.
+/// - **NOVA, undo and redo**, at the foot.
 struct ToolRailView: View {
     @Environment(\.theme) private var theme
     @Environment(AppServices.self) private var services
@@ -34,9 +45,16 @@ struct ToolRailView: View {
     /// pen's panel — a Pencil squeeze mapped to "show colours".
     var openPenPanel: UUID?
 
+    /// The chip's position while collapsed, and the expanded rail's own
+    /// along-the-edge anchor — see `expandedCenter`.
     @State private var center: CGPoint?
     @State private var dragStart: CGPoint?
     @State private var panel: Panel?
+    /// Starts collapsed the first time the rail is ever dropped near an edge,
+    /// same as the chip a fresh drag turns it into — an already-expanded rail
+    /// sitting over the page before the user has touched it at all would be
+    /// exactly the "covering the hand" problem collapsing exists to solve.
+    @State private var isCollapsed = true
 
     enum Panel: Hashable {
         case pen(String)
@@ -56,29 +74,36 @@ struct ToolRailView: View {
     /// texture and every pen starts to look like the same coloured stick.
     private static let glyphWidth: CGFloat = 68
     private static let glyphHeight: CGFloat = 30
+    /// The collapsed chip, matching `NovaBubble`'s own size so the two floating
+    /// controls in the editor read as one family.
+    private static let chipSize: CGFloat = 56
+    /// Assumed half-extent of the EXPANDED rail along its own short axis (its
+    /// width when docked left/right, its height when docked top/bottom) —
+    /// `RailFlowLayout` only wraps into a second column/row on an unusually
+    /// short or narrow window, so this covers the common single-column/row
+    /// case exactly and is off by at most one wrap's worth otherwise, never
+    /// enough to make anything unreachable.
+    private static let expandedShortHalfExtent: CGFloat = 46
 
     var body: some View {
         GeometryReader { geo in
+            let edge = nearestEdge(of: center ?? defaultCenter(in: geo.size), in: geo.size)
             Group {
-                // Hidden for exactly as long as the pencil is down, so the rail
-                // never sits under the writing hand — same idea as Apple Notes'
-                // own tool palette retracting while you write. `isPencilDown` is
-                // driven by PencilKit's own begin/end-using-tool pair
-                // (`ActiveCanvasTracker`), so this tracks genuine drawing, not
-                // just "a finger is somewhere on the glass". It reappears the
-                // instant the pencil lifts — no tap needed to bring it back.
-                if !tracker.isPencilDown {
-                    rail
+                if isCollapsed {
+                    chip
                         .position(center ?? defaultCenter(in: geo.size))
                         .gesture(dragGesture(in: geo.size))
-                        .transition(
-                            .move(edge: currentEdge(in: geo.size)).combined(with: .opacity)
-                        )
+                        .transition(.scale.combined(with: .opacity))
+                } else {
+                    expandedRail(edge: edge, in: geo.size)
+                        .position(expandedCenter(edge: edge, in: geo.size))
+                        .gesture(dragGesture(in: geo.size))
+                        .transition(.scale.combined(with: .opacity))
                 }
             }
             // Same spring NOVA's own sidebar slides in and out with, so both
             // panels in the editor feel like one consistent piece of motion.
-            .animation(.spring(duration: 0.3), value: tracker.isPencilDown)
+            .animation(.spring(duration: 0.3), value: isCollapsed)
         }
         .onChange(of: openPenPanel) { _, request in
             guard request != nil else { return }
@@ -87,16 +112,45 @@ struct ToolRailView: View {
         }
     }
 
+    /// The collapsed chip: a tap expands the rail back out; a drag (see
+    /// `dragGesture`) moves it and re-docks it on release.
+    private var chip: some View {
+        Button {
+            withAnimation(.spring(duration: 0.3)) { isCollapsed = false }
+        } label: {
+            ZStack {
+                Circle()
+                    .fill(theme.accent.color)
+                    .shadow(color: .black.opacity(0.26), radius: 12, y: 5)
+                Image(systemName: "pencil.and.ruler.fill")
+                    .font(.dsSystem(size: 21, weight: .semibold))
+                    .foregroundStyle(theme.contrastingInk(on: theme.accent).color)
+            }
+            .frame(width: Self.chipSize, height: Self.chipSize)
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Show tools")
+    }
+
     // The rail is ONE piece of glass, so it needs no `GlassEffectContainer` (that
     // exists to merge and morph several) and it is not `interactive` (that is for
     // a control that reacts to its own touches — here it re-rendered the whole
     // rail's material on every tap on a pen).
-    private var rail: some View {
-        VStack(spacing: 3) {
+    ///
+    /// `RailFlowLayout` wraps the SAME flat run of buttons into columns when
+    /// docked left/right and rows when docked top/bottom — a plain `VStack`
+    /// only ever suited the column case, and a fixed-length `HStack` of every
+    /// button in the rail is wider than any iPad screen. The budget passed to
+    /// it (`maxHeight` for a column, `maxWidth` for a row) is what tells it
+    /// when to actually wrap — the editor's own available space minus enough
+    /// margin that a full-height/width rail never touches the opposite edge.
+    private func expandedRail(edge: Edge, in size: CGSize) -> some View {
+        let axis: Axis = (edge == .top || edge == .bottom) ? .horizontal : .vertical
+        let budget = (axis == .vertical ? size.height : size.width) - Self.edgeInset * 2
+        return RailFlowLayout(axis: axis, spacing: 6) {
             modeButtons
-            divider
             penTray
-            divider
             DSGlassIconButton("Ask NOVA", systemImage: "sparkles") { onNova() }
             // The page owns its undo stack (`PageCanvasView.pageUndoManager`),
             // driven directly by the coordinator's own history — NOT by
@@ -113,11 +167,14 @@ struct ToolRailView: View {
             .disabled(!tracker.canRedo)
             .opacity(tracker.canRedo ? 1 : 0.35)
         }
+        .frame(
+            maxWidth: axis == .vertical ? nil : budget,
+            maxHeight: axis == .vertical ? budget : nil
+        )
         .padding(.vertical, 10)
         .padding(.horizontal, 6)
         .dsGlass(in: RoundedRectangle(cornerRadius: 30, style: .continuous))
         .shadow(color: .black.opacity(0.22), radius: 16, y: 8)
-        .frame(width: Self.railWidth)
     }
 
     // MARK: - Modes
@@ -378,10 +435,6 @@ struct ToolRailView: View {
         }
     }
 
-    private var divider: some View {
-        Divider().frame(width: 32).overlay(theme.separator.color).padding(.vertical, 4)
-    }
-
     private func binding(_ which: Panel) -> Binding<Bool> {
         Binding(get: { panel == which }, set: { panel = $0 ? which : nil })
     }
@@ -389,18 +442,51 @@ struct ToolRailView: View {
     // MARK: - Positioning
 
     private func defaultCenter(in size: CGSize) -> CGPoint {
-        CGPoint(x: Self.edgeInset + Self.railWidth / 2, y: size.height / 2)
+        CGPoint(x: Self.edgeInset + Self.chipSize / 2, y: size.height / 2)
     }
 
-    /// Which side the rail is currently snapped to, so hiding it slides it OUT
-    /// toward its own edge rather than through the middle of the page.
-    private func currentEdge(in size: CGSize) -> Edge {
-        (center ?? defaultCenter(in: size)).x < size.width / 2 ? .leading : .trailing
+    /// Which of the four edges `point` sits nearest — this is both which edge
+    /// the chip docks to AND, expanded, which axis `RailFlowLayout` lays the
+    /// rail out on (a column for leading/trailing, a row for top/bottom).
+    private func nearestEdge(of point: CGPoint, in size: CGSize) -> Edge {
+        let distances: [(Edge, CGFloat)] = [
+            (.leading, point.x), (.trailing, size.width - point.x),
+            (.top, point.y), (.bottom, size.height - point.y)
+        ]
+        return distances.min(by: { $0.1 < $1.1 })?.0 ?? .leading
     }
 
-    /// Dragging the rail. Every reported position is applied IMMEDIATELY and
-    /// unanimated, so the rail stays under the finger; only the release — where
-    /// the rail flies to the nearer edge — is animated.
+    /// Keeps the along-edge coordinate clear of the corners — the expanded
+    /// rail is bigger than the chip it grew from, and a chip dropped right in
+    /// a corner would expand with part of itself pushed off screen.
+    private func clampAlong(edge: Edge, value: CGPoint, in size: CGSize) -> CGPoint {
+        let margin: CGFloat = 140
+        switch edge {
+        case .leading, .trailing:
+            return CGPoint(x: value.x, y: min(max(value.y, margin), max(margin, size.height - margin)))
+        case .top, .bottom:
+            return CGPoint(x: min(max(value.x, margin), max(margin, size.width - margin)), y: value.y)
+        }
+    }
+
+    /// The expanded rail's own centre: pinned out from its docked edge by
+    /// `expandedShortHalfExtent`, at the same along-the-edge position the chip
+    /// was left at.
+    private func expandedCenter(edge: Edge, in size: CGSize) -> CGPoint {
+        let along = clampAlong(edge: edge, value: center ?? defaultCenter(in: size), in: size)
+        let half = Self.expandedShortHalfExtent
+        switch edge {
+        case .leading: return CGPoint(x: Self.edgeInset + half, y: along.y)
+        case .trailing: return CGPoint(x: size.width - Self.edgeInset - half, y: along.y)
+        case .top: return CGPoint(x: along.x, y: Self.edgeInset + half)
+        case .bottom: return CGPoint(x: along.x, y: size.height - Self.edgeInset - half)
+        }
+    }
+
+    /// Dragging the rail (as the chip, or the moment a drag begins on the
+    /// expanded rail — see `body`). Every reported position is applied
+    /// IMMEDIATELY and unanimated, so the chip stays under the finger; only
+    /// the release — where it docks to the nearer edge — is animated.
     ///
     /// A blanket `.animation(_:value: center)` on the rail animated the drag
     /// itself: each `onChanged` started a fresh 0.32 s spring toward the finger,
@@ -411,19 +497,24 @@ struct ToolRailView: View {
             .onChanged { value in
                 let start = dragStart ?? center ?? defaultCenter(in: size)
                 dragStart = start
+                if !isCollapsed { isCollapsed = true }
                 center = CGPoint(x: start.x + value.translation.width,
                                  y: start.y + value.translation.height)
             }
             .onEnded { _ in
                 dragStart = nil
                 guard let current = center else { return }
-                let half = Self.railWidth / 2
-                let snappedX = current.x < size.width / 2
-                    ? Self.edgeInset + half
-                    : size.width - Self.edgeInset - half
-                let clampedY = min(max(current.y, 300), max(300, size.height - 300))
+                let edge = nearestEdge(of: current, in: size)
+                let half = Self.chipSize / 2
+                let docked: CGPoint
+                switch edge {
+                case .leading: docked = CGPoint(x: Self.edgeInset + half, y: current.y)
+                case .trailing: docked = CGPoint(x: size.width - Self.edgeInset - half, y: current.y)
+                case .top: docked = CGPoint(x: current.x, y: Self.edgeInset + half)
+                case .bottom: docked = CGPoint(x: current.x, y: size.height - Self.edgeInset - half)
+                }
                 withAnimation(.spring(duration: 0.32)) {
-                    center = CGPoint(x: snappedX, y: clampedY)
+                    center = clampAlong(edge: edge, value: docked, in: size)
                 }
             }
     }

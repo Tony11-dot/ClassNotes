@@ -713,7 +713,7 @@ struct EraseCatcherLayer: View {
                 Color.clear
                     .contentShape(fillOutline(element))
                     .frame(width: displaySize.width, height: displaySize.height)
-                    .gesture(eraseGesture(for: element))
+                    .gesture(fillEraseGesture(for: element))
             }
         }
         .frame(width: displaySize.width, height: displaySize.height)
@@ -741,6 +741,53 @@ struct EraseCatcherLayer: View {
                     pageID: pageID, elementsBefore: before, elementsAfter: after, named: "Erase"
                 )
                 Task { await model.deleteElement(element.id, on: pageID) }
+            }
+    }
+
+    /// A fill has real erasable area (unlike text/code/plots, which are
+    /// delete-on-touch), so a drag across it only takes out where the eraser
+    /// actually swept, in `FillGeometry.erased`'s working page space — not the
+    /// whole element the first time the touch lands inside it. The swept points
+    /// accumulate for the length of the drag; the mask is only rasterized and
+    /// re-traced once, on release, since a rasterize-flood-trace pass per touch
+    /// sample would be the exact per-frame cost that made function-plot resize
+    /// stutter, paid on every eraser stroke instead of only every resize.
+    @State private var erasePath: [UUID: [CGPoint]] = [:]
+
+    private func fillEraseGesture(for element: PageElement) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                let point = CGPoint(x: value.location.x / scale, y: value.location.y / scale)
+                if erasePath[element.id] == nil {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                }
+                erasePath[element.id, default: []].append(point)
+            }
+            .onEnded { _ in
+                defer { erasePath[element.id] = nil }
+                guard let swept = erasePath[element.id], !swept.isEmpty else { return }
+                let before = elements
+                let survivingOutline = FillGeometry.erased(
+                    outline: element.points.map(\.cgPoint),
+                    erasedPoints: swept,
+                    radius: CGFloat(max(toolState.eraserWidth / 2, 6)),
+                    scale: FillTool.maskScale
+                )
+                if let survivingOutline {
+                    var updated = element
+                    updated.points = survivingOutline.map(PagePoint.init)
+                    tracker?.registerElementStep(
+                        pageID: pageID, elementsBefore: before,
+                        elementsAfter: before.map { $0.id == element.id ? updated : $0 }, named: "Erase"
+                    )
+                    Task { await model.updateElement(updated, on: pageID) }
+                } else {
+                    let after = before.filter { $0.id != element.id }
+                    tracker?.registerElementStep(
+                        pageID: pageID, elementsBefore: before, elementsAfter: after, named: "Erase"
+                    )
+                    Task { await model.deleteElement(element.id, on: pageID) }
+                }
             }
     }
 }

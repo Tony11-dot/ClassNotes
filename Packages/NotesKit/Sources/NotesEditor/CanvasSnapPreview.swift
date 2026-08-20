@@ -23,15 +23,29 @@ extension CanvasPageView.Coordinator {
         canvas.layer.addSublayer(snapPreviewLayer)
 
         let watcher = StrokeDwellRecognizer(target: nil, action: nil)
-        // Only what can actually DRAW is worth watching. The watcher used to
-        // follow every touch on the canvas, so a finger steadying the page or a
-        // palm resting on it started a stroke that never ended — and a stroke
-        // that never ends is a pencil that is permanently "down", which stalls
-        // the ink pass, the undo steps and beautification all at once.
-        watcher.allowedTouchTypes = canvas.drawingPolicy == .anyInput
-            ? [NSNumber(value: UITouch.TouchType.pencil.rawValue),
-               NSNumber(value: UITouch.TouchType.direct.rawValue)]
-            : [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
+        // A real Apple Pencil's very FIRST touch sample at touchdown
+        // intermittently reports as `.direct` rather than `.pencil` — the
+        // altitude/azimuth data that disambiguates it doesn't always arrive on
+        // sample one. `allowedTouchTypes` filters at the moment `touchesBegan`
+        // is delivered: restricting it to `[.pencil]` meant that on the (fairly
+        // common, hardware-dependent) touchdowns where the first sample was
+        // ambiguous, UIKit silently never delivered the touch to this
+        // recognizer AT ALL — not even once the later samples correctly
+        // resolved to `.pencil` — so `onDwell`/`onProgress` never fired for
+        // that stroke and every live preview (hold-to-snap, live ruling) fell
+        // straight through to its release-time fallback, which is exactly the
+        // "only ever seems to work after lift" symptom this kept shipping
+        // with despite every fix to the recognizer's OWN state machine.
+        // `PageCanvasView.hitTest` already keeps genuine finger touches from
+        // ever reaching a `.pencilOnly` canvas in the first place (see its own
+        // explicit `touch.type == .direct` check), so allowing both types
+        // here doesn't risk tracking a real finger — it only stops this
+        // recognizer's OWN, stricter filter from re-rejecting the pencil a
+        // second time on a misreported first sample.
+        watcher.allowedTouchTypes = [
+            NSNumber(value: UITouch.TouchType.pencil.rawValue),
+            NSNumber(value: UITouch.TouchType.direct.rawValue)
+        ]
         watcher.logicalPoint = { [weak canvas] touch in
             guard let canvas, canvas.zoomScale > 0 else { return .zero }
             // A scroll view hands back content coordinates already; the zoom

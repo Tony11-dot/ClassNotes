@@ -238,6 +238,135 @@ public enum FillGeometry {
         }
     }
 
+    // MARK: - Erasing a fill
+
+    /// Rasterizes `outline`'s interior, subtracts a `radius`-sized disc at every
+    /// point of `erasedPoints`, and traces the outline of the LARGEST connected
+    /// region that survives — nil if nothing does. All points are in the SAME
+    /// space `outline` is (page space, typically), with `scale` the raster's
+    /// working resolution (pixels per point, same convention as `path(forOutline:
+    /// maskOrigin:scale:)`).
+    ///
+    /// A fill used to be all-or-nothing to the eraser: any contact deleted the
+    /// whole element, because the only geometry it had was a hit-test polygon,
+    /// not erasable area. Reusing the SAME raster→trace pipeline the paint
+    /// bucket itself is built on (rasterize, flood/trace, simplify) means the
+    /// eraser can take a real bite out of a fill instead of taking the whole
+    /// thing or missing it entirely — a stroke through the middle keeps only the
+    /// larger remaining piece rather than splitting into two elements, which
+    /// keeps this a bounded, testable extension of geometry that already exists
+    /// rather than a new polygon-clipping engine.
+    public static func erased(
+        outline: [CGPoint], erasedPoints: [CGPoint], radius: CGFloat, scale: CGFloat
+    ) -> [CGPoint]? {
+        guard outline.count > 2, scale > 0, !erasedPoints.isEmpty else { return outline }
+        let minX = outline.map(\.x).min() ?? 0, maxX = outline.map(\.x).max() ?? 0
+        let minY = outline.map(\.y).min() ?? 0, maxY = outline.map(\.y).max() ?? 0
+        let origin = CGPoint(x: minX, y: minY)
+        let width = Int(((maxX - minX) * scale).rounded(.up)) + 1
+        let height = Int(((maxY - minY) * scale).rounded(.up)) + 1
+        guard width > 1, height > 1 else { return nil }
+
+        var mask = polygonMask(outline, origin: origin, scale: scale, width: width, height: height)
+        let radiusPixels = max(1, radius * scale)
+        for point in erasedPoints {
+            punchHole(
+                in: &mask,
+                center: (x: (point.x - origin.x) * scale, y: (point.y - origin.y) * scale),
+                radius: radiusPixels
+            )
+        }
+
+        guard let survivor = largestComponent(in: mask) else { return nil }
+        let traced = Self.outline(of: survivor)
+        guard traced.count > 8 else { return nil }
+        let result = Self.path(forOutline: traced, maskOrigin: origin, scale: scale)
+        return result.count > 2 ? result : nil
+    }
+
+    /// A polygon's interior as a raster, via the same "draw it and read the
+    /// pixels" approach `FillTool.inkMask` rasterizes ink with — a scanline
+    /// polygon-fill algorithm would be a second implementation of exactly what
+    /// `CGContext` already does correctly for self-intersecting/concave outlines.
+    private static func polygonMask(
+        _ outline: [CGPoint], origin: CGPoint, scale: CGFloat, width: Int, height: Int
+    ) -> Mask {
+        var pixels = [UInt8](repeating: 0, count: width * height)
+        let space = CGColorSpaceCreateDeviceGray()
+        guard let context = CGContext(
+            data: &pixels, width: width, height: height,
+            bitsPerComponent: 8, bytesPerRow: width, space: space,
+            bitmapInfo: CGImageAlphaInfo.none.rawValue
+        ) else { return Mask(width: width, height: height) }
+        context.setFillColor(gray: 1, alpha: 1)
+        context.beginPath()
+        context.move(to: CGPoint(x: (outline[0].x - origin.x) * scale, y: (outline[0].y - origin.y) * scale))
+        for point in outline.dropFirst() {
+            context.addLine(to: CGPoint(x: (point.x - origin.x) * scale, y: (point.y - origin.y) * scale))
+        }
+        context.closePath()
+        context.fillPath()
+        return Mask(width: width, height: height, pixels: pixels.map { $0 > 127 })
+    }
+
+    private static func punchHole(in mask: inout Mask, center: (x: CGFloat, y: CGFloat), radius: CGFloat) {
+        let minX = max(0, Int((center.x - radius).rounded(.down)))
+        let maxX = min(mask.width - 1, Int((center.x + radius).rounded(.up)))
+        let minY = max(0, Int((center.y - radius).rounded(.down)))
+        let maxY = min(mask.height - 1, Int((center.y + radius).rounded(.up)))
+        guard minX <= maxX, minY <= maxY else { return }
+        let radiusSquared = radius * radius
+        for y in minY...maxY {
+            for x in minX...maxX {
+                let dx = CGFloat(x) - center.x, dy = CGFloat(y) - center.y
+                if dx * dx + dy * dy <= radiusSquared { mask[x, y] = false }
+            }
+        }
+    }
+
+    /// The largest connected component of `true` pixels, as its own mask — or
+    /// nil if there are none. Scanline flood fill, same shape as `region(in:
+    /// from:)` but finding INK-like (`true`) components instead of flooding the
+    /// space around them.
+    private static func largestComponent(in mask: Mask) -> Mask? {
+        var visited = Mask(width: mask.width, height: mask.height)
+        var best: (mask: Mask, count: Int)?
+
+        for startY in 0..<mask.height {
+            for startX in 0..<mask.width {
+                guard mask[startX, startY], !visited[startX, startY] else { continue }
+                var component = Mask(width: mask.width, height: mask.height)
+                var stack: [(x: Int, y: Int)] = [(startX, startY)]
+                var count = 0
+                while let seed = stack.popLast() {
+                    var left = seed.x
+                    var right = seed.x
+                    let y = seed.y
+                    guard !visited[left, y], mask[left, y] else { continue }
+                    while left - 1 >= 0, mask[left - 1, y], !visited[left - 1, y] { left -= 1 }
+                    while right + 1 < mask.width, mask[right + 1, y], !visited[right + 1, y] { right += 1 }
+                    for x in left...right {
+                        visited[x, y] = true
+                        component[x, y] = true
+                        count += 1
+                    }
+                    for neighbour in [y - 1, y + 1] where neighbour >= 0 && neighbour < mask.height {
+                        var x = left
+                        while x <= right {
+                            if mask[x, neighbour], !visited[x, neighbour] {
+                                stack.append((x, neighbour))
+                                while x <= right, mask[x, neighbour] { x += 1 }
+                            }
+                            x += 1
+                        }
+                    }
+                }
+                if count > 0, count > (best?.count ?? 0) { best = (component, count) }
+            }
+        }
+        return best?.mask
+    }
+
     static func centroid(_ points: [CGPoint]) -> CGPoint {
         guard !points.isEmpty else { return .zero }
         var x: CGFloat = 0, y: CGFloat = 0

@@ -334,10 +334,47 @@ extension EditorScreen {
                 in: frame,
                 withAttributes: [.font: font, .foregroundColor: color, .paragraphStyle: style]
             )
-        case .file, .audio, .link, .tape, .functionPlot, .unknown:
-            // A voice note, file, link or graph is a control/live render, not
-            // something drawable without a view hierarchy — same reasoning as
-            // the others already excluded here.
+        case .functionPlot:
+            // Unlike an image/fill/text, a plot has no stored pixels or points
+            // to draw straight into a `CGContext` — its curve only exists as
+            // code that runs `FunctionPlotView` (parse, sample, draw). Reusing
+            // that view via `ImageRenderer` instead of reimplementing axis/
+            // curve math here a second time is the same reasoning
+            // `PageContentView.functionPlotView` already renders it with, so a
+            // lasso copy of a plot draws the actual graph instead of leaving
+            // its frame empty — silently skipping it drew nothing but the
+            // lasso's OWN outline overlay, which is what a paste showed.
+            let radius = element.codeCornerRadius ?? 10
+            let background = element.colorHex.flatMap(ThemeColor.init(hex:)) ?? theme.surfaceRaised
+            let lineColor = element.textColorHex.flatMap(ThemeColor.init(hex:)) ?? theme.accent
+            let transparent = element.backgroundIsTransparent ?? false
+            let plot = FunctionPlotView(
+                expression: element.functionExpression ?? "",
+                secondaryExpression: element.functionSecondaryExpression,
+                tertiaryExpression: element.functionTertiaryExpression,
+                mode: element.resolvedPlotMode,
+                window: element.functionWindow ?? FunctionPlotSettings().window,
+                lineColor: lineColor.color, axisColor: lineColor.color,
+                axisX: element.axisXDisplay, axisY: element.axisYDisplay, axisZ: element.axisZDisplay
+            )
+            .padding(6)
+            .background(
+                transparent ? Color.clear : background.color,
+                in: RoundedRectangle(cornerRadius: radius, style: .continuous)
+            )
+            .overlay {
+                if !transparent {
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .strokeBorder(theme.separator.color, lineWidth: 0.5)
+                }
+            }
+            .frame(width: frame.width, height: frame.height)
+            let renderer = ImageRenderer(content: plot)
+            renderer.scale = 3
+            renderer.uiImage?.draw(in: frame)
+        case .file, .audio, .link, .tape, .unknown:
+            // A voice note, file or link is a control, not a mark on the page —
+            // a picture of one would be a picture of an icon.
             break
         }
     }

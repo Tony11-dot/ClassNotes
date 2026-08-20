@@ -124,6 +124,62 @@ struct FillGeometryTests {
             maskOrigin: .zero, scale: 0
         ).isEmpty, "a zero scale would divide by nothing")
     }
+
+    @Test("No erased points leaves the outline exactly as it was")
+    func noErasedPointsIsANoOp() {
+        let square = [
+            CGPoint(x: 0, y: 0), CGPoint(x: 10, y: 0), CGPoint(x: 10, y: 10), CGPoint(x: 0, y: 10)
+        ]
+        #expect(FillGeometry.erased(outline: square, erasedPoints: [], radius: 5, scale: 1) == square)
+    }
+
+    @Test("Erasing a corner takes only a bite, not the whole fill")
+    func erasingTakesOnlyABite() throws {
+        let square = [
+            CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 0),
+            CGPoint(x: 100, y: 100), CGPoint(x: 0, y: 100), CGPoint(x: 0, y: 0)
+        ]
+        let bitten = try #require(FillGeometry.erased(
+            outline: square, erasedPoints: [CGPoint(x: 0, y: 0)], radius: 20, scale: 1
+        ))
+        let xs = bitten.map(\.x), ys = bitten.map(\.y)
+        // The far corner never had the eraser near it, so it's still there.
+        #expect((xs.max() ?? 0) > 90)
+        #expect((ys.max() ?? 0) > 90)
+        // The near corner is gone: nothing in the surviving outline sits
+        // inside the bitten radius any more.
+        #expect(!bitten.contains { hypot($0.x, $0.y) < 15 })
+    }
+
+    @Test("Erasing the whole area leaves nothing to fall back on")
+    func erasingEverythingDeletesTheFill() {
+        let square = [
+            CGPoint(x: 0, y: 0), CGPoint(x: 40, y: 0),
+            CGPoint(x: 40, y: 40), CGPoint(x: 0, y: 40), CGPoint(x: 0, y: 0)
+        ]
+        let survivors = FillGeometry.erased(
+            outline: square, erasedPoints: [CGPoint(x: 20, y: 20)], radius: 60, scale: 1
+        )
+        #expect(survivors == nil, "nothing survived, so the caller should delete the element")
+    }
+
+    @Test("A cut near one edge keeps the larger remaining piece, not the sliver")
+    func erasingThroughTheMiddleKeepsTheBiggerHalf() throws {
+        let rect = [
+            CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 0),
+            CGPoint(x: 100, y: 40), CGPoint(x: 0, y: 40), CGPoint(x: 0, y: 0)
+        ]
+        // A vertical stripe of eraser contact ten points in from the left
+        // edge — carving the rectangle into a thin sliver (x < 4ish) and a
+        // much bigger slab (x > 16ish).
+        let stripe = stride(from: 0, through: 40, by: 2).map { CGPoint(x: 10, y: CGFloat($0)) }
+        let survivor = try #require(FillGeometry.erased(
+            outline: rect, erasedPoints: stripe, radius: 6, scale: 1
+        ))
+        let xs = survivor.map(\.x)
+        #expect((xs.max() ?? 0) > 90, "the big slab past the cut survives")
+        #expect((xs.min() ?? 0) > 4, "the thin sliver on the near side of the cut is the smaller piece, discarded")
+    }
 }
 
 @Suite("Lasso selection")
