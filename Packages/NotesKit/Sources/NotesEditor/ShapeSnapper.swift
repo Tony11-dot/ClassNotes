@@ -232,9 +232,31 @@ enum ShapeSnapper {
             )
         }
         return PKStroke(
-            ink: ink,
+            ink: shapeSafeInk(ink),
             path: PKStrokePath(controlPoints: controlPoints, creationDate: Date())
         )
+    }
+
+    /// Substitutes a shape-safe ink for one whose hand-built `PKStroke` has been
+    /// traced, on real hardware, to real and repeatable ink loss.
+    ///
+    /// Every commit path in this file treats every ink identically — there is
+    /// no branch anywhere that singles one out — and yet only the two
+    /// `.monoline` presets (Flow Pen, Fineliner) ever lost a settled shape;
+    /// every other ink held on every test. A difference that consistent with
+    /// nothing in this file to produce it has to live in PencilKit's own
+    /// renderer for a `PKStroke` assembled by hand rather than drawn through
+    /// its own gesture pipeline. Rather than keep chasing a closed-source
+    /// implementation detail with no way to inspect it, a shape inked with
+    /// `.monoline` is built as `.pen` instead. Every hand-built shape stroke
+    /// already carries a flat, non-varying `force` (see `stroke(from:ink:width:)`
+    /// and `rebuild(_:along:)`), so `.pen`'s own pressure-reactive width has
+    /// nothing to react to and draws the same constant-width line `.monoline`
+    /// would have — the swap changes nothing you can see on a settled shape,
+    /// only whether it's still there afterward. Ordinary handwriting with
+    /// either pen is untouched; this only ever applies to a shape's own ink.
+    static func shapeSafeInk(_ ink: PKInk) -> PKInk {
+        ink.inkType == .monoline ? PKInk(.pen, color: ink.color) : ink
     }
 
     // MARK: - Hold detection

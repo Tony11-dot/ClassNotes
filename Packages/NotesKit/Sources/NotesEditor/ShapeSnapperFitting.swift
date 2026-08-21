@@ -342,7 +342,7 @@ extension ShapeSnapper {
             )
         }
         let newPath = PKStrokePath(controlPoints: controlPoints, creationDate: Date())
-        return PKStroke(ink: original.ink, path: newPath)
+        return PKStroke(ink: shapeSafeInk(original.ink), path: newPath)
     }
 
     private static func averageSize(_ points: [PKStrokePoint]) -> CGSize {
