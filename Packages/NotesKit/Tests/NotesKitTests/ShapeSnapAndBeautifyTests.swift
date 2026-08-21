@@ -47,9 +47,9 @@ struct ShapeSnapperTests {
         // spline, not the touch stream — recorded that entire rest as ONE extra
         // control point whose timeOffset simply jumps.
         var points = line(from: CGPoint(x: 100, y: 100), to: CGPoint(x: 300, y: 100))
-        points.append((CGPoint(x: 300, y: 100), 1.1))
+        points.append((CGPoint(x: 300, y: 100), 1.6))
 
-        #expect(ShapeSnapper.holdDuration(of: stroke(points)) >= 0.6)
+        #expect(ShapeSnapper.holdDuration(of: stroke(points)) >= 1.0)
         #expect(ShapeSnapper.holdDuration(of: stroke(points)) >= ShapeSnapper.minimumHold)
     }
 
@@ -80,7 +80,7 @@ struct ShapeSnapperTests {
             let y = 200 + sin(t * .pi * 2) * 5
             return (CGPoint(x: x, y: y), TimeInterval(t) * 0.6)
         }
-        points.append((CGPoint(x: 340, y: 200), 1.3))
+        points.append((CGPoint(x: 340, y: 200), 1.7))
 
         guard let snapped = ShapeSnapper.snapped(stroke(points)) else {
             Issue.record("a line held at the end should snap")
@@ -142,7 +142,7 @@ struct ShapeSnapperTests {
             (CGPoint(x: 220, y: 399), 0.1),
             (CGPoint(x: 280, y: 401), 0.15)
         ]
-        points.append((CGPoint(x: 280, y: 401), 0.75))
+        points.append((CGPoint(x: 280, y: 401), 1.25))
 
         #expect(ShapeSnapper.densePoints(stroke(points)).count > 8)
         #expect(ShapeSnapper.snapped(stroke(points)) != nil)

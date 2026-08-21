@@ -9,10 +9,10 @@ import PencilKit
 enum ShapeSnapper {
     /// How long the pencil must rest at the end of a stroke for it to count as
     /// "hold to snap". Kept a beat above the live watcher's own
-    /// `StrokeDwellRecognizer.minimumHold` (0.45s) — this is the safety net for
+    /// `StrokeDwellRecognizer.minimumHold` (0.85s) — this is the safety net for
     /// a stroke the live path missed entirely, not a second, more permissive
     /// chance at the same stroke it already turned down.
-    static let minimumHold: TimeInterval = 0.55
+    static let minimumHold: TimeInterval = 0.95
     /// How far the pencil may drift during that rest and still be holding still,
     /// in SCREEN terms (the live watcher divides this back into whatever the
     /// page's own logical space needs — see `StrokeDwellRecognizer.holdRadius`).

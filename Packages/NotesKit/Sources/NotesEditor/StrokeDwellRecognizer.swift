@@ -56,10 +56,19 @@ final class StrokeDwellRecognizer: UIGestureRecognizer, UIGestureRecognizerDeleg
     /// not as more ink — so a false trigger mid-letter doesn't just show a
     /// wrong preview, it steals the rest of the stroke, which is what "writing
     /// snaps to a line/angle" and "writing doesn't stick" both actually were.
-    /// Raised so an ordinary writing pause reads as ink, not a hold — a
-    /// deliberate hold-to-snap is felt as a distinct, longer pause against
-    /// this.
-    var minimumHold: TimeInterval = 0.45
+    /// Raised once already (to 0.45s) so an ordinary writing pause reads as
+    /// ink, not a hold — a deliberate hold-to-snap is felt as a distinct,
+    /// longer pause against this.
+    ///
+    /// 0.45s still wasn't past what an ALREADY-STRAIGHT stroke needs: finishing
+    /// an underline or a ruled line ends with the hand resting for a beat
+    /// before it lifts, which is real recorded footage, not a guess — and
+    /// unlike a letter, `ShapeSnapper.classify` needs no correction at all to
+    /// call a straight stroke a line, so this dwell was the ONLY gate standing
+    /// between "the user is done writing" and "silently rebuild what they just
+    /// wrote." Raised again, further above where finishing an ordinary stroke
+    /// rests, so a snap now reads as felt-deliberate the way it's meant to.
+    var minimumHold: TimeInterval = 0.85
 
     /// The path so far, in the canvas's own logical coordinates.
     private(set) var points: [CGPoint] = []
