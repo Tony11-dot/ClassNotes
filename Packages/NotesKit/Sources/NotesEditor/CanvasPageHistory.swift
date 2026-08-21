@@ -136,6 +136,7 @@ extension CanvasPageView.Coordinator {
                 // beautification that follows must not swallow it.
                 self.commitUndoStep()
                 let inkBefore = canvas.drawing
+                let strokeCountBeforeWait = inkBefore.strokes.count
                 // Typeset text FIRST, then take the ink away. The other order
                 // leaves a frame with neither on the page, which is what made
                 // beautification look like the writing vanished and something
@@ -143,35 +144,58 @@ extension CanvasPageView.Coordinator {
                 //
                 // `onBeautified` is a genuine suspension point (it resolves
                 // fonts and writes the manifest) — every guard above was
-                // checked BEFORE it, and nothing re-checks them after. A hand
-                // that starts a new stroke, or a shape that settles and
-                // commits, while this is in flight is invisible to those
-                // stale checks: `remaining` was built from a snapshot taken
-                // before the wait, and applying it unconditionally below wipes
-                // whatever landed on the canvas during it, silently — this was
-                // the actual mechanism behind ink and settled shapes alike
-                // vanishing sometime after a beautify pass had already looked
-                // safe to apply. `onBeautified` has already written the new
-                // elements to the manifest by the time it returns, so backing
-                // out here has to undo that too, or the typeset words and the
-                // original ink both end up on the page at once.
+                // checked BEFORE it. A shape that settles and commits, or any
+                // other REWRITE, bumps `rewriteGeneration` and is caught by
+                // re-checking it below. An entirely ordinary new stroke is
+                // not: PencilKit appends a finished stroke straight onto
+                // `canvas.drawing` itself, live, with nothing of ours in the
+                // way — it never touches `rewriteGeneration` at all. A quick
+                // dot or short word begun AND finished inside this wait (easily
+                // within a normal writing cadence) leaves `isUsingTool` and
+                // `isPencilDown` both false again by the time this resumes, so
+                // every guard here reads clean — and `remaining`, built from a
+                // snapshot taken before the wait, silently doesn't have it.
+                // Applying `remaining` as-is would erase it outright, with
+                // nothing anywhere to say so; this was the actual mechanism
+                // behind letters, dots and short strokes vanishing moments
+                // after being drawn, not just the settled-shape case.
+                // `onBeautified` has already written the new elements to the
+                // manifest by the time it returns, so backing out below has to
+                // undo that too, or the typeset words and the original ink
+                // both end up on the page at once.
                 let elements = await self.onBeautified(plan)
                 guard !self.isUsingTool, !self.isPencilDown,
                       startGeneration == self.rewriteGeneration else {
                     await self.onReverted(elements.before)
                     return false
                 }
-                self.processedStrokeCount = remaining.strokes.count
+                let liveNow = canvas.drawing.strokes
+                guard liveNow.count >= strokeCountBeforeWait else {
+                    // Ink was actively removed (erase, undo) while the pass was
+                    // resolving — which of `remaining`'s indices are still
+                    // valid is now ambiguous. Bail rather than guess; the retry
+                    // re-reads fresh state.
+                    await self.onReverted(elements.before)
+                    return false
+                }
+                // PencilKit only ever APPENDS a live stroke, so anything past
+                // the pre-wait count is exactly what was drawn during it —
+                // carry it forward into what actually gets applied.
+                let appendedDuringWait = Array(liveNow.suffix(liveNow.count - strokeCountBeforeWait))
+                let finalDrawing = appendedDuringWait.isEmpty
+                    ? remaining
+                    : PKDrawing(strokes: remaining.strokes + appendedDuringWait)
+                self.processedStrokeCount = finalDrawing.strokes.count
                 // Beautification is ONE step in either direction: the ink went
                 // away and type appeared in its place, so Undo has to restore
                 // both halves or the page is left with the words twice over —
                 // and Redo has to put both back.
                 self.registerBeautifyStep(
                     inkBefore: inkBefore, elementsBefore: elements.before,
-                    inkAfter: remaining, elementsAfter: elements.after,
+                    inkAfter: finalDrawing, elementsAfter: elements.after,
                     on: canvas
                 )
-                self.replace(remaining, on: canvas)
+                self.replace(finalDrawing, on: canvas)
                 self.scheduleSave()
                 return true
             }
