@@ -47,7 +47,19 @@ final class StrokeDwellRecognizer: UIGestureRecognizer, UIGestureRecognizerDeleg
     /// How long it must rest before the shape settles. Shorter than the
     /// stroke-timing threshold was: the user is watching it happen now, so the
     /// wait is felt rather than merely measured.
-    var minimumHold: TimeInterval = 0.28
+    ///
+    /// 0.28s was short enough to fire on an entirely ordinary pause mid-letter
+    /// — crossing a "t", dotting an "i", or just resting a beat before the next
+    /// stroke of a straight-sided letter (l, t, i, 1, L…) easily rests longer
+    /// than that. Once a dwell is ACCEPTED, every pencil sample after it is
+    /// read as a handle moving a shape (`touchesMoved`'s `didDwell` branch),
+    /// not as more ink — so a false trigger mid-letter doesn't just show a
+    /// wrong preview, it steals the rest of the stroke, which is what "writing
+    /// snaps to a line/angle" and "writing doesn't stick" both actually were.
+    /// Raised so an ordinary writing pause reads as ink, not a hold — a
+    /// deliberate hold-to-snap is felt as a distinct, longer pause against
+    /// this.
+    var minimumHold: TimeInterval = 0.45
 
     /// The path so far, in the canvas's own logical coordinates.
     private(set) var points: [CGPoint] = []
