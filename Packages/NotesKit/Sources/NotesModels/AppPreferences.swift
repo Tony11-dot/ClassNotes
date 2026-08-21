@@ -18,8 +18,19 @@ public final class AppPreferences {
     public var toolsJSON: Data?
     /// Bumped on every change, so the newer of two devices' copies can be told
     /// apart without trusting either one's clock.
-    public var settingsRevision: Int
-    public var settingsUpdatedAt: Date
+    ///
+    /// The inline `= 0`/`= .distantPast` defaults aren't decorative — they're
+    /// what SwiftData's lightweight migration reads to backfill this column on
+    /// an existing row. Both fields shipped as plain non-optional properties
+    /// with a default only in the memberwise `init` below, which the migrator
+    /// never sees; every store created before these fields existed failed to
+    /// migrate on launch (`NSCocoaErrorDomain 134110`,
+    /// "missing attribute values on mandatory destination attribute"),
+    /// silently falling back to an in-memory container per launch —
+    /// `ModelContainerFactory.make` — so no notebook/theme/settings state
+    /// written to this store ever actually persisted.
+    public var settingsRevision: Int = 0
+    public var settingsUpdatedAt: Date = Date.distantPast
 
     public static let singletonKey = "app-preferences"
 

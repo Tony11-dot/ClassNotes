@@ -45,7 +45,14 @@ public struct OCRService: Sendable {
                 }
                 let observations = request.results as? [VNRecognizedTextObservation] ?? []
                 let lines: [Line] = observations.compactMap { observation in
-                    let candidates = observation.topCandidates(3)
+                    // 5, not 3: `SpellCorrector` picks whichever candidate has the
+                    // fewest dictionary misspellings, so every extra candidate is
+                    // another chance for the right reading to be among them — a
+                    // misread letter that lands correctly on Vision's 4th or 5th
+                    // guess was previously invisible to it. Vision has already
+                    // computed these internally; asking for more costs nothing
+                    // extra to recognize, only a few more strings to score.
+                    let candidates = observation.topCandidates(5)
                     guard let top = candidates.first else { return nil }
                     return Line(
                         text: top.string,

@@ -135,7 +135,27 @@ extension CanvasPageView.Coordinator {
                 // leaves a frame with neither on the page, which is what made
                 // beautification look like the writing vanished and something
                 // else appeared, instead of the writing turning into type.
+                //
+                // `onBeautified` is a genuine suspension point (it resolves
+                // fonts and writes the manifest) — every guard above was
+                // checked BEFORE it, and nothing re-checks them after. A hand
+                // that starts a new stroke, or a shape that settles and
+                // commits, while this is in flight is invisible to those
+                // stale checks: `remaining` was built from a snapshot taken
+                // before the wait, and applying it unconditionally below wipes
+                // whatever landed on the canvas during it, silently — this was
+                // the actual mechanism behind ink and settled shapes alike
+                // vanishing sometime after a beautify pass had already looked
+                // safe to apply. `onBeautified` has already written the new
+                // elements to the manifest by the time it returns, so backing
+                // out here has to undo that too, or the typeset words and the
+                // original ink both end up on the page at once.
                 let elements = await self.onBeautified(plan)
+                guard !self.isUsingTool, !self.isPencilDown,
+                      startGeneration == self.rewriteGeneration else {
+                    await self.onReverted(elements.before)
+                    return false
+                }
                 self.processedStrokeCount = remaining.strokes.count
                 // Beautification is ONE step in either direction: the ink went
                 // away and type appeared in its place, so Undo has to restore

@@ -408,7 +408,22 @@ struct CanvasPageView: UIViewRepresentable {
         // muted (see `suppressLiveInk`), and a SwiftUI update landing mid-gesture
         // must not undo that — turning drawing back on halfway through would put
         // the wandering ink back under the shape.
-        canvas.drawingGestureRecognizer.isEnabled = context.coordinator.shouldEnableDrawing()
+        //
+        // `updateUIView` runs for reasons that have nothing to do with the
+        // pencil — any change to `toolState`, the ruler, the theme — so this can
+        // fire many times over the course of a single hold. Reassigning
+        // `isEnabled` unconditionally re-toggles PencilKit's OWN gesture
+        // recognizer every one of those times, even to the value it already
+        // has, which repeatedly pokes exactly the internal machinery
+        // `suppressLiveInk`'s one deliberate toggle already put in a fragile
+        // state — a plausible way for PencilKit's own undocumented handling of
+        // a disabled-mid-stroke recognizer (this file's leading suspect for the
+        // shape-vanish bug) to get exercised many times over instead of once.
+        // Only assign when the value actually changes.
+        let shouldEnableDrawing = context.coordinator.shouldEnableDrawing()
+        if canvas.drawingGestureRecognizer.isEnabled != shouldEnableDrawing {
+            canvas.drawingGestureRecognizer.isEnabled = shouldEnableDrawing
+        }
         // `allowsZoom` (a whiteboard) stays interactive regardless, so its own
         // pan/zoom keeps working outside drawing mode; a normal paged
         // notebook page — the common case — only intercepts touches while
@@ -804,10 +819,11 @@ struct CanvasPageView: UIViewRepresentable {
         /// sets `pendingSnapPath` too, and it is its own setting. Asking the shape
         /// switch for permission is how a line ruled live could be thrown away on
         /// the lift, leaving the raw ink the preview had already replaced.
-        private func commitPending(into drawing: inout PKDrawing, on canvas: PKCanvasView) {
-            guard let path = pendingSnapPath else { return }
+        @discardableResult
+        private func commitPending(into drawing: inout PKDrawing, on canvas: PKCanvasView) -> Int? {
+            guard let path = pendingSnapPath else { return nil }
             let ruled = isRulingLive
-            commitSettledShape(path, into: &drawing, on: canvas)
+            let index = commitSettledShape(path, into: &drawing, on: canvas)
             pendingSnapPath = nil
             strokeCountAtStrokeStart = nil
             pendingSnapInk = nil
@@ -817,6 +833,7 @@ struct CanvasPageView: UIViewRepresentable {
             replace(drawing, on: canvas)
             commitUndoStep(named: ruled ? "Ruled Line" : "Shape")
             scheduleSave()
+            return index
         }
 
         /// Puts the settled shape on the page. Normally it replaces the stroke
@@ -827,9 +844,10 @@ struct CanvasPageView: UIViewRepresentable {
         /// `suppressLiveInk`) — not `canvas.tool` read live here, which by commit
         /// time (a 90ms debounce after the lift) may already belong to whatever
         /// the hand switched to next.
+        @discardableResult
         private func commitSettledShape(
             _ path: [CGPoint], into drawing: inout PKDrawing, on canvas: PKCanvasView
-        ) {
+        ) -> Int {
             let baseline = min(
                 strokeCountAtStrokeStart ?? max(drawing.strokes.count - 1, 0),
                 drawing.strokes.count
@@ -847,6 +865,7 @@ struct CanvasPageView: UIViewRepresentable {
                     drawing.strokes.removeSubrange((baseline + 1)...)
                 }
                 drawing.strokes[baseline] = ShapeSnapper.stroke(from: path, like: template)
+                return baseline
             } else {
                 let tool = canvas.tool as? PKInkingTool
                 drawing.strokes.append(ShapeSnapper.stroke(
@@ -856,6 +875,7 @@ struct CanvasPageView: UIViewRepresentable {
                         ?? PKInk(.pen, color: .black),
                     width: pendingSnapWidth ?? tool?.width ?? CGFloat(toolState.penSettings.effectiveWidth)
                 ))
+                return drawing.strokes.count - 1
             }
         }
 
@@ -954,14 +974,30 @@ struct CanvasPageView: UIViewRepresentable {
             )
             if pendingSnapPath != nil, let canvas {
                 var drawing = canvas.drawing
-                commitPending(into: &drawing, on: canvas)
+                let committedIndex = commitPending(into: &drawing, on: canvas)
                 // A late, undocumented mutation by PencilKit's own handling of the
                 // gesture recognizer disabled mid-stroke (see `suppressLiveInk`) is
                 // the leading remaining suspect for a shape that visually settles
                 // and then vanishes anyway — if something OTHER than this class
                 // touches `canvas.drawing` in the moment right after this commit,
                 // this is what will catch it.
+                //
+                // Count alone can't catch it: an in-place overwrite of the very
+                // index we just wrote — PencilKit finishing the stroke it had
+                // frozen mid-recognition, landing back on top of ours — leaves the
+                // array exactly as long as it was, which is precisely how a
+                // count-only check could report "ok" every single time while the
+                // committed shape was actually being clobbered underneath it.
+                // Snapshotting the committed stroke's own bounds and point count
+                // and re-checking THOSE catches a same-length overwrite that a
+                // length check alone is structurally blind to.
                 let committedCount = canvas.drawing.strokes.count
+                let committedBounds = committedIndex.flatMap { idx in
+                    idx < canvas.drawing.strokes.count ? canvas.drawing.strokes[idx].renderBounds : nil
+                }
+                let committedPointCount = committedIndex.flatMap { idx in
+                    idx < canvas.drawing.strokes.count ? canvas.drawing.strokes[idx].path.count : nil
+                }
                 Task { @MainActor [weak canvas] in
                     try? await Task.sleep(for: .milliseconds(400))
                     guard let canvas else { return }
@@ -970,8 +1006,19 @@ struct CanvasPageView: UIViewRepresentable {
                         snapLog.error(
                             "POST-COMMIT MUTATION: strokes went \(committedCount)->\(laterCount) within 400ms of a shape commit, with nothing in this class touching it"
                         )
-                    } else {
+                        return
+                    }
+                    guard let idx = committedIndex, idx < canvas.drawing.strokes.count else {
                         snapLog.debug("post-commit check ok: strokes still \(laterCount)")
+                        return
+                    }
+                    let stroke = canvas.drawing.strokes[idx]
+                    if stroke.renderBounds != committedBounds || stroke.path.count != committedPointCount {
+                        snapLog.error(
+                            "POST-COMMIT CONTENT MUTATION: stroke at index \(idx) changed within 400ms of a shape commit — bounds \(String(describing: committedBounds)) -> \(String(describing: stroke.renderBounds)), points \(committedPointCount ?? -1) -> \(stroke.path.count). Array length was unchanged (\(laterCount)) — a count-only check would have missed this."
+                        )
+                    } else {
+                        snapLog.debug("post-commit check ok: strokes still \(laterCount), committed shape unchanged")
                     }
                 }
             } else {
@@ -985,7 +1032,13 @@ struct CanvasPageView: UIViewRepresentable {
         /// held shape but the watcher says nothing is on the glass, the hold is
         /// over and the mute is a leak.
         func shouldEnableDrawing() -> Bool {
-            if isSuppressingLiveInk, !isPencilDown { finishHeldStroke() }
+            if isSuppressingLiveInk, !isPencilDown {
+                // This is the SwiftUI-render-cycle path calling `finishHeldStroke()`,
+                // not the dwell watcher's own `onEnd` — logged distinctly so a
+                // capture can show which one actually committed a given shape.
+                snapLog.debug("shouldEnableDrawing: stale mute cleared via updateUIView safety net, not watcher.onEnd — committing now")
+                finishHeldStroke()
+            }
             return isSuppressingLiveInk ? false : toolState.isDrawingEnabled
         }
 
