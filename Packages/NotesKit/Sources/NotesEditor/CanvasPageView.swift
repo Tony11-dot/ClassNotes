@@ -185,6 +185,29 @@ public final class ActiveCanvasTracker {
     public func clearDrawing(for pageID: UUID) {
         canvases[pageID]?.view?.drawing = PKDrawing()
     }
+
+    /// Immediately writes every live page's most recent ink to disk, bypassing
+    /// the normal save debounce.
+    ///
+    /// Every other path that flushes a pending save rides on SwiftUI tearing
+    /// the page's view down — scrolling it out of the lazy stack, or leaving
+    /// the editor (`CanvasPageView.dismantleUIView`). Backgrounding the whole
+    /// app does neither: the editor stays exactly as it was, so nothing calls
+    /// that. A debounced save (`scheduleSave`, 600ms) or ink-shaping pass
+    /// (`scheduleInkPass`, 90ms) that hasn't fired yet when iOS suspends the
+    /// process simply never resumes — and if the OS then reclaims a suspended
+    /// app under memory pressure, whatever was drawn in that last window is
+    /// gone with no error at all, which is exactly what "I wrote something and
+    /// it was just gone" looks like from the outside. `EditorScreen` calls
+    /// this on every `scenePhase` change away from `.active`.
+    public func flushAllPendingSaves() {
+        for entry in canvases.values {
+            guard let canvas = entry.view as? PageCanvasView,
+                  let coordinator = canvas.delegate as? CanvasPageView.Coordinator
+            else { continue }
+            coordinator.flushPendingSave()
+        }
+    }
 }
 
 /// `PKCanvasView` pinned to the page's logical space: ink coordinates are

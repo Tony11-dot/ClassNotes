@@ -17,6 +17,7 @@ import UniformTypeIdentifiers
 public struct EditorScreen: View {
     @Environment(AppServices.self) var services
     @Environment(\.theme) var theme
+    @Environment(\.scenePhase) var scenePhase
 
     let notebook: Notebook
 
@@ -104,16 +105,27 @@ public struct EditorScreen: View {
     var isBoard: Bool { notebook.kind.isSinglePage }
 
     public var body: some View {
-        // Focus mode is its own screen: one page, an Exit button, nothing else.
-        if toolState.focusMode {
-            focusSurface
-                .navigationTitle(notebook.title)
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar(.hidden, for: .navigationBar)
-                .statusBarHidden()
-                .onDisappear { syncPageContent() }
-        } else {
-            editorSurface
+        Group {
+            // Focus mode is its own screen: one page, an Exit button, nothing else.
+            if toolState.focusMode {
+                focusSurface
+                    .navigationTitle(notebook.title)
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar(.hidden, for: .navigationBar)
+                    .statusBarHidden()
+                    .onDisappear { syncPageContent() }
+            } else {
+                editorSurface
+            }
+        }
+        // Leaving the editor (`.onDisappear`) and scrolling a page out of the
+        // lazy stack (`dismantleUIView`) both flush their own pending saves
+        // because SwiftUI tears the view down either way — backgrounding the
+        // app tears nothing down, so it needs its own flush. See
+        // `ActiveCanvasTracker.flushAllPendingSaves`.
+        .onChange(of: scenePhase) { _, phase in
+            guard phase != .active else { return }
+            tracker.flushAllPendingSaves()
         }
     }
 
