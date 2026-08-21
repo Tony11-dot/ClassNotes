@@ -893,12 +893,30 @@ struct CanvasPageView: UIViewRepresentable {
             canvas.drawingGestureRecognizer.isEnabled = false
         }
 
-        /// The pencil has lifted off a held shape: give the canvas back and run the
-        /// pass that puts the shape on the page.
+        /// The pencil has lifted off a held stroke: give the canvas back, and
+        /// either commit the shape it settled on or run the ordinary pass.
         ///
-        /// The pass has to be asked for here. Muting the canvas already fired
-        /// `canvasViewDidEndUsingTool`, back when the pencil was still down and the
-        /// shape was still being sized — nothing else is coming.
+        /// A settled shape (or a live-ruled line) commits RIGHT HERE, synchronously
+        /// — not through the shared `scheduleInkPass()` debounce every ordinary
+        /// stroke also queues onto. That debounce exists to batch several ordinary
+        /// strokes' shaping into one rewrite, and going through it left a real
+        /// 90ms window in which the very next stroke could begin before the queued
+        /// task fired. `canvasViewDidBeginUsingTool` cancels any still-pending
+        /// `inkPassTask` for that new stroke — completely correctly, for the
+        /// ordinary case — but a shape's own pending commit was riding that exact
+        /// task, so it was cancelled right along with it and never applied.
+        /// `pendingSnapPath` isn't cleared by ending a hold (see
+        /// `CanvasSnapPreview.onEnd`), so it didn't just vanish outright: it sat
+        /// there stale until the NEXT stroke's own lift queued another ink pass,
+        /// which then found it and committed it against a baseline captured for
+        /// the wrong stroke — mangling whatever had been written in between. This
+        /// window was hit constantly, because drawing a shape and carrying
+        /// straight on to the next word with no real pause is completely ordinary
+        /// handwriting. A settled shape is already fully decided by the time the
+        /// pencil lifts — the user watched it happen — so there is nothing to
+        /// batch it with; committing it here, before anything else can possibly
+        /// begin (the same hand cannot touch down again before this touch has
+        /// finished ending), closes the window entirely rather than narrowing it.
         func finishHeldStroke() {
             isSuppressingLiveInk = false
             // Unconditionally, not only when this call is the one that lifts the
@@ -907,7 +925,12 @@ struct CanvasPageView: UIViewRepresentable {
             // and starts dragging it around instead — so every path out of a hold
             // hands the canvas back.
             canvas?.drawingGestureRecognizer.isEnabled = toolState.isDrawingEnabled
-            scheduleInkPass()
+            if pendingSnapPath != nil, let canvas {
+                var drawing = canvas.drawing
+                commitPending(into: &drawing, on: canvas)
+            } else {
+                scheduleInkPass()
+            }
         }
 
         /// Whether the canvas should be accepting ink right now.
