@@ -253,22 +253,18 @@ struct PenShaperTests {
         }
     }
 
-    @Test("Every shipped pen preset that reads as neutral rebuilds nothing")
+    @Test("Fully neutral settings rebuild nothing; every shipped preset's own tuning still does")
     func shippedDefaultsAvoidPointlessRebuilds() {
         // Shaping a stroke means reassigning the canvas's whole drawing, which is
-        // what made writing feel laggier the fuller the page got. The DEFAULT pen
-        // must not pay that for a difference nobody can see.
-        let flow = PenLibrary.default
-        #expect(
-            PenShaper.shaped(stroke(), settings: flow.defaults) == nil,
-            "the default Flow Pen must not rebuild strokes"
-        )
-        // …while a pen whose character really is "even line" or "wet nib" still does.
-        for id in ["fineliner", "fountain", "highlighter"] {
-            let preset = PenLibrary.preset(id: id)
+        // what made writing feel laggier the fuller the page got — but only a
+        // truly neutral tuning is entitled to skip it.
+        let neutral = PenSettings(stability: 1, tip: 0, sensitivity: 0.5, thickness: 1.4, concentration: 1)
+        #expect(PenShaper.shaped(stroke(), settings: neutral) == nil)
+        // …while every shipped preset's own tuning has real character and still does.
+        for preset in PenLibrary.all {
             #expect(
                 PenShaper.shaped(stroke(), settings: preset.defaults) != nil,
-                "\(id) is tuned away from neutral and should still be shaped"
+                "\(preset.id) is tuned away from neutral and should still be shaped"
             )
         }
     }

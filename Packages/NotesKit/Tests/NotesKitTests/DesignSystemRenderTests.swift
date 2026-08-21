@@ -162,7 +162,7 @@ struct DesignSystemRenderTests {
     func penTray(preset: ThemePreset) {
         let spec = preset.spec
         for pen in PenLibrary.all {
-            let glyph = PenGlyphView(preset: pen, color: spec.ink, isSelected: pen.id == "flow")
+            let glyph = PenGlyphView(preset: pen, color: spec.ink, isSelected: pen.id == PenLibrary.default.id)
                 .environment(\.theme, spec)
             #expect(
                 render(glyph, size: CGSize(width: 46, height: 20)) != nil,

@@ -121,25 +121,26 @@ public enum PenLibrary {
     /// Thicknesses are the widths these instruments ALREADY drew at — Tip used to
     /// multiply into the width, so removing that from the arithmetic means folding
     /// the product back into the number, or every pen would suddenly write thinner.
-    public static let flow = PenPreset(
-        id: "flow", displayName: "Flow Pen", ink: .monoline,
-        defaults: PenSettings(stability: 1, tip: 0, sensitivity: 0.5, thickness: 1.4, concentration: 1),
-        symbolName: "pencil.tip"
+    ///
+    /// Flow Pen and Fineliner (formerly first and third in the tray) are gone.
+    /// Both were `.monoline` ink, and on real hardware that was the one ink
+    /// family that could lose a hold-to-snap shape outright — traced all the
+    /// way through this app's own commit code with nothing found (every ink is
+    /// treated identically), which means the fault sits in PencilKit's own
+    /// renderer for a hand-built `.monoline` stroke. Removing the two presets
+    /// removes the only way that ink ever reached the canvas, which is a real
+    /// fix, not a workaround — `ShapeSnapper.shapeSafeInk` stays in place as a
+    /// second line of defense for a custom or future pen that picks the same
+    /// ink family.
+    public static let ballpoint = PenPreset(
+        id: "ballpoint", displayName: "Ballpoint", ink: .pen,
+        // A ball is blunt: a biro's line starts and stops at full width.
+        defaults: PenSettings(stability: 2, tip: 0.1, sensitivity: 0.55, thickness: 2.6, concentration: 1),
+        symbolName: "pencil"
     )
 
     public static let all: [PenPreset] = [
-        flow,
-        PenPreset(
-            id: "ballpoint", displayName: "Ballpoint", ink: .pen,
-            // A ball is blunt: a biro's line starts and stops at full width.
-            defaults: PenSettings(stability: 2, tip: 0.1, sensitivity: 0.55, thickness: 2.6, concentration: 1),
-            symbolName: "pencil"
-        ),
-        PenPreset(
-            id: "fineliner", displayName: "Fineliner", ink: .monoline,
-            defaults: PenSettings(stability: 3, tip: 0, sensitivity: 0.1, thickness: 1.4, concentration: 1),
-            symbolName: "pencil.line"
-        ),
+        ballpoint,
         PenPreset(
             id: "fountain", displayName: "Fountain Pen", ink: .fountainPen,
             // A nib enters and leaves the paper on its point.
@@ -175,9 +176,9 @@ public enum PenLibrary {
         )
     ]
 
-    public static var `default`: PenPreset { flow }
+    public static var `default`: PenPreset { ballpoint }
 
     public static func preset(id: String) -> PenPreset {
-        all.first { $0.id == id } ?? flow
+        all.first { $0.id == id } ?? ballpoint
     }
 }
