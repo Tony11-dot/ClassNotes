@@ -947,64 +947,24 @@ struct CanvasPageView: UIViewRepresentable {
         /// a second entry would mean two presses of Undo to take one line back.
         /// `commitUndoStep` closes the step once the pass is finished.
         ///
-        /// EVERY rewrite in this file funnels through here — pen shaping, a shape
-        /// snap, ruling, scribble erase, beautification. Every ink-loss bug found
-        /// so far (a settled shape, a stroke drawn while beautification's own
-        /// async apply was in flight) turned out to be a different specific way
-        /// for `drawing` to be computed from something other than the canvas's
-        /// actual live content at the moment it lands — a stale snapshot, a race,
-        /// PencilKit's own internal handling of one particular ink. There is no
-        /// way to be sure every such path has now been found. So rather than
-        /// trust each caller to have gotten its own snapshot right, THIS is
-        /// where the guarantee that actually matters gets enforced directly:
-        /// unless a caller explicitly says it means to remove ink
-        /// (`allowsFewerStrokes`), nothing currently on the canvas is allowed to
-        /// go missing, full stop — a stroke `drawing` has no match for is carried
-        /// forward instead of silently dropped, whatever the reason it would
-        /// otherwise have been lost.
+        /// REVERTED: a version of this briefly tried to enforce "nothing present
+        /// on the live canvas may go missing" here directly, by checking whether
+        /// every live stroke's content still matched something in the incoming
+        /// `drawing`. That premise is wrong for most of what actually calls this
+        /// function: pen shaping, shape-snapping and ruling all legitimately
+        /// rewrite a stroke's content IN PLACE — that's the entire point of
+        /// applying the pen's tuning — so a reshaped stroke's raw original
+        /// looked "missing" on EVERY ordinary pass and got appended right back
+        /// next to its own reshaped replacement, duplicating nearly everything
+        /// written and then corrupting `processedStrokeCount`'s indexing on the
+        /// pass after that. A blanket content-match guard cannot tell "rewritten
+        /// in place" from "actually lost" — only a caller that knows which
+        /// specific content is expected to persist unchanged can.
         func replace(_ drawing: PKDrawing, on canvas: PKCanvasView, allowsFewerStrokes: Bool = false) {
-            let drawing = allowsFewerStrokes
-                ? drawing
-                : Self.preservingUnaccountedStrokes(in: drawing, currentlyOn: canvas)
             isRewriting = true
             rewriteGeneration &+= 1
             canvas.drawing = drawing
             Task { @MainActor [weak self] in self?.isRewriting = false }
-        }
-
-        /// A rough content fingerprint for one stroke — quantized so two
-        /// representations of "the same" stroke (e.g. rebuilt from identical
-        /// points but with a trivially different floating-point rounding path)
-        /// still match, while two genuinely different strokes essentially never
-        /// collide.
-        private struct StrokeContentKey: Hashable {
-            let x, y, width, height, points: Int
-            init(_ stroke: PKStroke) {
-                let bounds = stroke.renderBounds
-                x = Int((bounds.origin.x * 100).rounded())
-                y = Int((bounds.origin.y * 100).rounded())
-                width = Int((bounds.width * 100).rounded())
-                height = Int((bounds.height * 100).rounded())
-                points = stroke.path.count
-            }
-        }
-
-        /// Any stroke on `canvas` right now with no matching content anywhere in
-        /// `drawing` is appended back rather than silently lost. This can only
-        /// ever ADD strokes on top of what `drawing` already has — it never
-        /// removes anything.
-        private static func preservingUnaccountedStrokes(
-            in drawing: PKDrawing, currentlyOn canvas: PKCanvasView
-        ) -> PKDrawing {
-            let accountedFor = Set(drawing.strokes.map(StrokeContentKey.init))
-            let missing = canvas.drawing.strokes.filter { !accountedFor.contains(StrokeContentKey($0)) }
-            guard !missing.isEmpty else { return drawing }
-            snapLog.error(
-                "replace(): \(missing.count) live stroke(s) had no match in the incoming rewrite — carried forward instead of dropped"
-            )
-            var healed = drawing
-            healed.strokes.append(contentsOf: missing)
-            return healed
         }
 
         // MARK: - Live ink while a shape is held
