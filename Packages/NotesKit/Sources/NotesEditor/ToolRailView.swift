@@ -344,29 +344,45 @@ struct ToolRailView: View {
 
     // MARK: - Pen tray
 
+    /// `@ViewBuilder`, NOT a `VStack`: this used to be one, and it silently
+    /// broke rendering of the WHOLE rail — not just the pen tray, the
+    /// collapsed chip too, sitting right next to it in the same `ZStack`.
+    /// `RailFlowLayout`'s `Subviews` flattens a bare run of buttons (like
+    /// `modeButtons`) into one measured item per button, but stops at an
+    /// explicit container — a `VStack` is handed over as ONE opaque subview,
+    /// sized by its own internal layout rather than `RailFlowLayout`'s. Nine
+    /// pen glyphs plus the eraser and four rail buttons stacked that way is
+    /// tall enough that mixing it into the SAME flow as `modeButtons`
+    /// produced a blank render for the entire `ToolRailView`, confirmed by
+    /// rendering the real view off-screen and bisecting its content
+    /// (`ToolRailRenderTests.swift`) — nothing about the failure showed up as
+    /// a crash or a NaN in `RailFlowLayout`'s own arithmetic, just nothing
+    /// painted. Flattening this into individual items, exactly like
+    /// `modeButtons`, both fixes that and lets the tray actually wrap into a
+    /// second column/row like the rest of the rail when docked top/bottom —
+    /// which a `VStack` could never do regardless of this bug.
+    @ViewBuilder
     private var penTray: some View {
-        VStack(spacing: 5) {
-            ForEach(PenLibrary.all) { preset in
-                trayItem(preset)
-            }
-            eraserItem
-            // Fill takes the colour the pen is holding, so picking a colour and
-            // filling with it is one idea, not two.
-            railButton("Fill", systemImage: "drop.fill", isActive: toolState.tool == .fill) {
-                toolState.select(.fill)
-                panel = nil
-            }
-            railButton("Select", systemImage: "lasso", isActive: toolState.tool == .lasso) {
-                toolState.select(.lasso)
-                panel = nil
-            }
-            railButton("Ruler", systemImage: "ruler", isActive: rulerVisible) {
-                rulerVisible.toggle()
-            }
-            railButton("Move things", systemImage: "hand.point.up.left", isActive: toolState.tool == .hand) {
-                toolState.select(.hand)
-                panel = nil
-            }
+        ForEach(PenLibrary.all) { preset in
+            trayItem(preset)
+        }
+        eraserItem
+        // Fill takes the colour the pen is holding, so picking a colour and
+        // filling with it is one idea, not two.
+        railButton("Fill", systemImage: "drop.fill", isActive: toolState.tool == .fill) {
+            toolState.select(.fill)
+            panel = nil
+        }
+        railButton("Select", systemImage: "lasso", isActive: toolState.tool == .lasso) {
+            toolState.select(.lasso)
+            panel = nil
+        }
+        railButton("Ruler", systemImage: "ruler", isActive: rulerVisible) {
+            rulerVisible.toggle()
+        }
+        railButton("Move things", systemImage: "hand.point.up.left", isActive: toolState.tool == .hand) {
+            toolState.select(.hand)
+            panel = nil
         }
     }
 
