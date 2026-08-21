@@ -72,6 +72,13 @@ final class LiveBeautifier {
     /// was hardwired.
     typealias LineRecognizer = @Sendable (UIImage, String) async -> [OCRService.Line]
 
+    /// Fixes obvious misspellings in a recognized line before it's typeset —
+    /// injected the same way `LineRecognizer` is, so tests can substitute a fake
+    /// and don't depend on the system dictionary's exact guesses. `UITextChecker`
+    /// is main-actor isolated, and every call site here already runs on the main
+    /// actor (this whole class is), so the corrector is synchronous, not `async`.
+    typealias TextCorrector = @MainActor (String, String) -> String
+
     /// True while a pass is recognizing, so the editor can show a hairline hint.
     private(set) var isWorking = false
     /// Set when a pass ran but read nothing back, so the editor can say so instead
@@ -83,13 +90,24 @@ final class LiveBeautifier {
     private var settleTask: Task<Void, Never>?
     private var hintTask: Task<Void, Never>?
     private let recognizeLine: LineRecognizer
+    private let correctText: TextCorrector
 
     /// Line geometry that reads as handwriting rather than a diagram or a doodle.
     static let minimumLineHeight: CGFloat = 7
     static let maximumLineHeight: CGFloat = 130
 
-    init(recognizer: @escaping LineRecognizer = LiveBeautifier.visionRecognizer) {
+    init(
+        recognizer: @escaping LineRecognizer = LiveBeautifier.visionRecognizer,
+        corrector: @escaping TextCorrector = LiveBeautifier.spellCorrector
+    ) {
         self.recognizeLine = recognizer
+        self.correctText = corrector
+    }
+
+    /// The shipping corrector: the on-device system spell checker. No network,
+    /// no model, no cost — see `SpellCorrector`.
+    static let spellCorrector: TextCorrector = { text, language in
+        SpellCorrector.correct(text, language: language)
     }
 
     /// The shipping recognizer: on-device Vision, one tight crop per line.
@@ -356,10 +374,11 @@ final class LiveBeautifier {
         // Every reading first, then the ink — the ink is shared out between all
         // of them at once rather than handed to whoever asked first.
         let readings: [(text: String, rect: CGRect)] = found.compactMap { line in
-            let text = line.text
+            let raw = line.text
                 .replacingOccurrences(of: "\n", with: " ")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else { return nil }
+            guard !raw.isEmpty else { return nil }
+            let text = correctText(raw, settings.language)
             return (text, Self.pageRect(forVisionBox: line.boundingBox, in: region))
         }
         .sorted { $0.rect.minY == $1.rect.minY ? $0.rect.minX < $1.rect.minX : $0.rect.minY < $1.rect.minY }

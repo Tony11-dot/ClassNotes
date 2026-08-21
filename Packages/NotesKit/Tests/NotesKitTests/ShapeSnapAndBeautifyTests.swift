@@ -1,11 +1,11 @@
 import CoreGraphics
 import Foundation
 import NotesModels
-import NotesServices
 import PencilKit
 import Testing
 import UIKit
 @testable import NotesEditor
+@testable import NotesServices
 
 /// Builds a stroke from explicit (location, time) control points, which is how
 /// PencilKit actually stores a path — a fitted spline, not the raw touch stream.
@@ -597,6 +597,19 @@ struct LiveBeautifierPassTests {
 
         #expect(await asked.value == "fr-FR")
     }
+
+    @Test("A recognized line is run through the corrector before it's typeset")
+    func correctsTheRecognizedText() async {
+        let recorder = Recorder(writingDrawing())
+        let beautifier = LiveBeautifier(
+            recognizer: { _, _ in [wholeCrop("bautiful")] },
+            corrector: { text, _ in text == "bautiful" ? "beautiful" : text }
+        )
+
+        await run(beautifier, recorder)
+
+        #expect(recorder.plans.first?.inserts.first?.text == "beautiful")
+    }
 }
 
 /// A stub reading that fills the whole crop it was given, which is what a
@@ -709,5 +722,45 @@ struct LiveBeautifierRecognitionTests {
         #expect(box.plan != nil, "the shipping path produced no plan at all")
         #expect(box.plan?.inserts.isEmpty == false)
         #expect(box.drawing.strokes.isEmpty, "the ink it read is wiped")
+    }
+}
+
+/// The system spell checker beautification runs its output through — on-device,
+/// no network, no per-use cost.
+@MainActor
+@Suite("Spell correction")
+struct SpellCorrectorTests {
+    @Test("A misspelled word is replaced with the checker's top guess")
+    func fixesAnObviousTypo() {
+        #expect(SpellCorrector.correct("bautiful", language: "en-US") == "beautiful")
+    }
+
+    @Test("Correction fixes a word inside a longer line, leaving the rest untouched")
+    func fixesInsideASentence() {
+        let corrected = SpellCorrector.correct("what a bautiful day", language: "en-US")
+        #expect(corrected == "what a beautiful day")
+    }
+
+    @Test("A correctly spelled sentence is returned unchanged")
+    func leavesCorrectTextAlone() {
+        #expect(SpellCorrector.correct("hello world", language: "en-US") == "hello world")
+    }
+
+    @Test("A capitalized sentence-starter keeps its capitalization when corrected")
+    func preservesLeadingCapitalization() {
+        let corrected = SpellCorrector.correct("Bautiful day today", language: "en-US")
+        #expect(corrected.hasPrefix("Beautiful"))
+    }
+
+    @Test("An empty string round-trips without touching the checker")
+    func emptyStringIsANoOp() {
+        #expect(SpellCorrector.correct("", language: "en-US") == "")
+    }
+
+    @Test("matchCase mirrors lowercase, capitalized and stranger casing")
+    func matchCase() {
+        #expect(SpellCorrector.matchCase(of: "bautiful", to: "beautiful") == "beautiful")
+        #expect(SpellCorrector.matchCase(of: "Bautiful", to: "beautiful") == "Beautiful")
+        #expect(SpellCorrector.matchCase(of: "bAUTIFUL", to: "beautiful") == "beautiful")
     }
 }
