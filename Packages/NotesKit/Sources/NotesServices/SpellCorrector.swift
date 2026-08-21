@@ -6,6 +6,46 @@ import UIKit
 /// own on-device spell checker: no network call, no model, no per-use cost, so
 /// it's safe to run on every beautified line.
 public enum SpellCorrector {
+    /// Picks whichever of Vision's readings for a line has the fewest dictionary
+    /// misspellings, then runs it through `correct`. Vision hands back its best
+    /// guess plus up to two runners-up per line; a misread letter often lands
+    /// right in the second or third candidate even though the top one reads as
+    /// confident nonsense, so scoring all of them catches what a single
+    /// after-the-fact spellcheck of the top guess alone cannot. Ties keep
+    /// Vision's own ranking (the earlier candidate), since `min(by:)` only
+    /// replaces on a strict improvement.
+    @MainActor
+    public static func correct(bestOf candidates: [String], language: String) -> String {
+        guard !candidates.isEmpty else { return "" }
+        let best = candidates.min {
+            misspellingCount(in: $0, language: language) < misspellingCount(in: $1, language: language)
+        } ?? candidates[0]
+        return correct(best, language: language)
+    }
+
+    /// How many words in `text` the system dictionary doesn't recognize —
+    /// a crude but cheap plausibility score for choosing between Vision's
+    /// candidate readings of the same line.
+    @MainActor
+    static func misspellingCount(in text: String, language: String) -> Int {
+        guard !text.isEmpty else { return 0 }
+        let checker = UITextChecker()
+        let full = text as NSString
+        var count = 0
+        var searchRange = NSRange(location: 0, length: full.length)
+        while searchRange.length > 0 {
+            let misspelled = checker.rangeOfMisspelledWord(
+                in: text, range: searchRange, startingAt: searchRange.location,
+                wrap: false, language: language
+            )
+            guard misspelled.location != NSNotFound, misspelled.length > 0 else { break }
+            count += 1
+            let next = misspelled.location + misspelled.length
+            searchRange = NSRange(location: next, length: max(0, full.length - next))
+        }
+        return count
+    }
+
     /// Replaces each misspelled word with the checker's own top guess, skipping
     /// short words, numbers and ALL-CAPS words (acronyms, not typos) so the pass
     /// stays conservative — a wrong "fix" is worse than leaving a rare word alone.

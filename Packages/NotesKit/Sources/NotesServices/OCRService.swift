@@ -18,11 +18,17 @@ public struct OCRService: Sendable {
         /// best guess, so a caller that replaces the user's ink with the result
         /// (beautification) needs this to tell a reading from a guess.
         public let confidence: Double
+        /// Vision's next-best readings for this same line, most confident first.
+        /// A letter it misreads is often right in its second or third guess —
+        /// this is what lets a caller pick the more plausible one instead of
+        /// trusting the top candidate blindly.
+        public let alternates: [String]
 
-        public init(text: String, boundingBox: CGRect, confidence: Double = 1) {
+        public init(text: String, boundingBox: CGRect, confidence: Double = 1, alternates: [String] = []) {
             self.text = text
             self.boundingBox = boundingBox
             self.confidence = confidence
+            self.alternates = alternates
         }
     }
 
@@ -39,11 +45,13 @@ public struct OCRService: Sendable {
                 }
                 let observations = request.results as? [VNRecognizedTextObservation] ?? []
                 let lines: [Line] = observations.compactMap { observation in
-                    guard let candidate = observation.topCandidates(1).first else { return nil }
+                    let candidates = observation.topCandidates(3)
+                    guard let top = candidates.first else { return nil }
                     return Line(
-                        text: candidate.string,
+                        text: top.string,
                         boundingBox: observation.boundingBox,
-                        confidence: Double(candidate.confidence)
+                        confidence: Double(top.confidence),
+                        alternates: candidates.dropFirst().map(\.string)
                     )
                 }
                 continuation.resume(returning: lines)

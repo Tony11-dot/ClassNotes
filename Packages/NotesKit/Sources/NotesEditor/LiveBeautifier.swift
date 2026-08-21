@@ -72,12 +72,15 @@ final class LiveBeautifier {
     /// was hardwired.
     typealias LineRecognizer = @Sendable (UIImage, String) async -> [OCRService.Line]
 
-    /// Fixes obvious misspellings in a recognized line before it's typeset —
-    /// injected the same way `LineRecognizer` is, so tests can substitute a fake
-    /// and don't depend on the system dictionary's exact guesses. `UITextChecker`
-    /// is main-actor isolated, and every call site here already runs on the main
-    /// actor (this whole class is), so the corrector is synchronous, not `async`.
-    typealias TextCorrector = @MainActor (String, String) -> String
+    /// Chooses among Vision's candidate readings for a line and fixes obvious
+    /// misspellings before it's typeset — injected the same way `LineRecognizer`
+    /// is, so tests can substitute a fake and don't depend on the system
+    /// dictionary's exact guesses. Takes every candidate Vision offered for the
+    /// line (most confident first), not just the top one: a misread letter often
+    /// lands right in the second or third guess. `UITextChecker` is main-actor
+    /// isolated, and every call site here already runs on the main actor (this
+    /// whole class is), so the corrector is synchronous, not `async`.
+    typealias TextCorrector = @MainActor ([String], String) -> String
 
     /// True while a pass is recognizing, so the editor can show a hairline hint.
     private(set) var isWorking = false
@@ -104,10 +107,11 @@ final class LiveBeautifier {
         self.correctText = corrector
     }
 
-    /// The shipping corrector: the on-device system spell checker. No network,
-    /// no model, no cost — see `SpellCorrector`.
-    static let spellCorrector: TextCorrector = { text, language in
-        SpellCorrector.correct(text, language: language)
+    /// The shipping corrector: the on-device system spell checker, scoring
+    /// Vision's candidate readings against the dictionary and fixing what's left
+    /// in the winner. No network, no model, no cost — see `SpellCorrector`.
+    static let spellCorrector: TextCorrector = { candidates, language in
+        SpellCorrector.correct(bestOf: candidates, language: language)
     }
 
     /// The shipping recognizer: on-device Vision, one tight crop per line.
@@ -374,11 +378,12 @@ final class LiveBeautifier {
         // Every reading first, then the ink — the ink is shared out between all
         // of them at once rather than handed to whoever asked first.
         let readings: [(text: String, rect: CGRect)] = found.compactMap { line in
-            let raw = line.text
-                .replacingOccurrences(of: "\n", with: " ")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !raw.isEmpty else { return nil }
-            let text = correctText(raw, settings.language)
+            let candidates = ([line.text] + line.alternates).map {
+                $0.replacingOccurrences(of: "\n", with: " ")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }.filter { !$0.isEmpty }
+            guard !candidates.isEmpty else { return nil }
+            let text = correctText(candidates, settings.language)
             return (text, Self.pageRect(forVisionBox: line.boundingBox, in: region))
         }
         .sorted { $0.rect.minY == $1.rect.minY ? $0.rect.minX < $1.rect.minX : $0.rect.minY < $1.rect.minY }

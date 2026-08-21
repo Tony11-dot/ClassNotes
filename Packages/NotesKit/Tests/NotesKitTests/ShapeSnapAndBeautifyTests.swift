@@ -603,7 +603,27 @@ struct LiveBeautifierPassTests {
         let recorder = Recorder(writingDrawing())
         let beautifier = LiveBeautifier(
             recognizer: { _, _ in [wholeCrop("bautiful")] },
-            corrector: { text, _ in text == "bautiful" ? "beautiful" : text }
+            corrector: { candidates, _ in candidates.first == "bautiful" ? "beautiful" : candidates.first ?? "" }
+        )
+
+        await run(beautifier, recorder)
+
+        #expect(recorder.plans.first?.inserts.first?.text == "beautiful")
+    }
+
+    @Test("Vision's alternate readings for a line reach the corrector, top guess first")
+    func passesAlternatesToTheCorrector() async {
+        let recorder = Recorder(writingDrawing())
+        let beautifier = LiveBeautifier(
+            recognizer: { _, _ in
+                [OCRService.Line(
+                    text: "bautiful", boundingBox: CGRect(x: 0, y: 0, width: 1, height: 1),
+                    confidence: 0.9, alternates: ["beautiful", "bountiful"]
+                )]
+            },
+            // A stand-in for the real dictionary-scoring corrector: picks
+            // whichever candidate is already a real word.
+            corrector: { candidates, _ in candidates.first { $0 == "beautiful" } ?? candidates[0] }
         )
 
         await run(beautifier, recorder)
@@ -762,5 +782,30 @@ struct SpellCorrectorTests {
         #expect(SpellCorrector.matchCase(of: "bautiful", to: "beautiful") == "beautiful")
         #expect(SpellCorrector.matchCase(of: "Bautiful", to: "beautiful") == "Beautiful")
         #expect(SpellCorrector.matchCase(of: "bAUTIFUL", to: "beautiful") == "beautiful")
+    }
+
+    @Test("A clean word scores zero misspellings, a mangled one scores at least one")
+    func misspellingCountScoresPlausibility() {
+        #expect(SpellCorrector.misspellingCount(in: "beautiful day", language: "en-US") == 0)
+        #expect(SpellCorrector.misspellingCount(in: "bautfl day", language: "en-US") >= 1)
+    }
+
+    @Test("Given Vision's top guess and its runners-up, the more plausible one wins")
+    func bestOfPicksTheDictionaryWord() {
+        // Vision's top candidate reads as confident nonsense; a runner-up is the
+        // real word — this is what a misread letter looks like in practice.
+        let corrected = SpellCorrector.correct(bestOf: ["bautfl", "beautiful", "bountiful"], language: "en-US")
+        #expect(corrected == "beautiful")
+    }
+
+    @Test("A tie between equally plausible candidates keeps Vision's own top guess")
+    func bestOfKeepsRankingOnTies() {
+        let corrected = SpellCorrector.correct(bestOf: ["hello", "hellp"], language: "en-US")
+        #expect(corrected == "hello")
+    }
+
+    @Test("An empty candidate list returns an empty string rather than trapping")
+    func bestOfHandlesNoCandidates() {
+        #expect(SpellCorrector.correct(bestOf: [], language: "en-US") == "")
     }
 }
