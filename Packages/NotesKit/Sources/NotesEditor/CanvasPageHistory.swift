@@ -195,7 +195,11 @@ extension CanvasPageView.Coordinator {
                     inkAfter: finalDrawing, elementsAfter: elements.after,
                     on: canvas
                 )
-                self.replace(finalDrawing, on: canvas)
+                // Beautification deliberately trades consumed handwriting for
+                // typeset text — `finalDrawing` already carries forward
+                // anything drawn during the wait (see above), so this is
+                // allowed to reduce what's left besides that.
+                self.replace(finalDrawing, on: canvas, allowsFewerStrokes: true)
                 self.scheduleSave()
                 return true
             }
