@@ -79,6 +79,11 @@ extension CanvasPageView.Coordinator {
     func restore(
         _ drawing: PKDrawing, elements: [PageElement]?, on canvas: PageCanvasView
     ) {
+        // Undo/redo puts the page back to a state the user explicitly asked
+        // for — the vanish guard, which exists only for UNEXPLAINED loss,
+        // must not fight that by re-inserting a shape the target state
+        // doesn't have.
+        guardedShapeStroke = nil
         isRewriting = true
         canvas.drawing = drawing
         Task { @MainActor [weak self] in self?.isRewriting = false }

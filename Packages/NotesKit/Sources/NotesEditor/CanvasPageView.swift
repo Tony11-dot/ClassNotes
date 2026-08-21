@@ -561,6 +561,41 @@ struct CanvasPageView: UIViewRepresentable {
         /// `drawing` mid-stroke tears it up.
         let snapPreviewLayer = CAShapeLayer()
         weak var dwellWatcher: StrokeDwellRecognizer?
+        /// The exact stroke a settled shape most recently committed as — a durable
+        /// safety net, independent of whatever mechanism is behind it, for a
+        /// shape that visually settles and is then found missing. Real-device
+        /// testing traced this specifically to `.monoline` ink (Flow Pen,
+        /// Fineliner): other ink families haven't reproduced it. That points at
+        /// PencilKit's own handling of a hand-built `.monoline` stroke rather
+        /// than anything in this file's own logic — every commit path here
+        /// treats every ink identically (see `ShapeSnapperFitting.rebuild`) — so
+        /// rather than chase a closed-source renderer's internals further, this
+        /// verifies the actual guarantee that matters directly: the committed
+        /// shape is still there right before anything is saved or shown, and
+        /// puts it back if it isn't. Matched by content (bounds + point count),
+        /// not identity, since a later edit can shift which index it lives at.
+        /// One-shot: cleared after its first save cycle succeeds, and by any
+        /// path that legitimately removes ink, so this can never resurrect a
+        /// shape the user actually erased. Internal, not private — `restore(_:elements:on:)`
+        /// in `CanvasPageHistory.swift` clears it on undo/redo.
+        var guardedShapeStroke: PKStroke?
+
+        /// Puts `guardedShapeStroke` back into `drawing` if it's gone missing.
+        /// Logs when it actually has to act, so how often this fires stays
+        /// visible instead of silently masking the underlying bug forever.
+        private func healGuardedShape(_ drawing: PKDrawing) -> PKDrawing {
+            guard let guarded = guardedShapeStroke else { return drawing }
+            let stillPresent = drawing.strokes.contains {
+                $0.renderBounds == guarded.renderBounds && $0.path.count == guarded.path.count
+            }
+            guard !stillPresent else { return drawing }
+            snapLog.error(
+                "SELF-HEALED: a committed shape (ink \(String(describing: guarded.ink.inkType)), bounds \(String(describing: guarded.renderBounds)), \(guarded.path.count) points) was missing right before a save/show — re-inserted"
+            )
+            var healed = drawing
+            healed.strokes.append(guarded)
+            return healed
+        }
 
         init(
             notebookID: UUID,
@@ -660,7 +695,12 @@ struct CanvasPageView: UIViewRepresentable {
             // Strokes went away (eraser, undo) — our "already processed" mark has
             // to come back with them or the next pass reads the wrong indices.
             let count = canvasView.drawing.strokes.count
-            if count < processedStrokeCount { processedStrokeCount = count }
+            if count < processedStrokeCount {
+                processedStrokeCount = count
+                // A real content removal — most likely the eraser tool. The
+                // vanish guard exists for UNEXPLAINED loss, not this.
+                guardedShapeStroke = nil
+            }
 
             scheduleSave()
             scheduleBeautification()
@@ -761,6 +801,9 @@ struct CanvasPageView: UIViewRepresentable {
 
             if toolState.scribbleToErase, toolState.tool == .pen,
                let cleaned = ScribbleEraser.applying(to: drawing) {
+                // A deliberate erase — the guard must not resurrect what the
+                // user just scribbled out.
+                guardedShapeStroke = nil
                 processedStrokeCount = cleaned.strokes.count
                 replace(cleaned, on: canvas)
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -998,6 +1041,9 @@ struct CanvasPageView: UIViewRepresentable {
                 let committedPointCount = committedIndex.flatMap { idx in
                     idx < canvas.drawing.strokes.count ? canvas.drawing.strokes[idx].path.count : nil
                 }
+                guardedShapeStroke = committedIndex.flatMap { idx in
+                    idx < canvas.drawing.strokes.count ? canvas.drawing.strokes[idx] : nil
+                }
                 Task { @MainActor [weak canvas] in
                     try? await Task.sleep(for: .milliseconds(400))
                     guard let canvas else { return }
@@ -1052,8 +1098,17 @@ struct CanvasPageView: UIViewRepresentable {
             saveTask?.cancel()
             saveTask = Task { [weak self] in
                 try? await Task.sleep(for: .milliseconds(600))
-                guard !Task.isCancelled, let self, self.loaded,
-                      let data = self.canvas?.drawing.dataRepresentation() else { return }
+                guard !Task.isCancelled, let self, self.loaded, let canvas = self.canvas else { return }
+                let healed = self.healGuardedShape(canvas.drawing)
+                // The guard is one-shot: once this save cycle has looked (and, if
+                // needed, healed), any FUTURE disappearance of the same content —
+                // an actual erase — is left alone rather than fought forever.
+                self.guardedShapeStroke = nil
+                if healed.strokes.count != canvas.drawing.strokes.count,
+                   !self.isUsingTool, !self.isPencilDown {
+                    self.replace(healed, on: canvas)
+                }
+                let data = healed.dataRepresentation()
                 try? await self.store.savePageData(
                     data, notebook: self.notebookID, page: self.pageID
                 )
@@ -1062,7 +1117,9 @@ struct CanvasPageView: UIViewRepresentable {
 
         func flushPendingSave() {
             saveTask?.cancel()
-            guard loaded, let drawing = canvas?.drawing else { return }
+            guard loaded, let canvas = self.canvas else { return }
+            let drawing = healGuardedShape(canvas.drawing)
+            guardedShapeStroke = nil
             let data = drawing.dataRepresentation()
             Task { [store, notebookID, pageID] in
                 try? await store.savePageData(data, notebook: notebookID, page: pageID)
