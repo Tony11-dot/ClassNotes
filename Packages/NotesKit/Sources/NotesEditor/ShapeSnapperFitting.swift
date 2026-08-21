@@ -20,12 +20,33 @@ extension ShapeSnapper {
         }
     }
 
+    /// The smallest a stroke's own bounding box may be and still be eligible to
+    /// snap at all — see `classify`.
+    ///
+    /// This used to be 24: comfortably smaller than a single ordinary letter.
+    /// A straight-sided letter's downstroke (l, t, i, 1, L…) at normal
+    /// handwriting size — or the crossbar of a "t" — routinely spans more than
+    /// that on its own, so a hand-writing pause that rested long enough (see
+    /// `StrokeDwellRecognizer.minimumHold`) was handed a stroke that ALREADY
+    /// satisfied this gate before timing was ever the deciding factor. Raising
+    /// the dwell time alone (Build 42) cut the false positives that were purely
+    /// about timing, but couldn't fix the ones where the ink itself was small
+    /// enough to read as a shape no matter how long the pause was measured —
+    /// which is why writing could still snap into a line or an angle, why the
+    /// vanishing kept being reported, and why beautification (fed mangled
+    /// geometry instead of the letters that were actually written) got LESS
+    /// accurate, not more. A deliberate hold-to-snap is drawn as its own
+    /// gesture, separate from a line of writing, and is comfortably bigger than
+    /// one letter in practice — this is set above ordinary letter size with
+    /// real margin, not merely above it.
+    static let minimumSnapSize: CGFloat = 46
+
     /// What the ink looks like it was meant to be, and the box it occupies.
     static func classify(_ points: [CGPoint]) -> (shape: Shape, box: CGRect)? {
         guard let start = points.first, let end = points.last else { return nil }
         let box = boundingBox(points)
         let diagonal = hypot(box.width, box.height)
-        guard diagonal > 24 else { return nil }
+        guard diagonal > minimumSnapSize else { return nil }
 
         let closed = distance(start, end) < diagonal * 0.33
 

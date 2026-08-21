@@ -66,19 +66,21 @@ extension CanvasPageView.Coordinator {
             self.hideSnapPreview()
             self.liveSnap = nil
             self.isOnDetent = false
-            // `isRulingLive`/`pendingSnapPath`/`strokeCountAtSnap`/`pendingSnapInk`/
-            // `pendingSnapWidth` are read later, by `commitPending` — on a 90ms
-            // debounce AFTER this returns (`finishHeldStroke` → `scheduleInkPass`).
-            // Clearing them here unconditionally raced that later read: `isRulingLive`
-            // came back false even for a genuinely ruled line (so it always logged
-            // as "Shape" on the undo stack, never "Ruled Line"), and had a real hold
-            // NOT reset these it would have thrown the accepted shape away outright.
-            // Only the "nothing was actually accepted" path clears them — same as
-            // it already did for `pendingSnapPath`/`strokeCountAtSnap`.
+            // `isRulingLive`/`pendingSnapPath`/`pendingSnapInk`/`pendingSnapWidth`
+            // are read later, by `commitPending` — on a 90ms debounce AFTER this
+            // returns (`finishHeldStroke` → `scheduleInkPass`). Clearing them here
+            // unconditionally raced that later read: `isRulingLive` came back
+            // false even for a genuinely ruled line (so it always logged as
+            // "Shape" on the undo stack, never "Ruled Line"), and had a real hold
+            // NOT reset these it would have thrown the accepted shape away
+            // outright. Only the "nothing was actually accepted" path clears
+            // them — same as it already did for `pendingSnapPath`.
+            // (`strokeCountAtStrokeStart` isn't cleared here — it's tied to the
+            // touch's lifecycle, refreshed at `canvasViewDidBeginUsingTool` on
+            // every new stroke, not to whether this particular hold settled.)
             if !held {
                 self.isRulingLive = false
                 self.pendingSnapPath = nil
-                self.strokeCountAtSnap = nil
                 self.pendingSnapInk = nil
                 self.pendingSnapWidth = nil
             }

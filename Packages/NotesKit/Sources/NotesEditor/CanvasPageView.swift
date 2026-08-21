@@ -476,9 +476,30 @@ struct CanvasPageView: UIViewRepresentable {
         /// The shape the live dwell watcher settled on, waiting for the pencil to
         /// lift so it can be committed as ONE canvas rewrite.
         var pendingSnapPath: [CGPoint]?
-        /// How many strokes were on the page when the shape settled, so the commit
-        /// knows whether PencilKit ended up keeping the ink it was drawing.
-        var strokeCountAtSnap: Int?
+        /// How many strokes were on the page the moment the CURRENT touch began —
+        /// i.e. captured at `canvasViewDidBeginUsingTool`, before this stroke has
+        /// contributed a single point — so the commit knows exactly how many
+        /// entries in `.strokes` belong to it, regardless of what PencilKit did
+        /// with them by the time the shape settles and the pencil lifts.
+        ///
+        /// This used to be captured at the moment the shape SETTLED
+        /// (`suppressLiveInk`, mid-stroke) instead, as `strokeCountAtSnap`. That
+        /// reads as "the count right before this stroke" but isn't: by the time a
+        /// dwell is accepted, PencilKit has already been live-updating `.drawing`
+        /// for however long the hand had been drawing, so the in-progress stroke
+        /// was already counted — `strokeCountAtSnap` and the FINAL count (once
+        /// PencilKit kept that same stroke, unmodified, after the gesture was
+        /// muted) came out equal far more often than not. `commitSettledShape`'s
+        /// `count > baseline` test then read "PencilKit kept it" as "PencilKit
+        /// discarded it," fell into the append branch, and left the original raw
+        /// stroke sitting untouched underneath the newly appended shape — two
+        /// strokes where the user watched one settle, which is the vanish this
+        /// was reported as just as often as it read as a literal disappearance
+        /// (an ellipse over illegible ink reads as "my writing is gone").
+        /// Capturing the baseline before the stroke exists at all removes the
+        /// guess: any entry at or past this index belongs to the current touch,
+        /// full stop.
+        var strokeCountAtStrokeStart: Int?
         /// The tool's ink/width AT THE MOMENT the shape settled — see
         /// `commitSettledShape`. `pendingSnapPath` isn't committed until the
         /// pencil actually lifts and a 90ms debounce elapses (`scheduleInkPass`),
@@ -564,6 +585,10 @@ struct CanvasPageView: UIViewRepresentable {
             // Anything queued would land under the moving pencil — hold it.
             inkPassTask?.cancel()
             commitTask?.cancel()
+            // The floor for this stroke — see the property's own doc for why
+            // this has to be captured HERE, before the stroke exists, rather
+            // than later once a shape has settled under it.
+            strokeCountAtStrokeStart = canvasView.drawing.strokes.count
         }
 
         func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
@@ -768,7 +793,7 @@ struct CanvasPageView: UIViewRepresentable {
             let ruled = isRulingLive
             commitSettledShape(path, into: &drawing, on: canvas)
             pendingSnapPath = nil
-            strokeCountAtSnap = nil
+            strokeCountAtStrokeStart = nil
             pendingSnapInk = nil
             pendingSnapWidth = nil
             isRulingLive = false
@@ -789,10 +814,20 @@ struct CanvasPageView: UIViewRepresentable {
         private func commitSettledShape(
             _ path: [CGPoint], into drawing: inout PKDrawing, on canvas: PKCanvasView
         ) {
-            let baseline = strokeCountAtSnap ?? max(drawing.strokes.count - 1, 0)
-            if drawing.strokes.count > baseline, let template = drawing.strokes.last {
-                drawing.strokes[drawing.strokes.count - 1] =
-                    ShapeSnapper.stroke(from: path, like: template)
+            let baseline = min(
+                strokeCountAtStrokeStart ?? max(drawing.strokes.count - 1, 0),
+                drawing.strokes.count
+            )
+            if drawing.strokes.count > baseline {
+                let template = drawing.strokes[baseline]
+                // PencilKit is not guaranteed to have left exactly one entry for
+                // this touch — trim anything past the one being kept as the
+                // template so a stray extra fragment can't linger underneath the
+                // replacement.
+                if drawing.strokes.count > baseline + 1 {
+                    drawing.strokes.removeSubrange((baseline + 1)...)
+                }
+                drawing.strokes[baseline] = ShapeSnapper.stroke(from: path, like: template)
             } else {
                 let tool = canvas.tool as? PKInkingTool
                 drawing.strokes.append(ShapeSnapper.stroke(
@@ -848,7 +883,6 @@ struct CanvasPageView: UIViewRepresentable {
         func suppressLiveInk() {
             guard let canvas, !isSuppressingLiveInk else { return }
             isSuppressingLiveInk = true
-            strokeCountAtSnap = canvas.drawing.strokes.count
             // The tool actually in hand right now — see `pendingSnapInk` — so a
             // tool switch in the 90ms between the lift and the debounced commit
             // can't change what the shape gets inked with.
