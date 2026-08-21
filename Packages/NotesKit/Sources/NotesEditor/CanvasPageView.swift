@@ -479,6 +479,19 @@ struct CanvasPageView: UIViewRepresentable {
         /// How many strokes were on the page when the shape settled, so the commit
         /// knows whether PencilKit ended up keeping the ink it was drawing.
         var strokeCountAtSnap: Int?
+        /// The tool's ink/width AT THE MOMENT the shape settled — see
+        /// `commitSettledShape`. `pendingSnapPath` isn't committed until the
+        /// pencil actually lifts and a 90ms debounce elapses (`scheduleInkPass`),
+        /// during which `toolState.tool`/`canvas.tool` can legitimately change
+        /// (a Pencil double-tap mapped to "toggle eraser" is one ordinary way,
+        /// and easy to trigger by reflex right as the hand comes up off a shape
+        /// it just finished sizing). Reading `canvas.tool` live at commit time
+        /// instead of what was actually in hand when the shape was accepted is
+        /// what made an accepted shape vanish outright: the append fallback in
+        /// `commitSettledShape` fell back to whatever tool was CURRENT, not the
+        /// one that drew it.
+        var pendingSnapInk: PKInk?
+        var pendingSnapWidth: CGFloat?
         /// True while the canvas is deliberately not drawing, because a settled
         /// shape has taken over the pencil.
         private(set) var isSuppressingLiveInk = false
@@ -665,7 +678,21 @@ struct CanvasPageView: UIViewRepresentable {
             // The shape (or the ruled line) the user already WATCHED appear under
             // the pencil wins: it's the one they accepted, and committing it
             // verbatim means the preview and the ink can never disagree.
-            if toolState.tool == .pen, pendingSnapPath != nil {
+            //
+            // NOT re-gated on `toolState.tool == .pen` here — that was checked
+            // already, back when the shape was accepted (`previewSnap`), and
+            // this runs on a 90ms debounce AFTER the lift (`finishHeldStroke` →
+            // `scheduleInkPass`). Re-checking the LIVE tool at commit time meant
+            // any tool switch landing in that 90ms window — a Pencil double-tap
+            // mapped to "toggle eraser," reflexively thrown right as the hand
+            // comes up off a shape it just finished sizing, is the easy way to
+            // hit it — silently skipped this whole branch. `pendingSnapPath`
+            // was never cleared by that skip either, so the shape wasn't merely
+            // dropped this once: it went stale and could resurface, spliced
+            // into whatever was drawn next. A shape that was already accepted
+            // and shown under the pencil has to land regardless of what the
+            // hand does in the moment right after letting go.
+            if pendingSnapPath != nil {
                 commitPending(into: &drawing, on: canvas)
                 return
             }
@@ -742,6 +769,8 @@ struct CanvasPageView: UIViewRepresentable {
             commitSettledShape(path, into: &drawing, on: canvas)
             pendingSnapPath = nil
             strokeCountAtSnap = nil
+            pendingSnapInk = nil
+            pendingSnapWidth = nil
             isRulingLive = false
             processedStrokeCount = drawing.strokes.count
             replace(drawing, on: canvas)
@@ -752,7 +781,11 @@ struct CanvasPageView: UIViewRepresentable {
         /// Puts the settled shape on the page. Normally it replaces the stroke
         /// PencilKit was drawing — but the live preview mutes the canvas while the
         /// shape is held, so PencilKit may have discarded that stroke entirely, and
-        /// then the shape has to be inked from the tool in hand instead.
+        /// then the shape has to be inked from the tool that was actually IN HAND
+        /// when it settled (`pendingSnapInk`/`pendingSnapWidth`, captured by
+        /// `suppressLiveInk`) — not `canvas.tool` read live here, which by commit
+        /// time (a 90ms debounce after the lift) may already belong to whatever
+        /// the hand switched to next.
         private func commitSettledShape(
             _ path: [CGPoint], into drawing: inout PKDrawing, on canvas: PKCanvasView
         ) {
@@ -764,8 +797,10 @@ struct CanvasPageView: UIViewRepresentable {
                 let tool = canvas.tool as? PKInkingTool
                 drawing.strokes.append(ShapeSnapper.stroke(
                     from: path,
-                    ink: tool.map { PKInk($0.inkType, color: $0.color) } ?? PKInk(.pen, color: .black),
-                    width: tool?.width ?? CGFloat(toolState.penSettings.effectiveWidth)
+                    ink: pendingSnapInk
+                        ?? tool.map { PKInk($0.inkType, color: $0.color) }
+                        ?? PKInk(.pen, color: .black),
+                    width: pendingSnapWidth ?? tool?.width ?? CGFloat(toolState.penSettings.effectiveWidth)
                 ))
             }
         }
@@ -814,6 +849,13 @@ struct CanvasPageView: UIViewRepresentable {
             guard let canvas, !isSuppressingLiveInk else { return }
             isSuppressingLiveInk = true
             strokeCountAtSnap = canvas.drawing.strokes.count
+            // The tool actually in hand right now — see `pendingSnapInk` — so a
+            // tool switch in the 90ms between the lift and the debounced commit
+            // can't change what the shape gets inked with.
+            if let tool = canvas.tool as? PKInkingTool {
+                pendingSnapInk = PKInk(tool.inkType, color: tool.color)
+                pendingSnapWidth = tool.width
+            }
             canvas.drawingGestureRecognizer.isEnabled = false
         }
 

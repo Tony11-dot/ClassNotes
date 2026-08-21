@@ -4,20 +4,20 @@ import NotesModels
 import NotesServices
 import SwiftUI
 
-/// The editor's floating tool rail: draggable, docks to whichever of the four
-/// edges it's dropped nearest.
+/// The editor's floating tool rail: FIXED to the leading edge, never dragged.
 ///
-/// Moving it is two-stage, like picking a whole tray up versus nudging it: the
-/// instant a drag begins, the rail collapses into a small circular chip (the
-/// same idea as `NovaBubble`) that follows the finger, so a hand mid-drag is
-/// never trying to steer something the size of the whole rail. Letting go
-/// leaves it AS that chip — tapping it is what expands it back out, laid out
-/// for wherever it landed: a column when docked to the left/right edge, a row
-/// when docked to the top/bottom (`RailFlowLayout`), wrapping into more
-/// columns/rows on its own rather than running off the edge of the screen.
+/// It used to be draggable and could be dropped on any of the four edges —
+/// which meant it could also be dropped somewhere half off-screen, behind the
+/// page manager, or simply forgotten about in a spot that didn't get found
+/// again. There is now exactly one place it lives: pinned to the left edge,
+/// vertically centred, where every tool has room to show. The only way to
+/// change how much of it is on screen is the explicit hide control
+/// (`hideButton`, the first thing in `expandedRail`) — tapping it collapses
+/// the whole tray down to a small circular chip (the same idea as
+/// `NovaBubble`); tapping the chip pops the FULL rail back out, always at
+/// that same fixed spot, never wherever a previous drag happened to leave it.
 ///
-/// Expanded, two halves, top to bottom (or leading to trailing, docked
-/// horizontally):
+/// Expanded, top to bottom:
 /// - **Modes and actions** — write, tape, text box, photo, file, voice note, the
 ///   page manager, and the real-time beautification switch.
 /// - **The pen tray** — every instrument in `PenLibrary` plus the eraser and the
@@ -45,9 +45,6 @@ struct ToolRailView: View {
     /// pen's panel — a Pencil squeeze mapped to "show colours".
     var openPenPanel: UUID?
 
-    /// The chip's position while collapsed, and the expanded rail's own
-    /// along-the-edge anchor — see `expandedCenter`.
-    @State private var center: CGPoint?
     @State private var panel: Panel?
     /// Starts collapsed the first time the rail is ever dropped near an edge,
     /// same as the chip a fresh drag turns it into — an already-expanded rail
@@ -86,49 +83,26 @@ struct ToolRailView: View {
 
     var body: some View {
         GeometryReader { geo in
-            let edge = nearestEdge(of: center ?? defaultCenter(in: geo.size), in: geo.size)
             // ONE view, always mounted, for both the chip and the expanded
             // rail — cross-faded by opacity rather than swapped with
-            // `if/else`. Swapping between two different view types tears down
-            // and recreates whatever's on screen, and doing that from INSIDE
-            // the drag gesture's own `onChanged` (the instant a drag begins)
-            // broke the drag itself: SwiftUI has to reconcile a live gesture
-            // against a brand-new view, which is exactly the stutter reported
-            // as "it closes then moves" instead of tracking the finger the
-            // whole time. One stable container means the SAME gesture keeps
-            // running, uninterrupted, from touch-down to lift.
+            // `if/else`, so collapsing/expanding is a plain spring rather than
+            // a teardown-and-recreate of whatever's on screen.
             ZStack {
-                expandedRail(edge: edge, in: geo.size)
+                expandedRail(in: geo.size)
                     .opacity(isCollapsed ? 0 : 1)
                     .allowsHitTesting(!isCollapsed)
                 chip
                     .opacity(isCollapsed ? 1 : 0)
                     .allowsHitTesting(isCollapsed)
             }
-            // Constrains hit-testing (and the drag's own touch area) to
-            // roughly the size of whatever's actually visible, rather than
-            // the union of both — the expanded rail is much bigger than the
-            // chip, and without this a collapsed chip would still accept
-            // touches from the dead space the (invisible) full-size rail
-            // still occupies.
+            // Constrains hit-testing to roughly the size of whatever's
+            // actually visible, rather than the union of both — the expanded
+            // rail is much bigger than the chip, and without this a collapsed
+            // chip would still accept touches from the dead space the
+            // (invisible) full-size rail still occupies.
             .frame(width: isCollapsed ? Self.chipSize : nil, height: isCollapsed ? Self.chipSize : nil)
-            .position(isCollapsed ? (center ?? defaultCenter(in: geo.size)) : expandedCenter(edge: edge, in: geo.size))
-            // `.gesture(_:)` gives its gesture priority OVER every descendant's
-            // own gesture — including a plain `Button`'s tap. That was invisible
-            // while the chip (a single button) and the expanded rail were two
-            // separate branches only one of which was ever mounted, but this
-            // round merged them into one permanently-mounted container so the
-            // SAME ancestor gesture now sits above the entire button tray any
-            // time it's expanded, not just the chip. `.simultaneousGesture`
-            // lets a stationary tap still reach the button underneath (this
-            // drag needs `minimumDistance` of real movement before it claims
-            // anything), while a genuine drag — starting on the glass or on a
-            // button — still moves the rail; a button that sees the touch
-            // travel cancels its own press-and-highlight the same way it would
-            // under a finger dragged off it normally.
-            .simultaneousGesture(dragGesture(in: geo.size))
+            .position(isCollapsed ? chipCenter(in: geo.size) : expandedCenter(in: geo.size))
         }
-        .coordinateSpace(name: Self.railSpace)
         .onChange(of: openPenPanel) { _, request in
             guard request != nil else { return }
             toolState.select(.pen)
@@ -136,10 +110,8 @@ struct ToolRailView: View {
         }
     }
 
-    private static let railSpace = "toolRailSpace"
-
-    /// The collapsed chip: a tap expands the rail back out; a drag (see
-    /// `dragGesture`) moves it and re-docks it on release.
+    /// The collapsed chip: a tap expands the rail back out, always at its one
+    /// fixed spot (`expandedCenter`) — never wherever it happened to be last.
     private var chip: some View {
         Button {
             withAnimation(.spring(duration: 0.3)) { isCollapsed = false }
@@ -159,22 +131,19 @@ struct ToolRailView: View {
         .accessibilityLabel("Show tools")
     }
 
-    // The rail is ONE piece of glass, so it needs no `GlassEffectContainer` (that
-    // exists to merge and morph several) and it is not `interactive` (that is for
-    // a control that reacts to its own touches — here it re-rendered the whole
-    // rail's material on every tap on a pen).
+    /// The rail is ONE piece of glass, so it needs no `GlassEffectContainer`
+    /// (that exists to merge and morph several) and it is not `interactive`
+    /// (that is for a control that reacts to its own touches — here it
+    /// re-rendered the whole rail's material on every tap on a pen).
     ///
-    /// `RailFlowLayout` wraps the SAME flat run of buttons into columns when
-    /// docked left/right and rows when docked top/bottom — a plain `VStack`
-    /// only ever suited the column case, and a fixed-length `HStack` of every
-    /// button in the rail is wider than any iPad screen. The budget passed to
-    /// it (`maxHeight` for a column, `maxWidth` for a row) is what tells it
-    /// when to actually wrap — the editor's own available space minus enough
-    /// margin that a full-height/width rail never touches the opposite edge.
-    private func expandedRail(edge: Edge, in size: CGSize) -> some View {
-        let axis: Axis = (edge == .top || edge == .bottom) ? .horizontal : .vertical
-        let budget = (axis == .vertical ? size.height : size.width) - Self.edgeInset * 2
-        return RailFlowLayout(axis: axis, spacing: 6) {
+    /// Always a column now that the rail is fixed to the leading edge —
+    /// `RailFlowLayout` still owns the wrap, in case the tray ever grows
+    /// taller than the screen has room for, but it only ever wraps into a
+    /// second COLUMN, never a row.
+    private func expandedRail(in size: CGSize) -> some View {
+        let budget = size.height - Self.edgeInset * 2
+        return RailFlowLayout(axis: .vertical, spacing: 6) {
+            hideButton
             modeButtons
             penTray
             DSGlassIconButton("Ask NOVA", systemImage: "sparkles") { onNova() }
@@ -193,14 +162,21 @@ struct ToolRailView: View {
             .disabled(!tracker.canRedo)
             .opacity(tracker.canRedo ? 1 : 0.35)
         }
-        .frame(
-            maxWidth: axis == .vertical ? nil : budget,
-            maxHeight: axis == .vertical ? budget : nil
-        )
+        .frame(maxHeight: budget)
         .padding(.vertical, 10)
         .padding(.horizontal, 6)
         .dsGlass(in: RoundedRectangle(cornerRadius: 30, style: .continuous))
         .shadow(color: .black.opacity(0.22), radius: 16, y: 8)
+    }
+
+    /// Collapses the rail back down to the chip. The explicit control the
+    /// rail's own doc comment promises — dragging used to be the only way to
+    /// tuck the rail away, and removing dragging without replacing it would
+    /// have left no way to get the tools out from over the page at all.
+    private var hideButton: some View {
+        railButton("Hide tools", systemImage: "chevron.left") {
+            withAnimation(.spring(duration: 0.3)) { isCollapsed = true }
+        }
     }
 
     // MARK: - Modes
@@ -483,102 +459,17 @@ struct ToolRailView: View {
 
     // MARK: - Positioning
 
-    private func defaultCenter(in size: CGSize) -> CGPoint {
+    /// The collapsed chip's one fixed spot: the leading edge, vertically
+    /// centred.
+    private func chipCenter(in size: CGSize) -> CGPoint {
         CGPoint(x: Self.edgeInset + Self.chipSize / 2, y: size.height / 2)
     }
 
-    /// Which of the four edges `point` sits nearest — this is both which edge
-    /// the chip docks to AND, expanded, which axis `RailFlowLayout` lays the
-    /// rail out on (a column for leading/trailing, a row for top/bottom).
-    private func nearestEdge(of point: CGPoint, in size: CGSize) -> Edge {
-        let distances: [(Edge, CGFloat)] = [
-            (.leading, point.x), (.trailing, size.width - point.x),
-            (.top, point.y), (.bottom, size.height - point.y)
-        ]
-        return distances.min(by: { $0.1 < $1.1 })?.0 ?? .leading
-    }
-
-    /// Keeps the along-edge coordinate clear of the corners — the expanded
-    /// rail is bigger than the chip it grew from, and a chip dropped right in
-    /// a corner would expand with part of itself pushed off screen.
-    private func clampAlong(edge: Edge, value: CGPoint, in size: CGSize) -> CGPoint {
-        let margin: CGFloat = 140
-        switch edge {
-        case .leading, .trailing:
-            return CGPoint(x: value.x, y: min(max(value.y, margin), max(margin, size.height - margin)))
-        case .top, .bottom:
-            return CGPoint(x: min(max(value.x, margin), max(margin, size.width - margin)), y: value.y)
-        }
-    }
-
-    /// The expanded rail's own centre: pinned out from its docked edge by
-    /// `expandedShortHalfExtent`, at the same along-the-edge position the chip
-    /// was left at.
-    private func expandedCenter(edge: Edge, in size: CGSize) -> CGPoint {
-        let along = clampAlong(edge: edge, value: center ?? defaultCenter(in: size), in: size)
-        let half = Self.expandedShortHalfExtent
-        switch edge {
-        case .leading: return CGPoint(x: Self.edgeInset + half, y: along.y)
-        case .trailing: return CGPoint(x: size.width - Self.edgeInset - half, y: along.y)
-        case .top: return CGPoint(x: along.x, y: Self.edgeInset + half)
-        case .bottom: return CGPoint(x: along.x, y: size.height - Self.edgeInset - half)
-        }
-    }
-
-    /// Dragging the rail (as the chip, or the moment a drag begins on the
-    /// expanded rail — see `body`).
-    ///
-    /// `value.location` is used directly, not an anchor plus translation: the
-    /// chip's centre IS wherever the finger currently is, every sample, with
-    /// zero offset. An anchor-based scheme (start from `center`, add the
-    /// drag's translation) looked equivalent but wasn't, because the chip's
-    /// `center` and the expanded rail's own on-screen position
-    /// (`expandedCenter`) are different points — grabbing the expanded rail
-    /// anywhere but that exact anchor made the reappearing chip jump to be
-    /// offset from the finger by however far off the anchor the grab was, and
-    /// then merely track it from there. Using the raw touch location instead
-    /// means there is no anchor to be wrong about. `coordinateSpace(name:)`
-    /// on the whole rail (see `body`) is what makes `value.location` land in
-    /// the SAME space `.position()` expects — DragGesture's default `.local`
-    /// space is relative to the gesture's own (differently-sized, chip vs.
-    /// rail) view, which isn't usable as an absolute position on its own.
-    ///
-    /// Collapsing is a plain, unanimated assignment — not wrapped in
-    /// `withAnimation` — so it happens on the exact frame the drag starts,
-    /// with no fade lagging behind the finger. Only the release, where it
-    /// docks to the nearer edge, is animated.
-    private func dragGesture(in size: CGSize) -> some Gesture {
-        // `minimumDistance` used to be 2 — trivially crossed by the ordinary
-        // couple of points a real fingertip drifts between touch-down and
-        // touch-up on what's meant to be a tap. Every button in the expanded
-        // rail sits inside THIS gesture's hit area, and `onChanged` collapses
-        // the whole rail (unanimated, so it happens on the exact frame) the
-        // instant it fires — so tapping almost any button yanked the rail
-        // into a chip out from under the finger before the tap could
-        // complete. `.simultaneousGesture` (see `body`) was necessary but not
-        // sufficient: it's not a question of which gesture wins the touch,
-        // it's that the drag's OWN onChanged fired and collapsed the rail
-        // regardless of priority. A real drag still starts well past normal
-        // tap jitter at this threshold.
-        DragGesture(minimumDistance: 16, coordinateSpace: .named(Self.railSpace))
-            .onChanged { value in
-                if !isCollapsed { isCollapsed = true }
-                center = value.location
-            }
-            .onEnded { value in
-                let current = value.location
-                let edge = nearestEdge(of: current, in: size)
-                let half = Self.chipSize / 2
-                let docked: CGPoint
-                switch edge {
-                case .leading: docked = CGPoint(x: Self.edgeInset + half, y: current.y)
-                case .trailing: docked = CGPoint(x: size.width - Self.edgeInset - half, y: current.y)
-                case .top: docked = CGPoint(x: current.x, y: Self.edgeInset + half)
-                case .bottom: docked = CGPoint(x: current.x, y: size.height - Self.edgeInset - half)
-                }
-                withAnimation(.spring(duration: 0.32)) {
-                    center = clampAlong(edge: edge, value: docked, in: size)
-                }
-            }
+    /// The expanded rail's one fixed spot: pinned out from the leading edge
+    /// by `expandedShortHalfExtent`, same vertical centre as the chip — this
+    /// is "that place of its" the rail always pops back out to, whatever was
+    /// last open or closed.
+    private func expandedCenter(in size: CGSize) -> CGPoint {
+        CGPoint(x: Self.edgeInset + Self.expandedShortHalfExtent, y: size.height / 2)
     }
 }
