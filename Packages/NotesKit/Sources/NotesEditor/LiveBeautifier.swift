@@ -109,6 +109,19 @@ final class LiveBeautifier {
     /// demand printing.
     nonisolated static let minimumConfidence: Double = 0.2
 
+    /// A read this confident isn't worth re-trying at a larger, slower crop — see
+    /// `renderScales`. Below it, the read may still be usable (and is kept as the
+    /// best-so-far if nothing better turns up), but it's worth one more attempt at
+    /// more pixels first.
+    nonisolated static let confidentEnoughToStop: Double = 0.6
+
+    /// The mean of a batch of readings' own confidence — how sure Vision is about
+    /// this attempt as a whole, not any one line.
+    static func meanConfidence(of lines: [OCRService.Line]) -> Double {
+        guard !lines.isEmpty else { return 0 }
+        return lines.reduce(0) { $0 + $1.confidence } / Double(lines.count)
+    }
+
     /// How the chosen face actually measures, so the box matches the type.
     ///
     /// `bold` has to be threaded all the way through: a dynamic-bold line
@@ -314,17 +327,29 @@ final class LiveBeautifier {
         guard region.width > 8, region.height > 8 else { return pass }
 
         pass.askedRecognizer = true
-        // Read at the size Vision likes; if that comes back with nothing, read it
-        // again much larger before giving up. A single fixed scale is why small or
-        // cramped writing read as nothing at all.
+        // Read at the size Vision likes; if that comes back with nothing — OR with
+        // a low-confidence guess — read it again much larger before settling. A
+        // single fixed scale, and stopping at the first non-empty result whatever
+        // its confidence, is why small or cramped writing came back either blank or
+        // confidently wrong: a garbled-but-non-empty read at the sweet-spot scale
+        // never got the retry that only ever triggered on total blankness.
         var found: [OCRService.Line] = []
+        var bestConfidence = -1.0
         for scale in Self.renderScales(for: content, in: region) {
             let image = Self.recognitionImage(
                 of: drawing, region: region, scale: scale,
                 minimumInkWidth: Self.recognitionInkWidth(for: inked)
             )
-            found = await recognizeLine(image, settings.language)
-            if !found.isEmpty { break }
+            let attempt = await recognizeLine(image, settings.language)
+            guard !attempt.isEmpty else { continue }
+            let confidence = Self.meanConfidence(of: attempt)
+            if confidence > bestConfidence {
+                found = attempt
+                bestConfidence = confidence
+            }
+            // Confident enough — the larger, slower crop wouldn't change the
+            // answer, only the wait.
+            if confidence >= Self.confidentEnoughToStop { break }
         }
         guard !found.isEmpty else { return pass }
 
@@ -436,10 +461,12 @@ final class LiveBeautifier {
     static let maximumCropSide: CGFloat = 4400
 
     /// Small writing needs more pixels; huge writing needs fewer. Aims for a
-    /// ~46 px x-height, which is Vision's sweet spot for handwriting, then backs
-    /// off if that would make the crop enormous.
+    /// ~64 px x-height — raised from 46, which left cursive names and other
+    /// close, narrow strokes reading as confident guesses at the wrong word
+    /// (Vision has more pixels to tell an "a" from an "o" the bigger the crop) —
+    /// then backs off if that would make the crop enormous.
     static func renderScale(for content: CGRect, in region: CGRect) -> CGFloat {
-        let target: CGFloat = 46
+        let target: CGFloat = 64
         let height = max(content.height, 1)
         // A block of several lines: aim at the height of ONE of them.
         let lines = max(1, (height / max(minimumLineHeight * 2, 1)).rounded(.down))

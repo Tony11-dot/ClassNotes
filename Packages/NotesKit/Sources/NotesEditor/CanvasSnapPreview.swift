@@ -63,6 +63,7 @@ extension CanvasPageView.Coordinator {
         watcher.onResume = { [weak self] in self?.cancelSnapPreview() }
         watcher.onEnd = { [weak self] held in
             guard let self else { return }
+            snapLog.debug("watcher.onEnd: held=\(held) pendingSnapPath=\(self.pendingSnapPath != nil)")
             self.hideSnapPreview()
             self.liveSnap = nil
             self.isOnDetent = false
@@ -149,6 +150,7 @@ extension CanvasPageView.Coordinator {
               let settled = ShapeSnapper.resolve(snap, handle: snap.handle) else { return false }
         liveSnap = snap
         pendingSnapPath = settled.path
+        snapLog.debug("dwell accepted: baseline=\(self.strokeCountAtStrokeStart ?? -1) strokes-before-suppress=\(self.canvas?.drawing.strokes.count ?? -1)")
         // Take the wandering ink out from under the shape. From here the shape
         // IS the stroke: the pencil sizes it, and the page gets it on the lift.
         suppressLiveInk()

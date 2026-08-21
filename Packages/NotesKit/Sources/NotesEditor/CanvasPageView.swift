@@ -2,9 +2,25 @@ import ClassMateTheme
 import NotesDesignSystem
 import NotesModels
 import NotesServices
+import os
 import PencilKit
 import SwiftUI
 import UIKit
+
+/// Round 20's shape-vanish diagnostics. Build 44's fix (committing a settled
+/// shape synchronously in `finishHeldStroke` instead of on the shared debounced
+/// ink pass) was re-derived from first principles and re-verified line by line
+/// against this same source, with no fault found — and was reported as making no
+/// difference at all. That means either the true cause is something this file's
+/// own logic can't see (PencilKit's own, undocumented handling of a gesture
+/// recognizer disabled mid-stroke — see `suppressLiveInk` — is the leading
+/// suspect, since nothing else in the commit path stands up to scrutiny), or the
+/// build under test wasn't actually 44. Guessing a 21st time isn't a good use of
+/// anyone's patience; this logs the shape of the ACTUAL state at every step so
+/// the next report comes with evidence instead of another theory. Filter
+/// Console.app (iPad connected to a Mac, or `log stream --device`) on subsystem
+/// `com.classmate.notes` / category `ShapeSnap`.
+let snapLog = Logger(subsystem: "com.classmate.notes", category: "ShapeSnap")
 
 /// Tracks which page's canvas last received ink so undo/redo and the page tools
 /// target the right canvas.
@@ -818,6 +834,9 @@ struct CanvasPageView: UIViewRepresentable {
                 strokeCountAtStrokeStart ?? max(drawing.strokes.count - 1, 0),
                 drawing.strokes.count
             )
+            let strokeCount = drawing.strokes.count
+            let branch = strokeCount > baseline ? "replace" : "append"
+            snapLog.debug("commitSettledShape: baseline=\(baseline) drawing.count=\(strokeCount) branch=\(branch)")
             if drawing.strokes.count > baseline {
                 let template = drawing.strokes[baseline]
                 // PencilKit is not guaranteed to have left exactly one entry for
@@ -890,7 +909,12 @@ struct CanvasPageView: UIViewRepresentable {
                 pendingSnapInk = PKInk(tool.inkType, color: tool.color)
                 pendingSnapWidth = tool.width
             }
+            let before = canvas.drawing.strokes.count
             canvas.drawingGestureRecognizer.isEnabled = false
+            let after = canvas.drawing.strokes.count
+            snapLog.debug(
+                "suppress: baseline=\(self.strokeCountAtStrokeStart ?? -1) strokes \(before)->\(after) (disabling drawingGestureRecognizer mid-stroke)"
+            )
         }
 
         /// The pencil has lifted off a held stroke: give the canvas back, and
@@ -925,9 +949,31 @@ struct CanvasPageView: UIViewRepresentable {
             // and starts dragging it around instead — so every path out of a hold
             // hands the canvas back.
             canvas?.drawingGestureRecognizer.isEnabled = toolState.isDrawingEnabled
+            snapLog.debug(
+                "finishHeldStroke: pendingSnapPath=\(self.pendingSnapPath != nil) baseline=\(self.strokeCountAtStrokeStart ?? -1) strokes=\(self.canvas?.drawing.strokes.count ?? -1)"
+            )
             if pendingSnapPath != nil, let canvas {
                 var drawing = canvas.drawing
                 commitPending(into: &drawing, on: canvas)
+                // A late, undocumented mutation by PencilKit's own handling of the
+                // gesture recognizer disabled mid-stroke (see `suppressLiveInk`) is
+                // the leading remaining suspect for a shape that visually settles
+                // and then vanishes anyway — if something OTHER than this class
+                // touches `canvas.drawing` in the moment right after this commit,
+                // this is what will catch it.
+                let committedCount = canvas.drawing.strokes.count
+                Task { @MainActor [weak canvas] in
+                    try? await Task.sleep(for: .milliseconds(400))
+                    guard let canvas else { return }
+                    let laterCount = canvas.drawing.strokes.count
+                    if laterCount != committedCount {
+                        snapLog.error(
+                            "POST-COMMIT MUTATION: strokes went \(committedCount)->\(laterCount) within 400ms of a shape commit, with nothing in this class touching it"
+                        )
+                    } else {
+                        snapLog.debug("post-commit check ok: strokes still \(laterCount)")
+                    }
+                }
             } else {
                 scheduleInkPass()
             }
