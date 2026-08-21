@@ -202,7 +202,12 @@ extension CanvasPageView.Coordinator {
         CATransaction.setDisableActions(true)
         snapPreviewLayer.path = bezier.cgPath
         snapPreviewLayer.lineWidth = max(1, toolState.penSettings.effectiveWidth * scale)
-        snapPreviewLayer.strokeColor = (canvas.tool as? PKInkingTool)?.color.cgColor
+        // `pendingSnapInk` first: while a hold is suppressing live ink,
+        // `canvas.tool`'s own color has been zeroed out (see `suppressLiveInk`)
+        // so the raw stroke draws invisibly — reading it here would make the
+        // PREVIEW invisible too. `pendingSnapInk` is the real color captured
+        // before that swap.
+        snapPreviewLayer.strokeColor = (pendingSnapInk?.color ?? (canvas.tool as? PKInkingTool)?.color)?.cgColor
         snapPreviewLayer.opacity = 1
         CATransaction.commit()
     }

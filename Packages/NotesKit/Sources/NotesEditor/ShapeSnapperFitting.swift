@@ -322,9 +322,21 @@ extension ShapeSnapper {
 
     // MARK: - Rebuild
 
-    /// Builds a new stroke tracing `path`, reusing the original stroke's ink and
-    /// an average point size so it looks like it was drawn with the same pen.
-    static func rebuild(_ original: PKStroke, along path: [CGPoint]) -> PKStroke {
+    /// Builds a new stroke tracing `path`, reusing an average point size so it
+    /// looks like it was drawn with the same pen. Ink comes from `original`
+    /// unless `ink` overrides it.
+    ///
+    /// The override exists for `commitSettledShape`'s replace branch: while a
+    /// shape is held, `suppressLiveInk` swaps the live tool for an invisible
+    /// copy of itself so the raw wandering stroke doesn't show through the
+    /// preview, and `original` there is exactly that hidden stroke — its own
+    /// `ink` is the transparent one. Rebuilding along its ink unchanged would
+    /// commit an invisible shape. `pendingSnapInk`, captured before the swap,
+    /// is what has to win instead. Every other caller (the deferred ruling/pen-
+    /// shaping fallback in `runInkPass`, which never touches a suppressed
+    /// stroke) passes no override and keeps rebuilding along the ink actually
+    /// drawn with, same as before.
+    static func rebuild(_ original: PKStroke, along path: [CGPoint], ink: PKInk? = nil) -> PKStroke {
         let source = Array(original.path)
         let avgSize = source.isEmpty
             ? CGSize(width: 3, height: 3)
@@ -342,7 +354,7 @@ extension ShapeSnapper {
             )
         }
         let newPath = PKStrokePath(controlPoints: controlPoints, creationDate: Date())
-        return PKStroke(ink: shapeSafeInk(original.ink), path: newPath)
+        return PKStroke(ink: shapeSafeInk(ink ?? original.ink), path: newPath)
     }
 
     private static func averageSize(_ points: [PKStrokePoint]) -> CGSize {
