@@ -228,6 +228,17 @@ public struct ToolPreferences: Codable, Sendable, Equatable {
     public var eraserMode: EraserMode
     public var eraserWidth: Double
     public var scribbleToErase: Bool
+    /// Defaults OFF. Hold-to-snap is the one mechanism in the app that
+    /// touches PencilKit's own gesture state mid-stroke, and across many
+    /// rounds of fixes it kept finding new ways to corrupt ordinary
+    /// handwriting it was never meant to touch — thinned lines, ink that
+    /// vanished and reappeared, a held shape filling the screen with ink
+    /// while being resized, and finally letters it mistook for a shape
+    /// getting shrunk or rounded off. An existing install already has this
+    /// explicitly persisted as `true` from before the default changed — see
+    /// `SettingsStore.init`'s one-time migration, which is what actually
+    /// turns it off for someone who's used the app before, since a changed
+    /// default here only reaches a decode-time gap.
     public var snapShapes: Bool
     /// How far the pencil may drift during the end-of-stroke hold and still count
     /// as resting, in screen points — the tolerance behind "hold to snap". Wider
@@ -262,7 +273,7 @@ public struct ToolPreferences: Codable, Sendable, Equatable {
         eraserMode: EraserMode = .pixel,
         eraserWidth: Double = 20,
         scribbleToErase: Bool = false,
-        snapShapes: Bool = true,
+        snapShapes: Bool = false,
         snapTolerance: Double = 22,
         textFontID: String = FontLibrary.default.id,
         textSize: Double = 20,

@@ -31,6 +31,18 @@ public final class AppPreferences {
     /// written to this store ever actually persisted.
     public var settingsRevision: Int = 0
     public var settingsUpdatedAt: Date = Date.distantPast
+    /// One-time migration marker: hold-to-snap turned out to be the source of
+    /// months of "my writing changed on its own" reports (thinned lines,
+    /// ink that vanished and reappeared, shapes filling the screen while
+    /// being adjusted, and finally ordinary letters getting shrunk or
+    /// rounded off) too fragile to keep fixing forever, so it was switched
+    /// off by default. That default only reaches a decode-time GAP —
+    /// `ToolPreferences.snapShapes` was already explicitly persisted as
+    /// `true` for anyone who'd used the app before this changed, since any
+    /// settings edit re-serializes the whole blob — so `SettingsStore.init`
+    /// forces it off exactly once, the first time it sees this flag unset,
+    /// same inline-default requirement as `settingsRevision` above.
+    public var snapShapesForcedOff: Bool = false
 
     public static let singletonKey = "app-preferences"
 
@@ -39,7 +51,8 @@ public final class AppPreferences {
         paperToneRaw: String = "neutral",
         toolsJSON: Data? = nil,
         settingsRevision: Int = 0,
-        settingsUpdatedAt: Date = .now
+        settingsUpdatedAt: Date = .now,
+        snapShapesForcedOff: Bool = false
     ) {
         self.key = Self.singletonKey
         self.themeSelectionRaw = themeSelectionRaw
@@ -47,5 +60,6 @@ public final class AppPreferences {
         self.toolsJSON = toolsJSON
         self.settingsRevision = settingsRevision
         self.settingsUpdatedAt = settingsUpdatedAt
+        self.snapShapesForcedOff = snapShapesForcedOff
     }
 }

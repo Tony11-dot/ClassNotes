@@ -1,4 +1,5 @@
 import Foundation
+import SwiftData
 import Testing
 @testable import NotesEditor
 @testable import NotesModels
@@ -43,6 +44,82 @@ struct ToolPreferencesTests {
         let data = try JSONEncoder().encode(original)
         let back = try JSONDecoder().decode(ToolPreferences.self, from: data)
         #expect(back == original)
+    }
+}
+
+@MainActor
+@Suite("Hold-to-snap is forced off exactly once for a device that had it on")
+struct SnapShapesMigrationTests {
+    @MainActor
+    private struct Harness {
+        let container: ModelContainer
+        var context: ModelContext { container.mainContext }
+    }
+
+    private func makeHarness() -> Harness {
+        Harness(container: ModelContainerFactory.make(inMemory: true))
+    }
+
+    @Test("An existing device with snapShapes: true explicitly persisted gets it turned off")
+    func forcesExistingTrueOff() throws {
+        let harness = makeHarness()
+        var preTools = ToolPreferences()
+        preTools.snapShapes = true
+        let row = AppPreferences(
+            toolsJSON: try JSONEncoder().encode(preTools),
+            settingsRevision: 5
+        )
+        harness.context.insert(row)
+        try harness.context.save()
+
+        let store = SettingsStore(context: harness.context)
+        // The in-memory flip is synchronous even though the disk write is
+        // debounced — a stroke drawn the instant the app launches must not
+        // see the old value.
+        #expect(store.tools.snapShapes == false)
+        // A real edit, not a silent override: the revision moved, so this
+        // wins the next pull-before-push sync against the backend's stale
+        // `true` rather than losing to it.
+        #expect(store.revision == 6)
+
+        store.flush()
+        let rows = try harness.context.fetch(FetchDescriptor<AppPreferences>())
+        let persisted = try #require(rows.first(where: { $0.key == AppPreferences.singletonKey }))
+        #expect(persisted.snapShapesForcedOff == true)
+        #expect(SettingsStore.decode(persisted.toolsJSON).snapShapes == false)
+    }
+
+    @Test("A fresh install with no prior settings needs no forced edit")
+    func freshInstallNoOp() throws {
+        let harness = makeHarness()
+        let store = SettingsStore(context: harness.context)
+        #expect(store.tools.snapShapes == false)
+        // Nothing to force — the factory default is already off, so this
+        // must not manufacture a revision bump that could beat a real edit
+        // made moments later on another device.
+        #expect(store.revision == 0)
+
+        store.flush()
+        let rows = try harness.context.fetch(FetchDescriptor<AppPreferences>())
+        let persisted = try #require(rows.first(where: { $0.key == AppPreferences.singletonKey }))
+        #expect(persisted.snapShapesForcedOff == true)
+    }
+
+    @Test("The migration never re-fires, so a deliberate re-enable sticks")
+    func doesNotReflipAnExplicitReenable() throws {
+        let harness = makeHarness()
+        // First launch: forces it off and marks the row.
+        let first = SettingsStore(context: harness.context)
+        first.flush()
+
+        // The user goes into Settings and deliberately turns it back on.
+        first.update { $0.snapShapes = true }
+        first.flush()
+
+        // A later launch (a fresh SettingsStore over the same row) must
+        // leave that choice alone.
+        let second = SettingsStore(context: harness.context)
+        #expect(second.tools.snapShapes == true)
     }
 }
 

@@ -39,6 +39,26 @@ public final class SettingsStore {
         self.tools = Self.decode(row.toolsJSON)
         self.revision = row.settingsRevision
         self.updatedAt = row.settingsUpdatedAt
+
+        // See `AppPreferences.snapShapesForcedOff`'s own doc: hold-to-snap was
+        // switched off by default after it turned out to be the source of
+        // months of "my writing changed on its own" reports, but a changed
+        // Swift-side default only reaches a decode-time GAP — a device that
+        // used the app before this shipped already has `snapShapes: true`
+        // explicitly written into `toolsJSON` (any settings edit re-encodes
+        // the whole blob). Marking the row directly and saving it here,
+        // outside `update`, guarantees this check never runs twice even if
+        // nothing needed to change; the actual flip — only when there's
+        // something to flip — goes through `update` so it's a real,
+        // revision-bumped edit that wins the next pull-before-push sync
+        // instead of losing to the backend's still-stale copy.
+        if !row.snapShapesForcedOff {
+            row.snapShapesForcedOff = true
+            try? context.save()
+            if tools.snapShapes {
+                update { $0.snapShapes = false }
+            }
+        }
     }
 
     // MARK: - Editing
