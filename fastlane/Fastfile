@@ -16,12 +16,16 @@ IPA_NAME    = "ClassNotes"
 
 # ── Auth: App Store Connect API key ───────────────────────────────────────────
 # ClassNotes uses its OWN key (Z5KM7D8NG8), kept in the ClassMate docs folder.
-# We deliberately DON'T read ASC_KEY_ID/ASC_KEY_PATH from the shell here, because
-# ~/.zshrc exports ClassMate's key (28AUQ58BDS) globally and would stomp this.
-# The issuer UUID is account-wide, so we take it from the env (falling back to
-# the known value) — it's an identifier, not a secret.
+# We deliberately DON'T read ASC_KEY_ID from the shell here, because ~/.zshrc
+# exports ClassMate's key (28AUQ58BDS) globally and would stomp this. ASC_KEY_PATH
+# DOES fall back to env — CI (see .github/workflows/ship.yml) writes the key
+# to a runner temp path and has no "~/Documents/ClassMate docs/" to put it in.
+# The issuer UUID is account-wide, so it takes the same fallback pattern — it's
+# an identifier, not a secret.
 ASC_KEY_ID   = "Z5KM7D8NG8"
-ASC_KEY_PATH = File.expand_path("~/Documents/ClassMate docs/ClassNotes/AuthKey_Z5KM7D8NG8.p8")
+ASC_KEY_PATH = (ENV["ASC_KEY_PATH"] || "").strip.empty? ? \
+                 File.expand_path("~/Documents/ClassMate docs/ClassNotes/AuthKey_Z5KM7D8NG8.p8") : \
+                 ENV["ASC_KEY_PATH"].strip
 ASC_ISSUER   = (ENV["ASC_ISSUER_ID"] || "").strip.empty? ? \
                  "51a27d98-8621-4258-a919-f335d14ba3f8" : ENV["ASC_ISSUER_ID"].strip
 
