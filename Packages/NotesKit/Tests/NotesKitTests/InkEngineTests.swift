@@ -269,18 +269,68 @@ struct PenShaperTests {
         }
     }
 
-    @Test("Stability smooths the path and keeps the ink and point count")
+    @Test("Stability smooths the path and keeps the ink")
     func stabilityReshapes() throws {
         let original = stroke()
         let shaped = try #require(
             PenShaper.shaped(original, settings: PenSettings(stability: 5, sensitivity: 0.5))
         )
-        #expect(shaped.path.count == original.path.count)
+        // Resampled evenly by distance rather than carried over from the
+        // original's own (speed-dependent) control points — see `PenShaper.shaped`.
+        #expect(shaped.path.count > 2)
         #expect(shaped.ink.inkType == original.ink.inkType)
 
         let interior = Array(shaped.path).dropFirst().dropLast()
         let jitter = interior.reduce(0.0) { $0 + abs(Double($1.location.y)) } / Double(interior.count)
         #expect(jitter < 3, "expected the ±3 pt tremor to settle, got \(jitter)")
+    }
+
+    /// Same physical ridge, sampled coarsely (as if drawn fast — PencilKit's
+    /// spline fitter keeps few control points for quick motion) and finely
+    /// (as if drawn slowly). Before `PenShaper.shaped` resampled evenly by
+    /// distance, smoothing/tapering ran directly over these raw control
+    /// points, so the SAME Stability setting flattened a fast stroke's peak
+    /// almost to nothing while barely touching a slow one — "the ipad forgot
+    /// where the pen was," reported as letters shrinking and losing their
+    /// edges specifically when writing quickly.
+    private func ridge(controlPoints count: Int) -> PKStroke {
+        let points: [PKStrokePoint] = (0..<count).map { index in
+            let t = Double(index) / Double(count - 1)
+            let y = t <= 0.5 ? t * 80 : (1 - t) * 80
+            return PKStrokePoint(
+                location: CGPoint(x: t * 100, y: y),
+                timeOffset: t * 0.2,
+                size: CGSize(width: 3, height: 3),
+                opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2
+            )
+        }
+        return PKStroke(
+            ink: PKInk(.pen, color: .black),
+            path: PKStrokePath(controlPoints: points, creationDate: Date(timeIntervalSince1970: 0))
+        )
+    }
+
+    @Test("Smoothing strength no longer depends on how many raw control points a stroke happened to keep")
+    func smoothingIsSpeedIndependent() throws {
+        let settings = PenSettings(stability: 4, sensitivity: 0.5)
+        let fast = try #require(PenShaper.shaped(ridge(controlPoints: 5), settings: settings))
+        let slow = try #require(PenShaper.shaped(ridge(controlPoints: 60), settings: settings))
+
+        func peakHeight(_ stroke: PKStroke) -> Double {
+            Array(stroke.path).map { Double($0.location.y) }.max() ?? 0
+        }
+
+        // A few points of residual gap is PencilKit's OWN spline fit through
+        // five sparse control points rounding a 90° corner slightly more than
+        // its fit through sixty — inherent to the input, not to this pass.
+        // Before resampling, the two peaks differed by ~24pt (the fast one
+        // collapsed to well under half its height); this guards against that
+        // magnitude of collapse coming back, not against the last few points
+        // of unavoidable spline variance.
+        #expect(
+            abs(peakHeight(fast) - peakHeight(slow)) < 8,
+            "a fast, sparsely-sampled stroke's ridge should survive shaping about as well as a slow, densely-sampled one"
+        )
     }
 
     @Test("Zero sensitivity flattens pressure into an even line")

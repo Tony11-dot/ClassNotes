@@ -42,7 +42,21 @@ enum PenShaper {
         let needsTaper = settings.tapersEnds
         guard needsSmoothing || needsPressure || needsTaper else { return nil }
 
-        let points = Array(stroke.path)
+        // `stroke.path`'s own points are PencilKit's FITTED SPLINE CONTROL
+        // points, not evenly-spaced samples — how many of them there are
+        // depends on how fast the pencil moved, not on the stroke's length (a
+        // quick line can be four of them; see `ShapeSnapperFitting` and
+        // `ScribbleEraser.path(of:)`, which learned the same lesson).
+        // Smoothing/tapering by CONTROL-POINT INDEX over a count that swings
+        // that wildly with speed is why the same Stability/Tip setting looked
+        // fine on a slow stroke and mangled a fast one: a 3-point moving
+        // average over sixty evenly-sampled points barely moves anything, but
+        // the same window over the half-dozen control points PencilKit kept
+        // for a fast letter covers HALF of it, rounding off every corner and
+        // shrinking it in the process. Resampling evenly BY DISTANCE first
+        // makes the window and the taper span mean the same physical distance
+        // on the page regardless of how fast the hand moved.
+        let points = Array(stroke.path.interpolatedPoints(by: .distance(2)))
         guard points.count > 2 else { return nil }
 
         let locations = StrokeSmoothing.smooth(points.map(\.location), window: window)
