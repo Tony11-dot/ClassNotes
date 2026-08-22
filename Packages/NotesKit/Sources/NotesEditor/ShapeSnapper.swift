@@ -210,11 +210,9 @@ enum ShapeSnapper {
     }
 
     /// Rebuilds `original` along an already-fitted path — the commit half of the
-    /// live snap, so the preview and the ink can't disagree. `ink` overrides
-    /// `original`'s own ink when the caller knows it's not the one to keep —
-    /// see `rebuild`'s own doc.
-    static func stroke(from path: [CGPoint], like original: PKStroke, ink: PKInk? = nil) -> PKStroke {
-        rebuild(original, along: path, ink: ink)
+    /// live snap, so the preview and the ink can't disagree.
+    static func stroke(from path: [CGPoint], like original: PKStroke) -> PKStroke {
+        rebuild(original, along: path)
     }
 
     /// A snapped shape with no drawn stroke to copy. Once the live preview takes

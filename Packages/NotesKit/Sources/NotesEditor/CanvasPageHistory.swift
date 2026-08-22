@@ -86,6 +86,7 @@ extension CanvasPageView.Coordinator {
         guardedShapeStroke = nil
         isRewriting = true
         canvas.drawing = drawing
+        lastKnownGoodDrawing = drawing
         Task { @MainActor [weak self] in self?.isRewriting = false }
         undoBaseline = drawing
         hasUncommittedChange = false

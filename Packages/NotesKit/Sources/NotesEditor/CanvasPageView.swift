@@ -95,9 +95,28 @@ public final class ActiveCanvasTracker {
         return nil
     }
 
-    /// Replace a page's live drawing (used by shape-snapping, beautify and clear).
+    /// Replace a page's live drawing — lasso move/delete/duplicate.
+    ///
+    /// Routed through the coordinator's own `replace()` rather than assigning
+    /// `canvas.drawing` directly: a raw assignment reaches
+    /// `canvasViewDrawingDidChange` like any real PencilKit-driven change, and
+    /// that delegate method now treats a stroke-count DROP with a non-eraser
+    /// tool selected as unexplained ink loss and restores the earlier drawing
+    /// (see its own doc) — which a lasso delete, made with the lasso tool
+    /// selected, always is. `replace()` sets `isRewriting` first, which is
+    /// exactly what that guard is already built to filter out. Persistence
+    /// used to ride along for free on that same delegate callback
+    /// (`canvasViewDrawingDidChange` calls `scheduleSave()` itself); bypassing
+    /// it means this has to ask for that explicitly.
     public func setDrawing(_ drawing: PKDrawing, for pageID: UUID) {
-        canvases[pageID]?.view?.drawing = drawing
+        guard let canvas = canvases[pageID]?.view as? PageCanvasView,
+              let coordinator = canvas.delegate as? CanvasPageView.Coordinator else {
+            canvases[pageID]?.view?.drawing = drawing
+            return
+        }
+        coordinator.processedStrokeCount = drawing.strokes.count
+        coordinator.replace(drawing, on: canvas, allowsFewerStrokes: true)
+        coordinator.scheduleSave()
     }
 
     /// Commits a whole beautification pass through the page's OWN history.
@@ -126,7 +145,12 @@ public final class ActiveCanvasTracker {
         )
         // The manual Beautify button, same as the live pass: it deliberately
         // trades handwriting for typeset text, so it must be allowed to reduce
-        // stroke count.
+        // stroke count. Kept in step with `replace()`'s own bookkeeping —
+        // every other caller sets this before calling `replace()` too — so a
+        // stroke drawn right after doesn't read as fewer strokes than expected
+        // with the pen selected and trip the unexplained-loss guard in
+        // `canvasViewDrawingDidChange`.
+        coordinator.processedStrokeCount = ink.strokes.count
         coordinator.replace(ink, on: canvas, allowsFewerStrokes: true)
     }
 
@@ -180,10 +204,17 @@ public final class ActiveCanvasTracker {
         return bounds
     }
 
-    /// Wipe a page's ink. Setting `.drawing` fires the canvas delegate, which
-    /// persists it.
+    /// Wipe a page's ink. Routed through `replace()` for the same reason
+    /// `setDrawing` is — see its doc.
     public func clearDrawing(for pageID: UUID) {
-        canvases[pageID]?.view?.drawing = PKDrawing()
+        guard let canvas = canvases[pageID]?.view as? PageCanvasView,
+              let coordinator = canvas.delegate as? CanvasPageView.Coordinator else {
+            canvases[pageID]?.view?.drawing = PKDrawing()
+            return
+        }
+        coordinator.processedStrokeCount = 0
+        coordinator.replace(PKDrawing(), on: canvas, allowsFewerStrokes: true)
+        coordinator.scheduleSave()
     }
 
     /// Immediately writes every live page's most recent ink to disk, bypassing
@@ -426,24 +457,26 @@ struct CanvasPageView: UIViewRepresentable {
         context.coordinator.pageSize = page.logicalSize
         context.coordinator.rulerGuide = rulerGuide
         canvas.logicalSize = page.logicalSize
-        // NOT reassigned while a shape is held: `suppressLiveInk` has swapped
-        // the live tool for an invisible copy of itself so the raw stroke
-        // under the settled-shape preview stays hidden, and `updateUIView` can
-        // fire for reasons that have nothing to do with the pencil — any
-        // change to `toolState`, the ruler, the theme — over the course of a
-        // single hold. Reassigning here unconditionally would hand back the
-        // REAL, visible color on any one of those passes, and the wandering
-        // ink underneath the clean preview would show through again.
-        // `finishHeldStroke` restores the real tool once the hold actually ends.
-        if !context.coordinator.isSuppressingLiveInk {
-            canvas.tool = toolState.pkTool(theme: theme)
-        }
+        canvas.tool = toolState.pkTool(theme: theme)
         // Tape / text / move modes: stop the canvas from capturing the pencil so
         // the overlay's gestures win. Any writing tool draws.
         //
-        // Only assign `isEnabled` when the value actually changes — pure
-        // hygiene now (PencilKit's own recognizer is never disabled mid-stroke
-        // any more, see `suppressLiveInk`), kept to avoid needless churn.
+        // While a shape is settled under a live pencil the canvas is deliberately
+        // muted (see `suppressLiveInk`), and a SwiftUI update landing mid-gesture
+        // must not undo that — turning drawing back on halfway through would put
+        // the wandering ink back under the shape.
+        //
+        // `updateUIView` runs for reasons that have nothing to do with the
+        // pencil — any change to `toolState`, the ruler, the theme — so this can
+        // fire many times over the course of a single hold. Reassigning
+        // `isEnabled` unconditionally re-toggles PencilKit's OWN gesture
+        // recognizer every one of those times, even to the value it already
+        // has, which repeatedly pokes exactly the internal machinery
+        // `suppressLiveInk`'s one deliberate toggle already put in a fragile
+        // state — a plausible way for PencilKit's own undocumented handling of
+        // a disabled-mid-stroke recognizer (this file's leading suspect for the
+        // shape-vanish bug) to get exercised many times over instead of once.
+        // Only assign when the value actually changes.
         let shouldEnableDrawing = context.coordinator.shouldEnableDrawing()
         if canvas.drawingGestureRecognizer.isEnabled != shouldEnableDrawing {
             canvas.drawingGestureRecognizer.isEnabled = shouldEnableDrawing
@@ -500,6 +533,34 @@ struct CanvasPageView: UIViewRepresentable {
         /// looks at what's new. Reset downwards whenever strokes disappear (erase,
         /// undo, a beautification wipe).
         var processedStrokeCount = 0
+        /// The drawing as of the last point it was known to hold everything the
+        /// user actually asked for — every legitimate change updates it: a new
+        /// stroke, our own `replace()` (pen shaping, a shape commit, ruling,
+        /// scribble-erase, beautification), an undo/redo `restore()`.
+        ///
+        /// `canvasViewDrawingDidChange` sees a smaller stroke count than expected
+        /// ONLY when PencilKit itself reports fewer strokes on a real touch
+        /// gesture — every path THIS class uses to remove ink (`replace`,
+        /// `restore`) sets `isRewriting` first, which makes that delegate
+        /// callback a no-op for it (see its own top guard). The one tool that
+        /// legitimately drives a real removal that way is the eraser
+        /// (`PKEraserTool`) — nothing else in this app erases ink through
+        /// PencilKit's own gesture. A drop reported with any other tool selected
+        /// has no legitimate source anywhere in this codebase, which is what
+        /// makes it safe to treat as ink going missing for no reason anyone
+        /// asked for, rather than something to puzzle out case by case — and to
+        /// restore from here unconditionally rather than accept as the new
+        /// truth. This is a COUNT check, not a content check — a version of this
+        /// that compared stroke CONTENT lived in `replace()` itself and was
+        /// reverted (see its doc) because reshaping legitimately rewrites a
+        /// stroke's content in place, which a content check can't tell apart
+        /// from loss. This can't make that mistake: it only ever runs on the
+        /// path our own rewrites are already excluded from.
+        ///
+        /// Not `private`: `restore()` (`CanvasPageHistory.swift`, a same-type
+        /// extension in another file) updates it too, and `private` in Swift is
+        /// file-scoped, not just type-scoped.
+        var lastKnownGoodDrawing = PKDrawing()
         /// Guards the reentrant `drawing` assignments we make while reshaping.
         var isRewriting = false
         /// Bumped by every `replace(_:on:)` that ISN'T a beautify pass applying its
@@ -655,6 +716,7 @@ struct CanvasPageView: UIViewRepresentable {
                 // Ink already on the page was shaped when it was written; a pass
                 // over it would only cost time and re-smooth what's settled.
                 processedStrokeCount = stored.strokes.count
+                lastKnownGoodDrawing = stored
                 undoBaseline = stored
                 hasUncommittedChange = false
                 // `loaded` waits a turn with `isRewriting`, so the delegate
@@ -716,15 +778,41 @@ struct CanvasPageView: UIViewRepresentable {
             // The page has moved off its last history step.
             hasUncommittedChange = true
 
-            // Strokes went away (eraser, undo) — our "already processed" mark has
-            // to come back with them or the next pass reads the wrong indices.
             let count = canvasView.drawing.strokes.count
             if count < processedStrokeCount {
+                // Every path THIS class uses to remove ink (`replace`, `restore`)
+                // sets `isRewriting` before touching `canvas.drawing`, which is
+                // exactly what the guard above already filters out — so a drop
+                // that reaches here came straight from PencilKit reporting a
+                // real touch gesture, and the only tool that legitimately does
+                // that is the eraser. Nothing else in this app removes ink
+                // through PencilKit's own gesture (lasso/scribble-erase both go
+                // through `replace`). A drop with any other tool selected —
+                // above all the pen, mid-ordinary-handwriting — has no
+                // legitimate source anywhere in this codebase: it's ink going
+                // missing for no reason anyone asked for. Restoring it here,
+                // rather than accepting the smaller count as the new truth, is
+                // what actually closes "I wrote something and it just
+                // vanished" for plain writing that never went anywhere near
+                // hold-to-snap. See `lastKnownGoodDrawing`'s own doc for why a
+                // COUNT check here can't make the mistake the reverted
+                // content-check in `replace()` made.
+                guard toolState.tool == .eraser else {
+                    snapLog.error(
+                        "SPURIOUS LOSS: canvas reports \(count) strokes (expected >= \(self.processedStrokeCount)) with tool=\(String(describing: self.toolState.tool)), not eraser — restoring last known good drawing"
+                    )
+                    isRewriting = true
+                    canvasView.drawing = lastKnownGoodDrawing
+                    processedStrokeCount = lastKnownGoodDrawing.strokes.count
+                    Task { @MainActor [weak self] in self?.isRewriting = false }
+                    return
+                }
                 processedStrokeCount = count
-                // A real content removal — most likely the eraser tool. The
-                // vanish guard exists for UNEXPLAINED loss, not this.
+                // A real content removal via the eraser. The vanish guard
+                // exists for UNEXPLAINED loss, not this.
                 guardedShapeStroke = nil
             }
+            lastKnownGoodDrawing = canvasView.drawing
 
             scheduleSave()
             scheduleBeautification()
@@ -931,14 +1019,7 @@ struct CanvasPageView: UIViewRepresentable {
                 if drawing.strokes.count > baseline + 1 {
                     drawing.strokes.removeSubrange((baseline + 1)...)
                 }
-                // `template` is the stroke PencilKit kept drawing through the
-                // whole hold — with the INVISIBLE ink `suppressLiveInk` swapped
-                // in, so its own `.ink` is the transparent one. `pendingSnapInk`
-                // (captured before that swap) is the real ink to commit with;
-                // see `rebuild`'s doc for why `template`'s ink can't be trusted
-                // here the way it safely can everywhere else this function is
-                // called from.
-                drawing.strokes[baseline] = ShapeSnapper.stroke(from: path, like: template, ink: pendingSnapInk)
+                drawing.strokes[baseline] = ShapeSnapper.stroke(from: path, like: template)
                 return baseline
             } else {
                 let tool = canvas.tool as? PKInkingTool
@@ -992,6 +1073,7 @@ struct CanvasPageView: UIViewRepresentable {
             isRewriting = true
             rewriteGeneration &+= 1
             canvas.drawing = drawing
+            lastKnownGoodDrawing = drawing
             Task { @MainActor [weak self] in self?.isRewriting = false }
         }
 
@@ -1000,41 +1082,41 @@ struct CanvasPageView: UIViewRepresentable {
         /// Whether the pencil is still on the glass, according to the dwell watcher.
         var isPencilDown: Bool { dwellWatcher?.isTouching ?? false }
 
-        /// Mutes the canvas so the settled shape is the only thing VISIBLE under
-        /// the pencil — the raw stroke keeps drawing, invisibly, underneath it.
+        /// Mutes the canvas so the settled shape is the only thing under the
+        /// pencil — the stroke in flight belongs to PencilKit and cannot be
+        /// edited, only stopped from producing any more of it.
         ///
-        /// This used to disable `canvas.drawingGestureRecognizer` outright to stop
-        /// the wandering ink. That is PencilKit's own undocumented territory —
-        /// disabling a `UIGestureRecognizer` while a touch is in flight has no
-        /// documented contract for what PencilKit does internally — and every
-        /// theory this file has chased for a shape that visually settles and then
-        /// goes missing (Build 37 through 44 and the diagnostics still sitting
-        /// below) traces back to that one call, never to anything this class
-        /// controls (see `commitSettledShape`, `healGuardedShape`). The self-heal
-        /// guard papers over the symptom by re-inserting a missing shape up to
-        /// 600ms later, at the next save — which is exactly what "it disappeared,
-        /// then came back" looks like from the outside, because that IS what the
-        /// guard does when it fires. Making the live ink transparent instead of
-        /// disabling the recognizer that draws it removes the interruption
-        /// entirely: PencilKit keeps tracking the touch exactly as it always
-        /// does, the stroke it produces is simply invisible, and it's discarded
-        /// wholesale in favor of the fitted shape the moment the pencil lifts
-        /// (`commitSettledShape`) — so hiding it costs nothing.
+        /// REVERTED (Build 57 → 58): that build swapped the live tool for a
+        /// zero-alpha copy of itself instead of disabling
+        /// `drawingGestureRecognizer`, on the theory that disabling mid-stroke
+        /// was corrupting PencilKit's internal state. Real hardware falsified
+        /// both halves of that bet in one report: an in-progress `PKStroke`
+        /// evidently fixes its ink at creation, so the invisible swap did
+        /// nothing — the raw stroke kept drawing fully VISIBLE for the entire
+        /// adjustment sweep, exactly what "the screen fills with ink while
+        /// I'm resizing" is — and ordinary handwriting that never goes
+        /// anywhere near this function kept vanishing on lift regardless,
+        /// which it could not possibly do if disabling-mid-stroke were the
+        /// cause. Disabling is what actually, reliably stops new ink from
+        /// being drawn — that was never in question, only whether it was
+        /// SAFE — and going back to it is strictly better on the evidence:
+        /// it fixes the one thing removing it broke, and removing it fixed
+        /// nothing.
         func suppressLiveInk() {
             guard let canvas, !isSuppressingLiveInk else { return }
             isSuppressingLiveInk = true
-            // The tool actually in hand right now, captured before it's swapped
-            // for an invisible one — so a tool switch in the 90ms between the
-            // lift and the debounced commit can't change what the shape gets
-            // inked with, and `finishHeldStroke` has the real color/width to
-            // restore once the hold ends.
+            // The tool actually in hand right now — so a tool switch in the
+            // 90ms between the lift and the debounced commit can't change what
+            // the shape gets inked with.
             if let tool = canvas.tool as? PKInkingTool {
                 pendingSnapInk = PKInk(tool.inkType, color: tool.color)
                 pendingSnapWidth = tool.width
-                canvas.tool = PKInkingTool(tool.inkType, color: tool.color.withAlphaComponent(0), width: tool.width)
             }
+            let before = canvas.drawing.strokes.count
+            canvas.drawingGestureRecognizer.isEnabled = false
+            let after = canvas.drawing.strokes.count
             snapLog.debug(
-                "suppress: baseline=\(self.strokeCountAtStrokeStart ?? -1) strokes=\(canvas.drawing.strokes.count) (ink hidden, recognizer left running)"
+                "suppress: baseline=\(self.strokeCountAtStrokeStart ?? -1) strokes \(before)->\(after) (disabling drawingGestureRecognizer mid-stroke)"
             )
         }
 
@@ -1064,18 +1146,12 @@ struct CanvasPageView: UIViewRepresentable {
         /// finished ending), closes the window entirely rather than narrowing it.
         func finishHeldStroke() {
             isSuppressingLiveInk = false
-            // Puts the real ink back now that hiding it is no longer needed —
-            // see `suppressLiveInk`. Rebuilt from what was captured when the hold
-            // began, not from `toolState` read live: by the time the pencil
-            // lifts the hand may already have switched tools (a Pencil
-            // double-tap thrown reflexively right as it comes up off a shape is
-            // an easy way to do that), and this restores exactly the tool the
-            // hidden stroke was drawn with, not whatever is current. Reading
-            // `pendingSnapInk` here — before `commitPending` below consumes and
-            // clears it — is safe: nothing else touches it in between.
-            if let canvas, let ink = pendingSnapInk, let width = pendingSnapWidth {
-                canvas.tool = PKInkingTool(ink.inkType, color: ink.color, width: width)
-            }
+            // Unconditionally, not only when this call is the one that lifts the
+            // mute. Drawing being off is the one state the editor can be left in
+            // that the user cannot get out of — the pencil stops marking the page
+            // and starts dragging it around instead — so every path out of a hold
+            // hands the canvas back.
+            canvas?.drawingGestureRecognizer.isEnabled = toolState.isDrawingEnabled
             snapLog.debug(
                 "finishHeldStroke: pendingSnapPath=\(self.pendingSnapPath != nil) baseline=\(self.strokeCountAtStrokeStart ?? -1) strokes=\(self.canvas?.drawing.strokes.count ?? -1)"
             )
@@ -1138,15 +1214,9 @@ struct CanvasPageView: UIViewRepresentable {
 
         /// Whether the canvas should be accepting ink right now.
         ///
-        /// Also the place a stale mute is cleared: if the live ink is still
-        /// hidden for a held shape but the watcher says nothing is on the glass,
-        /// the hold is over and the tool swap in `suppressLiveInk` is a leak —
-        /// `finishHeldStroke` puts the real ink back and commits.
-        ///
-        /// The recognizer itself is NOT gated on `isSuppressingLiveInk` — see
-        /// `suppressLiveInk`'s own doc for why disabling it mid-stroke is exactly
-        /// what this stopped doing. Muting a held shape now means hiding its ink,
-        /// not stopping PencilKit from recognizing it.
+        /// Also the place a stale mute is cleared: if the canvas is muted for a
+        /// held shape but the watcher says nothing is on the glass, the hold is
+        /// over and the mute is a leak.
         func shouldEnableDrawing() -> Bool {
             if isSuppressingLiveInk, !isPencilDown {
                 // This is the SwiftUI-render-cycle path calling `finishHeldStroke()`,
@@ -1155,7 +1225,7 @@ struct CanvasPageView: UIViewRepresentable {
                 snapLog.debug("shouldEnableDrawing: stale mute cleared via updateUIView safety net, not watcher.onEnd — committing now")
                 finishHeldStroke()
             }
-            return toolState.isDrawingEnabled
+            return isSuppressingLiveInk ? false : toolState.isDrawingEnabled
         }
 
         // MARK: Saving
