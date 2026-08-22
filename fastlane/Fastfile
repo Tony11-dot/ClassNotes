@@ -97,7 +97,16 @@ platform :ios do
       output_directory: IPA_DIR,
       output_name:    "#{IPA_NAME}.ipa",
       export_method:  "app-store",
-      xcargs:         "-allowProvisioningUpdates",
+      # -allowProvisioningUpdates alone just tries to use whatever Apple ID is
+      # signed into Xcode's Accounts pane — which is why this passed on the dev
+      # Mac (an account was already signed in there) and failed on a fresh CI
+      # runner with "No Accounts: Add a new account in Accounts settings."
+      # These three flags hand xcodebuild the ASC API key directly, so it can
+      # create/renew the cert and profile with no Apple ID account at all.
+      xcargs:         "-allowProvisioningUpdates " \
+                       "-authenticationKeyPath \"#{ASC_KEY_PATH}\" " \
+                       "-authenticationKeyID #{ASC_KEY_ID} " \
+                       "-authenticationKeyIssuerID #{ASC_ISSUER}",
       export_options: {
         signingStyle: "automatic",
         teamID:       TEAM_ID,
