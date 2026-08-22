@@ -950,10 +950,16 @@ struct CanvasPageView: UIViewRepresentable {
                         // make the line straight whatever the hand did.
                         drawing.strokes[index] = ruled
                         changed = true
-                    } else if let shaped = PenShaper.shaped(stroke, settings: toolState.penSettings) {
-                        drawing.strokes[index] = shaped
-                        changed = true
                     }
+                    // Pen tuning (stability/tip/sensitivity) used to rebuild every
+                    // finished stroke here (`PenShaper`, removed). It reshaped the
+                    // stroke's control points from PencilKit's OWN fitted spline,
+                    // whose point count tracks drawing speed — the same setting
+                    // barely touched a slow letter but crushed a fast one, which is
+                    // why writing kept coming out smaller or missing edges no
+                    // matter how that speed-dependence was patched. The reliable
+                    // fix is not reshaping ordinary handwriting at all: what
+                    // PencilKit hands back is what gets recorded.
                 }
             }
             processedStrokeCount = count

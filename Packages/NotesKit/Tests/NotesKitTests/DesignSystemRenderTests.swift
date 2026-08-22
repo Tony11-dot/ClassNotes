@@ -170,7 +170,7 @@ struct DesignSystemRenderTests {
             )
             let preview = StrokePreview(
                 color: spec.ink, width: pen.defaults.effectiveWidth,
-                opacity: pen.defaults.concentration, stability: pen.defaults.stability
+                opacity: pen.defaults.concentration
             )
             .environment(\.theme, spec)
             #expect(render(preview, size: CGSize(width: 240, height: 92)) != nil)

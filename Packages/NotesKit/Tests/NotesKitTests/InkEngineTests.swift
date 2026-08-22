@@ -5,22 +5,21 @@ import PencilKit
 import Testing
 @testable import NotesEditor
 
-@Suite("Stroke smoothing (pen stability)")
+@Suite("Stroke smoothing")
 struct StrokeSmoothingTests {
-    @Test("Stability 1 is the identity — the pencil's own path is untouched")
-    func identityAtLowestStability() {
+    @Test("A window of 1 is the identity — the pencil's own path is untouched")
+    func identityAtWindowOne() {
         let points = (0..<20).map { CGPoint(x: Double($0), y: Double($0 % 3)) }
-        #expect(StrokeSmoothing.window(forStability: 1) == 1)
-        #expect(StrokeSmoothing.smooth(points, stability: 1) == points)
+        #expect(StrokeSmoothing.smooth(points, window: 1) == points)
     }
 
-    @Test("Higher stability shrinks tremor but keeps the endpoints pinned")
+    @Test("A wider window shrinks tremor but keeps the endpoints pinned")
     func smoothingReducesJitter() {
         // A straight line with alternating ±4 pt jitter on top of it.
         let points = (0..<40).map { index in
             CGPoint(x: Double(index) * 5, y: index % 2 == 0 ? 4 : -4)
         }
-        let smoothed = StrokeSmoothing.smooth(points, stability: 6)
+        let smoothed = StrokeSmoothing.smooth(points, window: 11)
 
         #expect(smoothed.first == points.first, "the stroke still starts where the pencil landed")
         #expect(smoothed.last == points.last, "and ends where it lifted")
@@ -31,18 +30,11 @@ struct StrokeSmoothingTests {
         #expect(after < before / 2, "expected the jitter to more than halve, got \(after) from \(before)")
     }
 
-    @Test("Windows grow monotonically with stability")
-    func windowGrows() {
-        let windows = PenSettings.stabilityRange.map(StrokeSmoothing.window(forStability:))
-        #expect(windows == windows.sorted())
-        #expect(Set(windows).count == windows.count)
-    }
-
     @Test("Paths too short to average are returned unchanged")
     func shortPaths() {
         let two = [CGPoint(x: 0, y: 0), CGPoint(x: 10, y: 10)]
-        #expect(StrokeSmoothing.smooth(two, stability: 7) == two)
-        #expect(StrokeSmoothing.smooth([], stability: 7).isEmpty)
+        #expect(StrokeSmoothing.smooth(two, window: 13) == two)
+        #expect(StrokeSmoothing.smooth([], window: 13).isEmpty)
     }
 
     /// Mean absolute distance of the interior points from the y = 0 axis.
@@ -159,212 +151,6 @@ struct ScribbleDetectorTests {
             ink: PKInk(.pen, color: .black),
             path: PKStrokePath(controlPoints: controlPoints, creationDate: Date(timeIntervalSince1970: 0))
         )
-    }
-}
-
-@Suite("Pen shaping")
-struct PenShaperTests {
-    private func stroke(points: Int = 24, size: CGFloat = 3) -> PKStroke {
-        let controlPoints: [PKStrokePoint] = (0..<points).map { index in
-            let even = index % 2 == 0
-            let location = CGPoint(x: Double(index) * 4, y: even ? 3 : -3)
-            // Alternating point sizes stand in for varying pressure.
-            let pointSize = CGSize(width: even ? size * 2 : size, height: size)
-            let force: CGFloat = even ? 2 : 0.5
-            return PKStrokePoint(
-                location: location,
-                timeOffset: Double(index) * 0.01,
-                size: pointSize,
-                opacity: 1, force: force,
-                azimuth: 0, altitude: .pi / 2
-            )
-        }
-        return PKStroke(
-            ink: PKInk(.pen, color: .black),
-            path: PKStrokePath(controlPoints: controlPoints, creationDate: Date(timeIntervalSince1970: 0))
-        )
-    }
-
-    @Test("Neutral settings are a no-op, so an untouched pen costs nothing")
-    func neutralIsNoOp() {
-        let settings = PenSettings(stability: 1, sensitivity: 0.5)
-        #expect(PenShaper.shaped(stroke(), settings: settings) == nil)
-    }
-
-    @Test("Every setting on the panel changes what lands on the page")
-    func everySettingHasAnEffect() throws {
-        // The panel promises six controls. A slider that moves and changes nothing
-        // is worse than a missing one — you keep going back to it.
-        let neutral = PenSettings(stability: 1, tip: 0, sensitivity: 0.5, thickness: 3)
-
-        // Thickness IS the width now: no second multiplier, so the number under
-        // your finger is the number on the page.
-        #expect(neutral.effectiveWidth == 3)
-        var thicker = neutral
-        thicker.thickness = 6
-        #expect(thicker.effectiveWidth == 6)
-
-        // Tip tapers the ends. It used to be a second width multiplier, i.e. the
-        // Thickness slider under another name.
-        var pointed = neutral
-        pointed.tip = 0.9
-        let tapered = try #require(PenShaper.shaped(stroke(), settings: pointed))
-        let sizes = Array(tapered.path).map(\.size.width)
-        #expect(sizes.first! < sizes[sizes.count / 2], "it enters the paper on its point")
-        #expect(sizes.last! < sizes[sizes.count / 2], "and leaves on it")
-        #expect(pointed.effectiveWidth == neutral.effectiveWidth, "without touching the width")
-
-        // Sensitivity, anywhere on its travel. Half the slider used to sit inside a
-        // deadband and do nothing at all.
-        var slightlySofter = neutral
-        slightlySofter.sensitivity = 0.35
-        #expect(PenShaper.shaped(stroke(), settings: slightlySofter) != nil)
-
-        // Stability, concentration and colour: the first reshapes, the last two go
-        // straight into the tool (see the ToolState suite).
-        var steadier = neutral
-        steadier.stability = 5
-        #expect(PenShaper.shaped(stroke(), settings: steadier) != nil)
-        #expect(neutral.concentration != 0.4)
-        #expect(neutral.colorHex == nil)
-    }
-
-    @Test("Taper is confined to the ends, and a blunt tip has none")
-    func taperShape() {
-        #expect(PenShaper.taper(at: 0, of: 100, tip: 0) == 1, "a blunt tip lays full width")
-        #expect(PenShaper.taper(at: 50, of: 100, tip: 1) == 1, "the middle is never thinned")
-        let atTheTip = PenShaper.taper(at: 0, of: 100, tip: 1)
-        #expect(atTheTip < 0.2)
-        // Monotonic from the tip inward.
-        #expect(PenShaper.taper(at: 1, of: 100, tip: 1) > atTheTip)
-        #expect(PenShaper.taper(at: 99, of: 100, tip: 1) == atTheTip, "both ends alike")
-        // A gentler tip is a shorter, shallower run-in than a sharp one.
-        #expect(PenShaper.taper(at: 0, of: 100, tip: 0.3) > PenShaper.taper(at: 0, of: 100, tip: 0.9))
-    }
-
-    @Test("Every preset's width sits inside the slider that edits it")
-    func presetWidthsAreReachable() {
-        for preset in PenLibrary.all {
-            let width = preset.defaults.effectiveWidth
-            #expect(
-                preset.widthRange.contains(width),
-                "\(preset.displayName) draws at \(width), outside its own \(preset.widthRange)"
-            )
-        }
-    }
-
-    @Test("Fully neutral settings rebuild nothing; every shipped preset's own tuning still does")
-    func shippedDefaultsAvoidPointlessRebuilds() {
-        // Shaping a stroke means reassigning the canvas's whole drawing, which is
-        // what made writing feel laggier the fuller the page got — but only a
-        // truly neutral tuning is entitled to skip it.
-        let neutral = PenSettings(stability: 1, tip: 0, sensitivity: 0.5, thickness: 1.4, concentration: 1)
-        #expect(PenShaper.shaped(stroke(), settings: neutral) == nil)
-        // …while every shipped preset's own tuning has real character and still does.
-        for preset in PenLibrary.all {
-            #expect(
-                PenShaper.shaped(stroke(), settings: preset.defaults) != nil,
-                "\(preset.id) is tuned away from neutral and should still be shaped"
-            )
-        }
-    }
-
-    @Test("Stability smooths the path and keeps the ink")
-    func stabilityReshapes() throws {
-        let original = stroke()
-        let shaped = try #require(
-            PenShaper.shaped(original, settings: PenSettings(stability: 5, sensitivity: 0.5))
-        )
-        // Resampled evenly by distance rather than carried over from the
-        // original's own (speed-dependent) control points — see `PenShaper.shaped`.
-        #expect(shaped.path.count > 2)
-        #expect(shaped.ink.inkType == original.ink.inkType)
-
-        let interior = Array(shaped.path).dropFirst().dropLast()
-        let jitter = interior.reduce(0.0) { $0 + abs(Double($1.location.y)) } / Double(interior.count)
-        #expect(jitter < 3, "expected the ±3 pt tremor to settle, got \(jitter)")
-    }
-
-    /// Same physical ridge, sampled coarsely (as if drawn fast — PencilKit's
-    /// spline fitter keeps few control points for quick motion) and finely
-    /// (as if drawn slowly). Before `PenShaper.shaped` resampled evenly by
-    /// distance, smoothing/tapering ran directly over these raw control
-    /// points, so the SAME Stability setting flattened a fast stroke's peak
-    /// almost to nothing while barely touching a slow one — "the ipad forgot
-    /// where the pen was," reported as letters shrinking and losing their
-    /// edges specifically when writing quickly.
-    private func ridge(controlPoints count: Int) -> PKStroke {
-        let points: [PKStrokePoint] = (0..<count).map { index in
-            let t = Double(index) / Double(count - 1)
-            let y = t <= 0.5 ? t * 80 : (1 - t) * 80
-            return PKStrokePoint(
-                location: CGPoint(x: t * 100, y: y),
-                timeOffset: t * 0.2,
-                size: CGSize(width: 3, height: 3),
-                opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2
-            )
-        }
-        return PKStroke(
-            ink: PKInk(.pen, color: .black),
-            path: PKStrokePath(controlPoints: points, creationDate: Date(timeIntervalSince1970: 0))
-        )
-    }
-
-    @Test("Smoothing strength no longer depends on how many raw control points a stroke happened to keep")
-    func smoothingIsSpeedIndependent() throws {
-        let settings = PenSettings(stability: 4, sensitivity: 0.5)
-        let fast = try #require(PenShaper.shaped(ridge(controlPoints: 5), settings: settings))
-        let slow = try #require(PenShaper.shaped(ridge(controlPoints: 60), settings: settings))
-
-        func peakHeight(_ stroke: PKStroke) -> Double {
-            Array(stroke.path).map { Double($0.location.y) }.max() ?? 0
-        }
-
-        // A few points of residual gap is PencilKit's OWN spline fit through
-        // five sparse control points rounding a 90° corner slightly more than
-        // its fit through sixty — inherent to the input, not to this pass.
-        // Before resampling, the two peaks differed by ~24pt (the fast one
-        // collapsed to well under half its height); this guards against that
-        // magnitude of collapse coming back, not against the last few points
-        // of unavoidable spline variance.
-        #expect(
-            abs(peakHeight(fast) - peakHeight(slow)) < 8,
-            "a fast, sparsely-sampled stroke's ridge should survive shaping about as well as a slow, densely-sampled one"
-        )
-    }
-
-    @Test("Zero sensitivity flattens pressure into an even line")
-    func sensitivityFlattens() throws {
-        let shaped = try #require(
-            PenShaper.shaped(stroke(), settings: PenSettings(stability: 1, sensitivity: 0))
-        )
-        let widths = Set(Array(shaped.path).map { ($0.size.width * 100).rounded() })
-        #expect(widths.count == 1, "every point should be the same width, got \(widths)")
-    }
-
-    @Test("Full sensitivity widens the gap between light and heavy points")
-    func sensitivityExaggerates() throws {
-        let original = stroke()
-        let shaped = try #require(
-            PenShaper.shaped(original, settings: PenSettings(stability: 1, sensitivity: 1))
-        )
-        #expect(spread(of: shaped) > spread(of: original))
-    }
-
-    @Test("Thickness alone decides the width handed to PencilKit")
-    func thicknessDrivesWidth() {
-        // Tip used to multiply into the width, so the two sliders fought over one
-        // number and their product could leave the thickness slider's own range.
-        let pointed = PenSettings(tip: 0.1, thickness: 4)
-        let blunt = PenSettings(tip: 1, thickness: 4)
-        #expect(pointed.effectiveWidth == blunt.effectiveWidth)
-        #expect(blunt.effectiveWidth == 4)
-        #expect(PenSettings(tip: 0.05, thickness: 0.4).effectiveWidth > 0)
-    }
-
-    private func spread(of stroke: PKStroke) -> CGFloat {
-        let widths = Array(stroke.path).map(\.size.width)
-        return (widths.max() ?? 0) - (widths.min() ?? 0)
     }
 }
 

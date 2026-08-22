@@ -1,19 +1,12 @@
 import CoreGraphics
 import Foundation
 
-/// Path smoothing behind the pen's "Stability" slider.
-///
-/// Stability 1 leaves the pencil's own path alone; higher values average each
-/// point against its neighbours, which straightens the tremor out of a slow line
-/// without shortening it (endpoints are pinned).
+/// Moving-average path smoothing, used where a hand-drawn path needs its
+/// tremor taken out without shortening it (endpoints stay pinned) — shape
+/// snapping and the ruler's live fit, not ordinary handwriting: see
+/// `PenSettings`'s own doc for why a per-pen "Stability" slider that reshaped
+/// every finished stroke was removed instead of fixed.
 public enum StrokeSmoothing {
-    /// The averaging window for a stability step. 1 → 1 (identity).
-    public static func window(forStability stability: Int) -> Int {
-        let clamped = min(max(stability, PenSettings.stabilityRange.lowerBound),
-                          PenSettings.stabilityRange.upperBound)
-        return clamped * 2 - 1
-    }
-
     /// Moving-average smoothing with pinned endpoints. Returns `points` unchanged
     /// for a window of 1 or a path too short to average.
     public static func smooth(_ points: [CGPoint], window: Int) -> [CGPoint] {
@@ -33,10 +26,6 @@ public enum StrokeSmoothing {
             result[index] = CGPoint(x: sumX / count, y: sumY / count)
         }
         return result
-    }
-
-    public static func smooth(_ points: [CGPoint], stability: Int) -> [CGPoint] {
-        smooth(points, window: window(forStability: stability))
     }
 }
 

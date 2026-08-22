@@ -128,21 +128,27 @@ Universal app, Swift 6 (strict concurrency), SwiftUI-first, Liquid Glass design 
   stored in the manifest (v6; every older version loads loss-free) with payloads
   under the package's `media/`. Tape is an element above the ink: tapping toggles
   `isHidden`, which lifts the strip and reveals what it covers.
-- The pen tray is data, not code: `PenLibrary` lists the instruments, each with a
-  `PenSettings` the user tunes. PencilKit has no API for smoothing, pressure
-  response or taper, so those sliders are applied in `PenShaper`, which rebuilds a
-  stroke once it's finished.
-- EVERY pen setting has to change the ink, and each one owns a different axis:
-  Thickness IS the width (nothing else scales it), Tip is how POINTED the tip is
-  and tapers the stroke's ends, Sensitivity is pressure response, Stability is
-  smoothing, Concentration is alpha, Colour is colour. Tip used to be a second
-  multiplier on the width — the same axis as Thickness, wearing a different name,
-  and their product could exceed the Thickness slider's own maximum. Sensitivity
-  used to no-op inside a ±0.25 deadband, so half its travel did nothing. Preset
-  thicknesses are the widths those instruments already drew at, so the arithmetic
-  change didn't quietly make every pen thinner. Pure math lives in `NotesModels.InkGeometry`
-  (`StrokeSmoothing`, `ScribbleDetector`, `LineGrouper`, `BeautifyLayout`) so it's
-  testable without a canvas — keep it there.
+- The pen tray is data, not code: `PenLibrary` lists a couple of FIXED
+  instruments (Pen, Marker, Highlighter), each with a `PenSettings` — just
+  Thickness, Concentration and Colour, the only things a user can still tune.
+  There is no Stability/Tip/Sensitivity anymore, and nothing rebuilds a
+  finished stroke's geometry at all. It used to: those three sliders were
+  applied by `PenShaper`, which rebuilt every stroke's control points once it
+  lifted (smoothing = averaging neighbours, Tip = tapering the ends, Sensitivity
+  = blending point size toward the stroke's average). It read PencilKit's OWN
+  fitted spline to do that — control points whose count tracks how fast the
+  pencil moved, not the stroke's length — so the exact same setting barely
+  touched a slow letter and crushed a fast one: round after round of chasing
+  writing that "shrank" or "lost edges" always led back to that rebuild, no
+  matter how the speed-dependence itself was patched. Removing the sliders
+  and the rebuild entirely was the actual fix: what PencilKit hands back for
+  ordinary handwriting is exactly what gets recorded, full stop. Pure math for
+  what's left lives in `NotesModels.InkGeometry` (`StrokeSmoothing`,
+  `ScribbleDetector`, `LineGrouper`, `BeautifyLayout`) so it's testable without
+  a canvas — keep it there. `StrokeSmoothing` itself is NOT dead: shape
+  snapping and the ruler's live fit still use it directly by window, because
+  those are deliberate, WATCHED actions (the user sees the fit happen under
+  the held pencil) rather than a silent rewrite of what they just wrote.
 - Hold-to-snap settles the shape WHILE the pencil is still down. `StrokeDwellRecognizer`
   watches the live touch (it never recognizes — `cancelsTouchesInView` off, always
   ends `.failed` — so PencilKit's own drawing gesture is untouched), and on a rest

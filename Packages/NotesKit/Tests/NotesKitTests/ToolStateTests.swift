@@ -21,20 +21,17 @@ struct ToolStateTests {
         }
     }
 
-    @Test("Tray instruments cover every PencilKit ink family we offer")
+    @Test("The tray is a couple of genuinely different instruments, not a wall of tuning")
     func trayCoversInkFamilies() {
         let inks = Set(PenLibrary.all.map(\.ink))
-        // `.monoline` is deliberately NOT offered: on real hardware it was the
-        // one ink family that could lose a hold-to-snap shape outright, traced
-        // to PencilKit's own renderer rather than anything fixable in this
-        // app — see the doc comment on `PenLibrary.all`.
+        // `.monoline` and `.watercolor` are deliberately NOT offered: on real
+        // hardware `.monoline` was the one ink family that could lose a
+        // hold-to-snap shape outright, traced to PencilKit's own renderer
+        // rather than anything fixable in this app — see the doc comment on
+        // `PenLibrary.all`.
         #expect(!inks.contains(.monoline))
         #expect(inks.contains(.pen))
-        #expect(inks.contains(.pencil))
-        #expect(inks.contains(.fountainPen))
         #expect(inks.contains(.marker))
-        #expect(inks.contains(.watercolor))
-        #expect(inks.contains(.crayon))
         #expect(Set(PenLibrary.all.map(\.id)).count == PenLibrary.all.count)
     }
 
@@ -72,29 +69,29 @@ struct ToolStateTests {
     func secondTapOpensSettings() {
         let state = ToolState()
         let ballpoint = PenLibrary.ballpoint
-        let brush = PenLibrary.preset(id: "brush")
+        let highlighter = PenLibrary.preset(id: "highlighter")
 
         #expect(state.selectPen(ballpoint) == true, "ballpoint is selected by default")
-        #expect(state.selectPen(brush) == false, "first tap only picks the brush up")
-        #expect(state.selectPen(brush) == true, "second tap asks for its settings")
+        #expect(state.selectPen(highlighter) == false, "first tap only picks the highlighter up")
+        #expect(state.selectPen(highlighter) == true, "second tap asks for its settings")
     }
 
     @Test("Each instrument keeps its own tuning")
     func perPenTuning() {
         let state = ToolState()
         let ballpoint = PenLibrary.ballpoint
-        let brush = PenLibrary.preset(id: "brush")
+        let highlighter = PenLibrary.preset(id: "highlighter")
 
         state.selectPen(ballpoint)
         state.currentWidth = 4
-        state.selectPen(brush)
+        state.selectPen(highlighter)
         state.currentWidth = 14
 
         #expect(state.settings(for: ballpoint).thickness == 4)
-        #expect(state.settings(for: brush).thickness == 14)
+        #expect(state.settings(for: highlighter).thickness == 14)
 
-        state.resetPen(brush)
-        #expect(state.settings(for: brush).thickness == brush.defaults.thickness)
+        state.resetPen(highlighter)
+        #expect(state.settings(for: highlighter).thickness == highlighter.defaults.thickness)
         #expect(state.settings(for: ballpoint).thickness == 4, "resetting one pen leaves the others alone")
     }
 
@@ -102,14 +99,8 @@ struct ToolStateTests {
     func tuningClamped() {
         let state = ToolState()
         let ballpoint = PenLibrary.ballpoint
-        state.setSettings(
-            PenSettings(stability: 99, tip: 5, sensitivity: -3, thickness: 900, concentration: 0),
-            for: ballpoint
-        )
+        state.setSettings(PenSettings(thickness: 900, concentration: 0), for: ballpoint)
         let settings = state.settings(for: ballpoint)
-        #expect(settings.stability == PenSettings.stabilityRange.upperBound)
-        #expect(settings.tip == 1)
-        #expect(settings.sensitivity == 0)
         #expect(settings.thickness == ballpoint.widthRange.upperBound)
         #expect(settings.concentration >= 0.05)
     }
