@@ -18,3 +18,5 @@ fastlane/test_output/
 fastlane/certs/
 fastlane/profiles/
 *.p8
+# graphify — generated knowledge-graph cache/output, not source.
+graphify-out/
