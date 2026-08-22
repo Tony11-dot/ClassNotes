@@ -4,27 +4,32 @@ import NotesModels
 import NotesServices
 import SwiftUI
 
-/// The editor's floating tool rail: FIXED to the leading edge, never dragged.
+/// The editor's floating tool rail: FIXED to the bottom edge, never dragged.
 ///
 /// It used to be draggable and could be dropped on any of the four edges —
 /// which meant it could also be dropped somewhere half off-screen, behind the
 /// page manager, or simply forgotten about in a spot that didn't get found
-/// again. There is now exactly one place it lives: pinned to the left edge,
-/// vertically centred, where every tool has room to show. The only way to
-/// change how much of it is on screen is the explicit hide control
-/// (`hideButton`, the first thing in `expandedRail`) — tapping it collapses
-/// the whole tray down to a small circular chip (the same idea as
-/// `NovaBubble`); tapping the chip pops the FULL rail back out, always at
-/// that same fixed spot, never wherever a previous drag happened to leave it.
+/// again. There is now exactly one place it lives: pinned to the bottom edge,
+/// horizontally centred, laid out as a ROW — the pen tray is where a real
+/// tray of pens actually sits, in front of the hand, not down the side of the
+/// page. Every glyph in it (`trayItem`) is drawn landscape by
+/// `PenGlyphView` (barrel leading, nib trailing) and then rotated -90° so the
+/// nib — the end that matters — points straight up out of the row, the same
+/// way a pen stands in a cup. The only way to change how much of it is on
+/// screen is the explicit hide control (`hideButton`, the first thing in
+/// `expandedRail`) — tapping it collapses the whole tray down to a small
+/// circular chip (the same idea as `NovaBubble`); tapping the chip pops the
+/// FULL rail back out, always at that same fixed spot, never wherever a
+/// previous drag happened to leave it.
 ///
-/// Expanded, top to bottom:
+/// Expanded, leading to trailing:
 /// - **Modes and actions** — write, tape, text box, photo, file, voice note, the
 ///   page manager, and the real-time beautification switch.
 /// - **The pen tray** — every instrument in `PenLibrary` plus the eraser and the
 ///   ruler. The selected instrument lifts out of the rail; tapping it a second
 ///   time opens its settings, exactly like picking a pen up off a desk and then
 ///   inspecting it.
-/// - **NOVA, undo and redo**, at the foot.
+/// - **NOVA, undo and redo**, at the far end.
 struct ToolRailView: View {
     @Environment(\.theme) private var theme
     @Environment(AppServices.self) private var services
@@ -136,13 +141,13 @@ struct ToolRailView: View {
     /// (that is for a control that reacts to its own touches — here it
     /// re-rendered the whole rail's material on every tap on a pen).
     ///
-    /// Always a column now that the rail is fixed to the leading edge —
+    /// Always a row now that the rail is fixed to the bottom edge —
     /// `RailFlowLayout` still owns the wrap, in case the tray ever grows
-    /// taller than the screen has room for, but it only ever wraps into a
-    /// second COLUMN, never a row.
+    /// wider than the screen has room for, but it only ever wraps into a
+    /// second ROW, never a column.
     private func expandedRail(in size: CGSize) -> some View {
-        let budget = size.height - Self.edgeInset * 2
-        return RailFlowLayout(axis: .vertical, spacing: 6) {
+        let budget = size.width - Self.edgeInset * 2
+        return RailFlowLayout(axis: .horizontal, spacing: 6) {
             hideButton
             modeButtons
             penTray
@@ -162,9 +167,9 @@ struct ToolRailView: View {
             .disabled(!tracker.canRedo)
             .opacity(tracker.canRedo ? 1 : 0.35)
         }
-        .frame(maxHeight: budget)
-        .padding(.vertical, 10)
-        .padding(.horizontal, 6)
+        .frame(maxWidth: budget)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
         .dsGlass(in: RoundedRectangle(cornerRadius: 30, style: .continuous))
         .shadow(color: .black.opacity(0.22), radius: 16, y: 8)
     }
@@ -174,7 +179,7 @@ struct ToolRailView: View {
     /// tuck the rail away, and removing dragging without replacing it would
     /// have left no way to get the tools out from over the page at all.
     private var hideButton: some View {
-        railButton("Hide tools", systemImage: "chevron.left") {
+        railButton("Hide tools", systemImage: "chevron.down") {
             withAnimation(.spring(duration: 0.3)) { isCollapsed = true }
         }
     }
@@ -208,7 +213,7 @@ struct ToolRailView: View {
             toolState.select(.tape)
             panel = .tape
         }
-        .popover(isPresented: binding(.tape), arrowEdge: .leading) {
+        .popover(isPresented: binding(.tape), arrowEdge: .bottom) {
             TapePanel(toolState: toolState, onVisibility: onTapeVisibility)
                 .presentationCompactAdaptation(.popover)
         }
@@ -220,7 +225,7 @@ struct ToolRailView: View {
             toolState.select(.text)
             panel = .text
         }
-        .popover(isPresented: binding(.text), arrowEdge: .leading) {
+        .popover(isPresented: binding(.text), arrowEdge: .bottom) {
             TextBoxPanel(toolState: toolState)
                 .presentationCompactAdaptation(.popover)
         }
@@ -232,7 +237,7 @@ struct ToolRailView: View {
             toolState.select(.codeBlock)
             panel = .codeBlock
         }
-        .popover(isPresented: binding(.codeBlock), arrowEdge: .leading) {
+        .popover(isPresented: binding(.codeBlock), arrowEdge: .bottom) {
             CodeBlockPanel(toolState: toolState)
                 .presentationCompactAdaptation(.popover)
         }
@@ -312,7 +317,7 @@ struct ToolRailView: View {
                 toolState.beautify.isEnabled.toggle()
             }
         )
-        .popover(isPresented: binding(.beautify), arrowEdge: .leading) {
+        .popover(isPresented: binding(.beautify), arrowEdge: .bottom) {
             BeautifyPanel(toolState: toolState, onBeautifyNow: onBeautifyNow)
                 .presentationCompactAdaptation(.popover)
         }
@@ -388,9 +393,9 @@ struct ToolRailView: View {
             // pen lifted off a desk.
             //
             // Everything about that read stays INSIDE the rail's glass. The plate
-            // stays inside the slot the row reserves (`glyphHeight + 10`) so there
-            // is no vertical overlap to z-sort, and the selected glyph no longer
-            // slides out past the glass's right edge: it used to `offset(x: 9)` and
+            // stays inside the slot the row reserves (`glyphHeight + 10`, before
+            // rotation) so there is no overlap to z-sort, and the selected glyph no
+            // longer slides out past the glass's edge: it used to `offset(x: 9)` and
             // scale from `.leading`, which pushed it some 17 pt beyond the rounded
             // rect. A view crossing the boundary of a `glassEffect` gets promoted
             // out of the glass layer, and the promotion lands a frame late — which
@@ -406,14 +411,24 @@ struct ToolRailView: View {
                 }
             }
             .scaleEffect(isSelected ? 1.07 : 1)
-            .frame(width: Self.glyphWidth, height: Self.glyphHeight + 10)
+            // `PenGlyphView` draws landscape — barrel leading, nib trailing — the
+            // same shape it's always been built as (see its own doc). Turned
+            // upright here so the nib points straight up out of a bottom, ROW-laid
+            // rail: the tray reads as pens standing in a cup, not lying on their
+            // sides. `-90` (not `90`): the nib sits at the glyph's TRAILING edge,
+            // and a counter-clockwise turn is what carries trailing to the top.
+            .rotationEffect(.degrees(-90))
+            // Width/height swapped from the pre-rotation slot: rotating 90°
+            // exchanges which axis the glyph's own width and height (plus the
+            // plate's extra headroom) land on.
+            .frame(width: Self.glyphHeight + 10, height: Self.glyphWidth)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .animation(.spring(duration: 0.3, bounce: 0.28), value: isSelected)
         .accessibilityLabel(preset.displayName)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
-        .popover(isPresented: binding(.pen(preset.id)), arrowEdge: .leading) {
+        .popover(isPresented: binding(.pen(preset.id)), arrowEdge: .bottom) {
             PenSettingsPanel(toolState: toolState, preset: preset)
                 .presentationCompactAdaptation(.popover)
         }
@@ -427,7 +442,7 @@ struct ToolRailView: View {
                 toolState.select(.eraser)
             }
         }
-        .popover(isPresented: binding(.eraser), arrowEdge: .leading) {
+        .popover(isPresented: binding(.eraser), arrowEdge: .bottom) {
             EraserPanel(toolState: toolState)
                 .presentationCompactAdaptation(.popover)
         }
@@ -459,17 +474,17 @@ struct ToolRailView: View {
 
     // MARK: - Positioning
 
-    /// The collapsed chip's one fixed spot: the leading edge, vertically
+    /// The collapsed chip's one fixed spot: the bottom edge, horizontally
     /// centred.
     private func chipCenter(in size: CGSize) -> CGPoint {
-        CGPoint(x: Self.edgeInset + Self.chipSize / 2, y: size.height / 2)
+        CGPoint(x: size.width / 2, y: size.height - Self.edgeInset - Self.chipSize / 2)
     }
 
-    /// The expanded rail's one fixed spot: pinned out from the leading edge
-    /// by `expandedShortHalfExtent`, same vertical centre as the chip — this
+    /// The expanded rail's one fixed spot: pinned up from the bottom edge by
+    /// `expandedShortHalfExtent`, same horizontal centre as the chip — this
     /// is "that place of its" the rail always pops back out to, whatever was
     /// last open or closed.
     private func expandedCenter(in size: CGSize) -> CGPoint {
-        CGPoint(x: Self.edgeInset + Self.expandedShortHalfExtent, y: size.height / 2)
+        CGPoint(x: size.width / 2, y: size.height - Self.edgeInset - Self.expandedShortHalfExtent)
     }
 }

@@ -53,12 +53,18 @@ struct ToolRailRenderTests {
         renderer.scale = 2
         let image = try #require(renderer.uiImage)
 
-        // The chip's default resting spot: `ToolRailView.defaultCenter` —
-        // `edgeInset (30) + chipSize/2 (28)` in from the left edge, vertically
-        // centered. Offset from the exact center so the sample lands on the
-        // circle's fill rather than a white stroke of the icon glyph drawn
-        // on top of it.
-        let chipPoint = CGPoint(x: 58 + 18, y: size.height / 2 + 18)
+        // The chip's default resting spot: `ToolRailView.chipCenter` —
+        // horizontally centered, `edgeInset (30) + chipSize/2 (28)` up from
+        // the bottom edge. `pixel(at:canvasSize:)` below draws into a raw
+        // `CGContext`, which (unlike SwiftUI/UIKit) puts its origin at the
+        // BOTTOM-left — so a point's Y has to be given already flipped
+        // (`canvasSize.height - y`), which for this chip collapses to
+        // `edgeInset + chipSize/2`. Offset by 18, same as the original
+        // leading-edge version offset from ITS center, so the sample lands
+        // on the circle's fill rather than the icon glyph drawn on top of
+        // it — confirmed empirically (`Read` on a `pngData()` dump of
+        // `image`), since the flip makes this easy to get backwards.
+        let chipPoint = CGPoint(x: size.width / 2, y: 58 - 18)
         let pixel = try #require(image.pixel(at: chipPoint, canvasSize: size))
 
         let accent = theme.accent
