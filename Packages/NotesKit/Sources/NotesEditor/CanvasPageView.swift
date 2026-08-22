@@ -1254,7 +1254,19 @@ struct CanvasPageView: UIViewRepresentable {
                    !self.isUsingTool, !self.isPencilDown {
                     self.replace(healed, on: canvas)
                 }
-                let data = healed.dataRepresentation()
+                // Serializing a full page is real CPU work — geometry encoding
+                // that can run tens of ms on a busy page — and doing it here,
+                // on the main actor, held up the run loop for however long it
+                // took. This fires 600ms after the hand goes still, which is
+                // exactly the ordinary pause between words: the ink pass
+                // resuming main-thread work right as the hand comes back down
+                // is a documented way for UIKit to coalesce or drop the
+                // Pencil's own touch batches, indistinguishable from the page
+                // side from a letter silently missing a stretch of itself —
+                // and unlike a whole stroke disappearing, there's no count
+                // drop for the loss guard above to catch. Hopping off-actor
+                // for the encode itself doesn't change when the save lands.
+                let data = await Task.detached(priority: .utility) { healed.dataRepresentation() }.value
                 try? await self.store.savePageData(
                     data, notebook: self.notebookID, page: self.pageID
                 )
