@@ -55,6 +55,15 @@ public struct ProfileScreen: View {
                     }
                 }
                 .listRowBackground(theme.surfaceRaised.color)
+                Section {
+                    Link(destination: ClassMateLinks.legalHome) {
+                        Label("Delete Account", systemImage: "trash")
+                            .foregroundStyle(.red)
+                    }
+                } footer: {
+                    Text("Opens your ClassMate account page, where you can permanently delete your account and data.")
+                }
+                .listRowBackground(theme.surfaceRaised.color)
             }
             .scrollContentBackground(.hidden)
             .background(theme.surface.color)
