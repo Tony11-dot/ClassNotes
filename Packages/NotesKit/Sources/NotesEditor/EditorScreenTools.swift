@@ -33,10 +33,11 @@ struct CopiedSnip {
     let frame: CGRect
 }
 
-/// Taps the page in fill mode. A bare tap surface rather than a gesture on the
-/// canvas, because the canvas's own drawing recognizer is disabled in this mode
-/// and its scroll view would otherwise swallow the touch.
-struct FillPlacementLayer: View {
+/// Taps the page in a tap-to-act mode (fill, or a straight-line direction). A
+/// bare tap surface rather than a gesture on the canvas, because the canvas's
+/// own drawing recognizer is disabled in these modes and its scroll view would
+/// otherwise swallow the touch.
+struct TapPlacementLayer: View {
     let displaySize: CGSize
     let logicalSize: CGSize
     let onTap: (CGPoint) -> Void
@@ -74,6 +75,42 @@ extension EditorScreen {
         let colour = toolState.currentColor(theme: theme)
         await model.insertFill(
             outline: outline, colorHex: colour.hexString, on: page.id
+        )
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
+}
+
+// MARK: - Straight line
+
+/// Which edge-to-edge direction the straight-line tool inks.
+enum LineAxis {
+    case horizontal, vertical
+}
+
+extension EditorScreen {
+    /// Inks a perfectly straight line all the way across the page through
+    /// `point`, in the SAME ink the pen tray is holding (colour, thickness,
+    /// ink type) — a real `PKStroke`, not a separate element, so it erases
+    /// exactly like anything else drawn by hand: a pixel eraser takes a bite
+    /// out of it, a stroke eraser removes the whole line, same as any stroke.
+    @MainActor
+    func drawStraightLine(through point: CGPoint, axis: LineAxis, on page: PageRecord) async {
+        guard let drawingBefore = tracker.drawing(for: page.id) else { return }
+        let size = page.logicalSize
+        let path: [CGPoint]
+        switch axis {
+        case .horizontal:
+            path = [CGPoint(x: 0, y: point.y), CGPoint(x: size.width, y: point.y)]
+        case .vertical:
+            path = [CGPoint(x: point.x, y: 0), CGPoint(x: point.x, y: size.height)]
+        }
+        let (ink, width) = toolState.currentPenInk(theme: theme)
+        let stroke = ShapeSnapper.stroke(from: path, ink: ink, width: width)
+        let drawingAfter = PKDrawing(strokes: drawingBefore.strokes + [stroke])
+        tracker.setDrawing(drawingAfter, for: page.id)
+        tracker.registerElementStep(
+            pageID: page.id, drawingBefore: drawingBefore, drawingAfter: drawingAfter,
+            elementsBefore: page.elements, elementsAfter: page.elements, named: "Line"
         )
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }

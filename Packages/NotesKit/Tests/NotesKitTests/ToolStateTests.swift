@@ -162,6 +162,27 @@ struct ToolStateTests {
         #expect(state.tool == .pen)
     }
 
+    @Test("Eraser toggle round-trips to whatever tool was active, not just pen")
+    func doubleTapEraserRestoresNonPenTool() {
+        let state = ToolState()
+        state.select(.tape)
+        state.handlePencilTap()
+        #expect(state.tool == .eraser)
+        state.handlePencilTap()
+        #expect(state.tool == .tape)
+    }
+
+    @Test("Select-tool toggle round-trips to whatever tool was active, not just pen")
+    func selectToolRestoresNonPenTool() {
+        let state = ToolState()
+        state.edit { $0.pencilDoubleTap = .selectTool }
+        state.select(.tape)
+        state.handlePencilTap()
+        #expect(state.tool == .lasso)
+        state.handlePencilTap()
+        #expect(state.tool == .tape)
+    }
+
     @Test("Mapped to the previous tool, double-tap swaps back and forth")
     func doubleTapPrevious() {
         let state = ToolState()

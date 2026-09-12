@@ -355,6 +355,22 @@ struct ToolRailView: View {
             toolState.select(.fill)
             panel = nil
         }
+        // Edge-to-edge straight lines, in the pen's own colour/thickness — tap
+        // a direction, then tap where the line should cross.
+        railButton(
+            "Horizontal line", systemImage: ToolState.Tool.horizontalLine.symbolName,
+            isActive: toolState.tool == .horizontalLine
+        ) {
+            toolState.select(.horizontalLine)
+            panel = nil
+        }
+        railButton(
+            "Vertical line", systemImage: ToolState.Tool.verticalLine.symbolName,
+            isActive: toolState.tool == .verticalLine
+        ) {
+            toolState.select(.verticalLine)
+            panel = nil
+        }
         railButton("Select", systemImage: "lasso", isActive: toolState.tool == .lasso) {
             toolState.select(.lasso)
             panel = nil

@@ -37,6 +37,10 @@ public final class ToolState {
         case fill
         /// Circling something selects it, for copying, moving or deleting.
         case lasso
+        /// Tapping the page inks a perfectly straight line, edge to edge, through
+        /// the tap — with the current pen's own colour, thickness and ink type.
+        case horizontalLine
+        case verticalLine
 
         public var id: String { rawValue }
 
@@ -51,6 +55,8 @@ public final class ToolState {
             case .hand: "Move"
             case .fill: "Fill"
             case .lasso: "Select"
+            case .horizontalLine: "Horizontal Line"
+            case .verticalLine: "Vertical Line"
             }
         }
 
@@ -65,6 +71,8 @@ public final class ToolState {
             case .hand: "hand.point.up.left"
             case .fill: "drop.fill"
             case .lasso: "lasso"
+            case .horizontalLine: "arrow.left.and.right"
+            case .verticalLine: "arrow.up.and.down"
             }
         }
     }
@@ -113,7 +121,8 @@ public final class ToolState {
     // MARK: - Mode
 
     public var tool: Tool = .pen
-    /// Last writing tool, for Pencil double-tap toggling.
+    /// Whatever tool was active before the current eraser/lasso toggle or a
+    /// `.previousTool` Pencil gesture — not necessarily a "writing" tool.
     public private(set) var previousDrawingTool: Tool = .pen
 
     // MARK: - Pen tray
@@ -391,7 +400,12 @@ public final class ToolState {
             let index = order.firstIndex(of: tool)
             select(index.map { order[($0 + 1) % order.count] } ?? .pen)
         case .selectTool:
-            select(tool == .lasso ? previousDrawingTool : .lasso)
+            if tool == .lasso {
+                tool = previousDrawingTool == .lasso ? .pen : previousDrawingTool
+            } else {
+                previousDrawingTool = tool
+                tool = .lasso
+            }
         case .none:
             break
         case .showColors:
@@ -429,11 +443,22 @@ public final class ToolState {
         selectPen(all[(index + 1) % all.count])
     }
 
+    /// Toggles eraser <-> whatever tool was actually active, not just pen.
+    ///
+    /// This used to call `select(.eraser)`, which only records
+    /// `previousDrawingTool` when LEAVING `.pen`/`.eraser` — so squeezing/
+    /// double-tapping into eraser from tape, lasso, fill, or any other mode
+    /// left `previousDrawingTool` stale, and toggling back out of eraser
+    /// dropped the user on whatever `.pen`/`.eraser` round-trip happened to
+    /// leave behind (usually `.pen`) instead of the tool they were actually
+    /// using. Capturing `tool` here, unconditionally, right before switching
+    /// to eraser, is what makes the round-trip exact.
     private func toggleEraser() {
         if tool == .eraser {
             tool = previousDrawingTool == .eraser ? .pen : previousDrawingTool
         } else {
-            select(.eraser)
+            previousDrawingTool = tool
+            tool = .eraser
         }
     }
 
@@ -477,11 +502,8 @@ public final class ToolState {
     public func pkTool(theme: ThemeSpec) -> PKTool {
         switch tool {
         case .pen:
-            let preset = pen
-            let settings = settings(for: preset)
-            let base = settings.colorHex.flatMap(ThemeColor.init(hex:)) ?? theme.ink
-            let color = base.uiColor.withAlphaComponent(settings.concentration)
-            return PKInkingTool(preset.ink.pkInkType, color: color, width: settings.effectiveWidth)
+            let (ink, width) = currentPenInk(theme: theme)
+            return PKInkingTool(ink.inkType, color: ink.color, width: width)
         case .eraser:
             switch eraserMode {
             case .pixel: return PKEraserTool(.bitmap, width: eraserWidth)
@@ -490,10 +512,23 @@ public final class ToolState {
             // not erase anything in this mode — the tape layer handles the taps.
             case .tapeOnly: return PKInkingTool(.pen, color: .clear, width: 1)
             }
-        case .tape, .text, .codeBlock, .functionPlot, .hand, .fill, .lasso:
+        case .tape, .text, .codeBlock, .functionPlot, .hand, .fill, .lasso,
+             .horizontalLine, .verticalLine:
             // Inert — drawing is disabled in these modes; the value is unused.
             return PKInkingTool(.pen, color: .clear, width: 1)
         }
+    }
+
+    /// The ink + width the pen in hand would draw with right now — the exact
+    /// resolution `pkTool(theme:)` uses for `.pen`, factored out so the
+    /// straight-line tool can ink a stroke with the SAME colour/thickness the
+    /// pen tray shows, instead of duplicating this logic.
+    public func currentPenInk(theme: ThemeSpec) -> (ink: PKInk, width: CGFloat) {
+        let preset = pen
+        let settings = settings(for: preset)
+        let base = settings.colorHex.flatMap(ThemeColor.init(hex:)) ?? theme.ink
+        let color = base.uiColor.withAlphaComponent(settings.concentration)
+        return (PKInk(preset.ink.pkInkType, color: color), settings.effectiveWidth)
     }
 }
 

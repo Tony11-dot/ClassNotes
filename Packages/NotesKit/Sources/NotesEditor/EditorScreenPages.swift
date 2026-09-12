@@ -476,8 +476,14 @@ extension EditorScreen {
             }
         }
         if toolState.tool == .fill {
-            FillPlacementLayer(displaySize: displaySize, logicalSize: page.logicalSize) { point in
+            TapPlacementLayer(displaySize: displaySize, logicalSize: page.logicalSize) { point in
                 Task { await floodFill(at: point, on: page) }
+            }
+        }
+        if toolState.tool == .horizontalLine || toolState.tool == .verticalLine {
+            let axis: LineAxis = toolState.tool == .horizontalLine ? .horizontal : .vertical
+            TapPlacementLayer(displaySize: displaySize, logicalSize: page.logicalSize) { point in
+                Task { await drawStraightLine(through: point, axis: axis, on: page) }
             }
         }
         if toolState.tool == .lasso {
