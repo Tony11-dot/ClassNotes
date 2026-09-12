@@ -229,7 +229,9 @@ extension EditorScreen {
                 return
             }
             let elementsBefore = model.page(snip.pageID)?.elements ?? []
-            await model.insertImage(data, fileExtension: "png", frame: snip.frame, on: snip.pageID)
+            await model.insertImage(
+                data, fileExtension: "png", frame: snip.frame, on: snip.pageID, renderAboveInk: true
+            )
             let elementsAfter = model.page(snip.pageID)?.elements ?? []
             tracker.registerElementStep(
                 pageID: snip.pageID, elementsBefore: elementsBefore, elementsAfter: elementsAfter, named: "Paste"
@@ -243,7 +245,7 @@ extension EditorScreen {
                 return
             }
             let elementsBefore = model.page(insertedPageID)?.elements ?? []
-            await model.insertImage(data, fileExtension: "png")
+            await model.insertImage(data, fileExtension: "png", renderAboveInk: true)
             let elementsAfter = model.page(insertedPageID)?.elements ?? []
             tracker.registerElementStep(
                 pageID: insertedPageID, elementsBefore: elementsBefore, elementsAfter: elementsAfter, named: "Paste"
@@ -419,5 +421,46 @@ extension EditorScreen {
         )
         lassoSelection?.caught.bounds = selection.caught.bounds
             .offsetBy(dx: offset.width, dy: offset.height)
+    }
+
+    /// Scales the whole catch — ink AND elements — to fit a new box, the same
+    /// way `moveSelection` translates the whole catch rather than just
+    /// redrawing the marching-ants outline around it. Top-left anchored, same
+    /// as the corner handle that drove it.
+    @MainActor
+    func resizeSelection(to newBounds: CGRect) async {
+        guard let selection = lassoSelection else { return }
+        let old = selection.caught.bounds
+        guard old.width > 0, old.height > 0, newBounds.width > 0, newBounds.height > 0 else { return }
+        let transform = CGAffineTransform(translationX: -old.minX, y: -old.minY)
+            .concatenating(CGAffineTransform(scaleX: newBounds.width / old.width, y: newBounds.height / old.height))
+            .concatenating(CGAffineTransform(translationX: newBounds.minX, y: newBounds.minY))
+
+        let elementsBefore = model.page(selection.pageID)?.elements ?? []
+        var drawingBefore: PKDrawing?
+        var drawingAfter: PKDrawing?
+        if !selection.caught.strokeIndices.isEmpty,
+           let drawing = tracker.drawing(for: selection.pageID) {
+            drawingBefore = drawing
+            let resizing = Set(selection.caught.strokeIndices)
+            let strokes = drawing.strokes.enumerated().map { index, stroke -> PKStroke in
+                guard resizing.contains(index) else { return stroke }
+                var scaled = stroke
+                scaled.transform = stroke.transform.concatenating(transform)
+                return scaled
+            }
+            let after = PKDrawing(strokes: strokes)
+            drawingAfter = after
+            tracker.setDrawing(after, for: selection.pageID)
+        }
+        for id in selection.caught.elementIDs {
+            await model.transformElement(id, on: selection.pageID, by: transform)
+        }
+        let elementsAfter = model.page(selection.pageID)?.elements ?? []
+        tracker.registerElementStep(
+            pageID: selection.pageID, drawingBefore: drawingBefore, drawingAfter: drawingAfter,
+            elementsBefore: elementsBefore, elementsAfter: elementsAfter, named: "Resize Selection"
+        )
+        lassoSelection?.caught.bounds = newBounds
     }
 }

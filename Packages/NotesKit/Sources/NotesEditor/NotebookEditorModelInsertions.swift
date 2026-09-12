@@ -18,7 +18,7 @@ extension NotebookEditorModel {
         return (max(0, x), max(0, y))
     }
 
-    public func insertImage(_ data: Data, fileExtension: String) async {
+    public func insertImage(_ data: Data, fileExtension: String, renderAboveInk: Bool = false) async {
         guard let pageID = existingTargetPageID,
               let filename = try? await store.saveMedia(data, notebook: notebookID, fileExtension: fileExtension) else { return }
         let pageSize = page(pageID)?.logicalSize ?? PageGeometry.size
@@ -26,7 +26,7 @@ extension NotebookEditorModel {
         let (x, y) = center(width: size.width, height: size.height, on: pageID)
         await append(PageElement(
             kind: .image, x: x, y: y, width: size.width, height: size.height,
-            payloadFilename: filename
+            payloadFilename: filename, renderAboveInk: renderAboveInk
         ), to: pageID)
     }
 
@@ -37,13 +37,15 @@ extension NotebookEditorModel {
     /// the viewport, which read as "paste does nothing". Landing it exactly
     /// where the copy was taken from guarantees it's somewhere the user is
     /// already looking.
-    public func insertImage(_ data: Data, fileExtension: String, frame: CGRect, on pageID: UUID) async {
+    public func insertImage(
+        _ data: Data, fileExtension: String, frame: CGRect, on pageID: UUID, renderAboveInk: Bool = false
+    ) async {
         guard manifest?.pages.contains(where: { $0.id == pageID }) == true,
               let filename = try? await store.saveMedia(data, notebook: notebookID, fileExtension: fileExtension)
         else { return }
         await append(PageElement(
             kind: .image, x: frame.minX, y: frame.minY, width: frame.width, height: frame.height,
-            payloadFilename: filename
+            payloadFilename: filename, renderAboveInk: renderAboveInk
         ), to: pageID)
     }
 

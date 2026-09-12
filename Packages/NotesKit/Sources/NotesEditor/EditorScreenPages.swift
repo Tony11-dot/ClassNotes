@@ -206,7 +206,14 @@ extension EditorScreen {
     /// scroll offset sits still. See `PinchZoomAnchor` for the anchor math and
     /// its one deliberate approximation (the vertical axis).
     func zoomGesture(containerWidth: CGFloat) -> some Gesture {
-        MagnifyGesture(minimumScaleDelta: 0.01)
+        // 0.01 fired a re-layout of every visible page's canvas AND a manual
+        // scroll re-center on every ~1% of magnification — at pinch speed that's
+        // easily 100+ of both a second, each one a real `PKCanvasView` zoomScale
+        // re-pin plus a `ScrollPosition` write racing the SwiftUI re-layout from
+        // `pageZoom` changing underneath it, which is what a coarse pinch felt
+        // like a stutter/blink instead of a continuous scale. A quarter of that
+        // update rate is still well under what a finger can perceive as a step.
+        MagnifyGesture(minimumScaleDelta: 0.04)
             .onChanged { value in
                 let anchor = pinchZoomAnchor ?? {
                     let captured = capturePinchAnchor(at: value.startLocation, containerWidth: containerWidth)
@@ -483,6 +490,7 @@ extension EditorScreen {
                     onDuplicate: { Task { await duplicateSelection() } },
                     onCopy: { copySelection() },
                     onMove: { offset in Task { await moveSelection(by: offset) } },
+                    onResize: { bounds in Task { await resizeSelection(to: bounds) } },
                     onDismiss: { lassoSelection = nil }
                 )
             } else {

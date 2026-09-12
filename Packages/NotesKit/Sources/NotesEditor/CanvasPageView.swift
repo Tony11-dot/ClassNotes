@@ -418,6 +418,22 @@ struct CanvasPageView: UIViewRepresentable {
     @Environment(AppServices.self) private var services
     @Environment(\.theme) private var theme
 
+    /// PencilKit auto-adapts near-black/near-white ink to keep contrast against
+    /// whatever interface style the canvas is told it has — so this must track
+    /// the PAGE'S actual paper darkness, not the app's UI theme. Tying it to
+    /// `theme.isDark` (the original wiring) meant a black pen on a page whose
+    /// paper the user set to white — while running a dark app theme — got
+    /// silently re-rendered by PencilKit as if it were on a dark page, and vice
+    /// versa: exactly "the color I picked isn't the color that came out."
+    /// `nil` paper color really does mean "follow the theme," so that's the
+    /// only case still allowed to fall back to it.
+    private var paperIsDark: Bool {
+        if let hex = page.paperColorHex, let color = ThemeColor(hex: hex) {
+            return color.relativeLuminance < 0.4
+        }
+        return theme.isDark
+    }
+
     func makeUIView(context: Context) -> PageCanvasView {
         let canvas = PageCanvasView()
         canvas.logicalSize = page.logicalSize
@@ -432,7 +448,7 @@ struct CanvasPageView: UIViewRepresentable {
         // the page list instead of leaving marks.
         canvas.drawingPolicy = .pencilOnly
         canvas.delegate = context.coordinator
-        canvas.overrideUserInterfaceStyle = theme.isDark ? .dark : .light
+        canvas.overrideUserInterfaceStyle = paperIsDark ? .dark : .light
 
         let pencilInteraction = UIPencilInteraction()
         pencilInteraction.delegate = context.coordinator
@@ -487,7 +503,7 @@ struct CanvasPageView: UIViewRepresentable {
         // it's actually the surface being drawn on, so the elements now
         // visually behind it (images, files, text, links) stay reachable.
         canvas.interceptsTouches = context.coordinator.shouldEnableDrawing() || allowsZoom
-        canvas.overrideUserInterfaceStyle = theme.isDark ? .dark : .light
+        canvas.overrideUserInterfaceStyle = paperIsDark ? .dark : .light
         context.coordinator.dwellWatcher?.holdRadius = CGFloat(toolState.snapTolerance)
     }
 

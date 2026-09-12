@@ -154,6 +154,16 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
     /// For tape: `true` = the strip is lifted, so what's underneath shows through
     /// and only the outline remains. Tapping toggles it.
     public var isHidden: Bool
+    /// `true` pins this element above the ink layer instead of below it — used
+    /// for a lasso paste, which lands an image back at the exact frame it was
+    /// copied from. Any ink still there (Copy never removes the original) would
+    /// otherwise paint over the paste at that same spot, on the same "ink draws
+    /// above non-tape elements" rule that lets you annotate an ordinary photo.
+    /// A pasted snapshot needs the opposite: it should read as clearly on top,
+    /// like something just placed there, not as hidden behind what it was cut
+    /// from. Defaults `false` so every ordinary image/file/text element keeps
+    /// today's under-ink behaviour.
+    public var renderAboveInk: Bool
 
     public init(
         id: UUID = UUID(),
@@ -198,7 +208,8 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
         colorHex: String? = nil,
         points: [PagePoint] = [],
         strokeWidth: Double? = nil,
-        isHidden: Bool = false
+        isHidden: Bool = false,
+        renderAboveInk: Bool = false
     ) {
         self.id = id
         self.kind = kind
@@ -243,6 +254,7 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
         self.points = points
         self.strokeWidth = strokeWidth
         self.isHidden = isHidden
+        self.renderAboveInk = renderAboveInk
     }
 
     public var frame: CGRect {
@@ -312,7 +324,7 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
         case axisXUnit, axisYUnit, axisZUnit
         case axisXTickFormat, axisYTickFormat, axisZTickFormat
         case axisXTickInterval, axisYTickInterval, axisZTickInterval
-        case tapeShape, tapePattern, colorHex, points, strokeWidth, isHidden
+        case tapeShape, tapePattern, colorHex, points, strokeWidth, isHidden, renderAboveInk
     }
 
     /// Custom decode so v2–v5 elements (which had none of the tape / text-size /
@@ -362,5 +374,6 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
         points = try c.decodeIfPresent([PagePoint].self, forKey: .points) ?? []
         strokeWidth = try c.decodeIfPresent(Double.self, forKey: .strokeWidth)
         isHidden = try c.decodeIfPresent(Bool.self, forKey: .isHidden) ?? false
+        renderAboveInk = try c.decodeIfPresent(Bool.self, forKey: .renderAboveInk) ?? false
     }
 }

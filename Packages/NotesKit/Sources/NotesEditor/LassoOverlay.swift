@@ -83,10 +83,22 @@ struct LassoSelectionView: View {
     let onDuplicate: () -> Void
     let onCopy: () -> Void
     let onMove: (CGSize) -> Void
+    /// Live corner-resize: the whole catch (ink AND elements) scales to fit the
+    /// new bounds, the same way `onMove` translates the whole catch rather than
+    /// just redrawing the marching-ants box around it. Bounds are in the page's
+    /// logical space, top-left anchored to match the single-handle pattern
+    /// `PageElementsLayer`'s own resize handle already uses.
+    let onResize: (CGRect) -> Void
     let onDismiss: () -> Void
 
     @State private var phase: CGFloat = 0
     @State private var drag: CGSize = .zero
+    /// Live resize translation from the corner handle, in DISPLAY points —
+    /// same idea as `drag`, so the box grows/shrinks under the finger instead
+    /// of only snapping to its new size on release.
+    @State private var resizeDelta: CGSize = .zero
+
+    private static let minimumSide: CGFloat = 32
 
     private var scale: CGFloat {
         logicalSize.width > 0 ? displaySize.width / logicalSize.width : 1
@@ -98,6 +110,9 @@ struct LassoSelectionView: View {
             width: selection.bounds.width * scale, height: selection.bounds.height * scale
         )
     }
+
+    private var liveWidth: CGFloat { max(Self.minimumSide, frame.width + resizeDelta.width) }
+    private var liveHeight: CGFloat { max(Self.minimumSide, frame.height + resizeDelta.height) }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -115,7 +130,7 @@ struct LassoSelectionView: View {
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .fill(theme.accent.withAlpha(0.08).color)
                 )
-                .frame(width: frame.width, height: frame.height)
+                .frame(width: liveWidth, height: liveHeight)
                 .offset(x: frame.minX + drag.width, y: frame.minY + drag.height)
                 .gesture(
                     DragGesture()
@@ -130,6 +145,12 @@ struct LassoSelectionView: View {
                         }
                 )
 
+            resizeHandle
+                .offset(
+                    x: frame.minX + drag.width + liveWidth - 16,
+                    y: frame.minY + drag.height + liveHeight - 16
+                )
+
             actions
                 .offset(
                     x: max(8, min(frame.minX + drag.width, displaySize.width - 232)),
@@ -142,6 +163,33 @@ struct LassoSelectionView: View {
                 phase = -24
             }
         }
+    }
+
+    /// A small, precise grab point at the selection's bottom-right corner,
+    /// matching `PageElementsLayer.resizeHandle` — the same gesture the user
+    /// already knows from resizing a photo.
+    private var resizeHandle: some View {
+        Circle()
+            .fill(theme.accent.color)
+            .overlay(Circle().strokeBorder(.white, lineWidth: 1.5))
+            .frame(width: 14, height: 14)
+            .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
+            .frame(width: 32, height: 32)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in resizeDelta = value.translation }
+                    .onEnded { value in
+                        resizeDelta = .zero
+                        guard scale > 0 else { return }
+                        let width = max(Self.minimumSide, frame.width + value.translation.width) / scale
+                        let height = max(Self.minimumSide, frame.height + value.translation.height) / scale
+                        onResize(CGRect(
+                            x: selection.bounds.minX, y: selection.bounds.minY,
+                            width: width, height: height
+                        ))
+                    }
+            )
     }
 
     private var actions: some View {

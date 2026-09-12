@@ -303,6 +303,21 @@ public final class ToolState {
         set { edit { $0.functionPlot.transparentBackground = newValue } }
     }
 
+    /// Known-graph preset ids the user has picked before, most-recent-first.
+    public var recentGraphPresetIDs: [String] {
+        preferences.recentGraphPresetIDs
+    }
+
+    /// Bumps a preset to the front of "Recent" (or adds it), capped so the
+    /// list stays a handful of genuinely recent picks, not a growing log.
+    public func recordRecentGraphPreset(_ id: String) {
+        edit { prefs in
+            var ids = prefs.recentGraphPresetIDs.filter { $0 != id }
+            ids.insert(id, at: 0)
+            prefs.recentGraphPresetIDs = Array(ids.prefix(8))
+        }
+    }
+
     // MARK: - Real-time beautification
 
     public var beautify: BeautifySettings {

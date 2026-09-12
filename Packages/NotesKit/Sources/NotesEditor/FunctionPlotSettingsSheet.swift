@@ -60,6 +60,7 @@ struct FunctionPlotSettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let isNew: Bool
+    let toolState: ToolState
     let onCommit: (
         FunctionPlotDraft, _ lineColorHex: String, _ backgroundColorHex: String,
         _ cornerRadius: Double, _ transparentBackground: Bool
@@ -83,6 +84,7 @@ struct FunctionPlotSettingsSheet: View {
     @State private var transparentBackground: Bool
     @State private var cornerRadius: Double
     @State private var confirmDelete = false
+    @State private var showPresetPicker = false
 
     private enum Field: Hashable { case primary, secondary, tertiary }
     @FocusState private var focusedField: Field?
@@ -91,6 +93,7 @@ struct FunctionPlotSettingsSheet: View {
 
     init(
         isNew: Bool,
+        toolState: ToolState,
         mode: PlotMode, expression: String, secondary: String?, tertiary: String?, window: Double,
         axisXLabel: String?, axisYLabel: String?, axisZLabel: String?,
         axisXUnit: String?, axisYUnit: String?, axisZUnit: String?,
@@ -103,6 +106,7 @@ struct FunctionPlotSettingsSheet: View {
         onDelete: (() -> Void)? = nil
     ) {
         self.isNew = isNew
+        self.toolState = toolState
         self.onCommit = onCommit
         self.onDelete = onDelete
         _mode = State(initialValue: mode)
@@ -125,6 +129,7 @@ struct FunctionPlotSettingsSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 28) {
                     preview
+                    presetsSection
                     axesSection
                     expressionsSection
                     axisSettingsSection
@@ -174,9 +179,45 @@ struct FunctionPlotSettingsSheet: View {
             }
         }
         .presentationDetents([.large])
+        .sheet(isPresented: $showPresetPicker) {
+            GraphPresetPickerSheet(recentIDs: toolState.recentGraphPresetIDs) { preset in
+                apply(preset)
+            }
+        }
     }
 
     // MARK: - Sections
+
+    /// A quick start into a graph someone already knows the shape of — e^x, a
+    /// v-t line, O(n log n) — instead of typing every expression from scratch.
+    private var presetsSection: some View {
+        Button {
+            showPresetPicker = true
+        } label: {
+            Label("Known Graphs", systemImage: "sparkles")
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+        }
+        .buttonStyle(.bordered)
+    }
+
+    /// Drops a picked preset straight into the draft — same fields a "Create"
+    /// press would commit — and records it as Recent so it comes back up top
+    /// next time. Axis label/unit are only overwritten when the preset actually
+    /// specifies one, so picking a plain math preset after typing a physics
+    /// axis name doesn't clobber it with blanks.
+    private func apply(_ preset: GraphPreset) {
+        mode = preset.mode
+        if preset.mode.axisCount == 2 { twoAxisMode = preset.mode }
+        draft = preset.expression
+        secondaryDraft = preset.secondaryExpression ?? ""
+        window = preset.window
+        if let label = preset.axisXLabel { axisX.name = label }
+        if let unit = preset.axisXUnit { axisX.unit = unit }
+        if let label = preset.axisYLabel { axisY.name = label }
+        if let unit = preset.axisYUnit { axisY.unit = unit }
+        toolState.recordRecentGraphPreset(preset.id)
+    }
 
     private var preview: some View {
         FunctionPlotView(

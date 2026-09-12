@@ -259,6 +259,7 @@ struct ToolRailView: View {
         .sheet(isPresented: binding(.functionPlot), onDismiss: { toolState.select(.hand) }) {
             FunctionPlotSettingsSheet(
                 isNew: true,
+                toolState: toolState,
                 mode: toolState.functionPlotMode, expression: "", secondary: nil, tertiary: nil,
                 window: toolState.functionPlotWindow,
                 axisXLabel: nil, axisYLabel: nil, axisZLabel: nil,

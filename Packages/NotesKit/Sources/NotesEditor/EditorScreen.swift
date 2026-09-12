@@ -829,7 +829,14 @@ struct OCRResult: Identifiable {
 
 /// Tiny in-memory cache of decoded page-background images, keyed by media
 /// filename, so scrolling / re-render doesn't re-decode PDFs every frame.
-final class PageImageCache {
+/// `@unchecked Sendable` because `NSCache` is itself thread-safe — this class
+/// is just a typed wrapper around one.
+final class PageImageCache: @unchecked Sendable {
+    /// Shared by `PageElementsLayer` too: a live resize/drag re-evaluates the
+    /// element's view every frame, and without a cache that meant re-reading
+    /// and re-decoding the same photo from disk on the main thread ~60x a
+    /// second, which is what the resize looked like it was "blinking."
+    static let shared = PageImageCache()
     private let cache = NSCache<NSString, UIImage>()
     func image(for filename: String) -> UIImage? { cache.object(forKey: filename as NSString) }
     func set(_ image: UIImage, for filename: String) { cache.setObject(image, forKey: filename as NSString) }

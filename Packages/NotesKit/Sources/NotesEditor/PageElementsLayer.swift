@@ -83,8 +83,8 @@ struct PageElementsLayer: View {
         let nonFill = elements.filter { $0.kind != .fill }
         switch layer {
         case .all: return nonFill
-        case .belowInk: return nonFill.filter { $0.kind != .tape }
-        case .aboveInk: return nonFill.filter { $0.kind == .tape }
+        case .belowInk: return nonFill.filter { $0.kind != .tape && !$0.renderAboveInk }
+        case .aboveInk: return nonFill.filter { $0.kind == .tape || $0.renderAboveInk }
         }
     }
 
@@ -144,6 +144,7 @@ struct PageElementsLayer: View {
         .sheet(item: editingFunctionPlotBinding) { element in
             FunctionPlotSettingsSheet(
                 isNew: false,
+                toolState: toolState,
                 mode: element.resolvedPlotMode,
                 expression: element.functionExpression ?? "",
                 secondary: element.functionSecondaryExpression,
@@ -401,6 +402,20 @@ struct PageElementsLayer: View {
         }
     }
 
+    /// Decoded once per file, not once per frame: `elementView` re-runs on
+    /// every live-resize/drag tick, and reading + decoding the same photo off
+    /// disk that often is what made resizing an image look like it blinked.
+    private func cachedImage(filename: String) -> UIImage? {
+        let url = model.mediaURL(filename: filename)
+        let key = url.path
+        if let cached = PageImageCache.shared.image(for: key) { return cached }
+        guard let data = try? Data(contentsOf: url), let uiImage = UIImage(data: data) else {
+            return nil
+        }
+        PageImageCache.shared.set(uiImage, for: key)
+        return uiImage
+    }
+
     @ViewBuilder
     private func elementView(_ element: PageElement) -> some View {
         switch element.kind {
@@ -409,8 +424,7 @@ struct PageElementsLayer: View {
             Color.clear
         case .image:
             if let filename = element.payloadFilename,
-               let data = try? Data(contentsOf: model.mediaURL(filename: filename)),
-               let uiImage = UIImage(data: data) {
+               let uiImage = cachedImage(filename: filename) {
                 Image(uiImage: uiImage)
                     .resizable()
                     .scaledToFill()

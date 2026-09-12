@@ -263,6 +263,12 @@ public struct ToolPreferences: Codable, Sendable, Equatable {
     public var pencilDoubleTap: PencilAction
     public var pencilSqueeze: PencilAction
 
+    /// Known-graph preset ids the user has actually picked, most-recent-first —
+    /// so "e^x", "sin(x)", a physics v-t graph, etc. surface as suggestions
+    /// instead of the picker starting cold every time. Durable and synced like
+    /// every other tool setting, capped well short of the full library.
+    public var recentGraphPresetIDs: [String]
+
     public init(
         penPresetID: String = PenLibrary.default.id,
         tuning: [String: PenSettings] = [:],
@@ -282,7 +288,8 @@ public struct ToolPreferences: Codable, Sendable, Equatable {
         functionPlot: FunctionPlotSettings = FunctionPlotSettings(),
         beautify: BeautifySettings = BeautifySettings(),
         pencilDoubleTap: PencilAction = .toggleEraser,
-        pencilSqueeze: PencilAction = .showColors
+        pencilSqueeze: PencilAction = .showColors,
+        recentGraphPresetIDs: [String] = []
     ) {
         self.penPresetID = penPresetID
         self.tuning = tuning
@@ -303,6 +310,7 @@ public struct ToolPreferences: Codable, Sendable, Equatable {
         self.beautify = beautify
         self.pencilDoubleTap = pencilDoubleTap
         self.pencilSqueeze = pencilSqueeze
+        self.recentGraphPresetIDs = recentGraphPresetIDs
     }
 
     public init(from decoder: any Decoder) throws {
@@ -330,7 +338,8 @@ public struct ToolPreferences: Codable, Sendable, Equatable {
             functionPlot: value(.functionPlot, fallback.functionPlot),
             beautify: value(.beautify, fallback.beautify),
             pencilDoubleTap: value(.pencilDoubleTap, fallback.pencilDoubleTap),
-            pencilSqueeze: value(.pencilSqueeze, fallback.pencilSqueeze)
+            pencilSqueeze: value(.pencilSqueeze, fallback.pencilSqueeze),
+            recentGraphPresetIDs: value(.recentGraphPresetIDs, fallback.recentGraphPresetIDs)
         )
     }
 

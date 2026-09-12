@@ -323,6 +323,30 @@ public final class NotebookEditorModel {
         )
     }
 
+    /// Applies an arbitrary affine transform to an element's frame and any
+    /// path it carries — used by lasso resize, which SCALES a whole selection
+    /// rather than just shifting it the way `moveElement` does.
+    public func transformElement(_ elementID: UUID, on pageID: UUID, by transform: CGAffineTransform) async {
+        guard var current = manifest,
+              let pageIndex = current.pages.firstIndex(where: { $0.id == pageID }),
+              let elementIndex = current.pages[pageIndex].elements
+                .firstIndex(where: { $0.id == elementID })
+        else { return }
+        var element = current.pages[pageIndex].elements[elementIndex]
+        let frame = CGRect(x: element.x, y: element.y, width: element.width, height: element.height)
+            .applying(transform)
+        element.x = frame.minX
+        element.y = frame.minY
+        element.width = frame.width
+        element.height = frame.height
+        element.points = element.points.map { PagePoint($0.cgPoint.applying(transform)) }
+        current.pages[pageIndex].elements[elementIndex] = element
+        manifest = current
+        _ = try? await store.setElements(
+            current.pages[pageIndex].elements, notebook: notebookID, page: pageID
+        )
+    }
+
     public func deleteElement(_ elementID: UUID, on pageID: UUID) async {
         guard var current = manifest,
               let pageIndex = current.pages.firstIndex(where: { $0.id == pageID }) else { return }
