@@ -1,4 +1,7 @@
 import Foundation
+import os
+
+private let novaLog = Logger(subsystem: "com.classmate.notes", category: "Nova")
 
 /// NOVA through ClassMate's own backend (`POST /classnotes/ai`), which holds the
 /// model key server-side.
@@ -85,7 +88,36 @@ public struct NovaBackendProvider: AIProvider {
         request.httpBody = try JSONSerialization.data(
             withJSONObject: Self.payload(for: messages)
         )
+        // A snip's `task: "see"` request carries a base64 image and waits on a
+        // vision model, which is routinely slower than a plain chat turn —
+        // explicit and generous so a genuinely slow (not stuck) inference
+        // doesn't get cut off right as it was about to answer.
+        request.timeoutInterval = 90
         return request
+    }
+
+    /// One attempt at the whole round trip: request, status check, body decode.
+    /// Every failure is thrown with its real cause LOGGED (subsystem
+    /// `com.classmate.notes`/category `Nova`) before being collapsed to the
+    /// small `AIError` surface the UI understands — collapsing straight to
+    /// `.network` with nothing recorded anywhere is why "NOVA couldn't
+    /// respond" was reported with no way to tell a timeout, a bad response
+    /// shape, and a dropped connection apart afterward.
+    private func attempt(messages: [AIMessage], token: String) async throws -> String {
+        let request = try makeRequest(messages: messages, token: token)
+        let (data, response) = try await session.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+        guard (200..<300).contains(status) else {
+            let body = String(data: data.prefix(500), encoding: .utf8) ?? "<non-utf8 body>"
+            novaLog.error("NOVA backend returned status \(status): \(body, privacy: .public)")
+            throw AIError.badResponse(status: status)
+        }
+        guard let answer = Self.answer(from: data) else {
+            let body = String(data: data.prefix(500), encoding: .utf8) ?? "<non-utf8 body>"
+            novaLog.error("NOVA backend returned an unparseable body (status \(status)): \(body, privacy: .public)")
+            throw AIError.badResponse(status: status)
+        }
+        return answer
     }
 
     public func streamReply(to messages: [AIMessage]) -> AsyncThrowingStream<String, Error> {
@@ -97,16 +129,21 @@ public struct NovaBackendProvider: AIProvider {
                     return
                 }
                 do {
-                    let request = try makeRequest(messages: messages, token: token)
-                    let (data, response) = try await session.data(for: request)
-                    let status = (response as? HTTPURLResponse)?.statusCode ?? -1
-                    guard (200..<300).contains(status) else {
-                        continuation.finish(throwing: AIError.badResponse(status: status))
-                        return
-                    }
-                    guard let answer = Self.answer(from: data) else {
-                        continuation.finish(throwing: AIError.badResponse(status: status))
-                        return
+                    let answer: String
+                    do {
+                        answer = try await attempt(messages: messages, token: token)
+                    } catch let error as AIError {
+                        // A bad response SHAPE is a server/contract problem, not a
+                        // blip — retrying it just asks the same broken question
+                        // again. A transport-level failure (timeout, dropped
+                        // connection, DNS hiccup) genuinely can be transient, so
+                        // it gets exactly one retry before giving up for real.
+                        throw error
+                    } catch {
+                        novaLog.error("NOVA request failed, retrying once: \(String(describing: error), privacy: .public)")
+                        try? await Task.sleep(for: .milliseconds(400))
+                        guard !Task.isCancelled else { throw AIError.network }
+                        answer = try await attempt(messages: messages, token: token)
                     }
                     for chunk in Self.chunks(of: answer) {
                         if Task.isCancelled { break }
@@ -114,7 +151,10 @@ public struct NovaBackendProvider: AIProvider {
                         try? await Task.sleep(for: .milliseconds(12))
                     }
                     continuation.finish()
+                } catch let error as AIError {
+                    continuation.finish(throwing: error)
                 } catch {
+                    novaLog.error("NOVA request failed after retry: \(String(describing: error), privacy: .public)")
                     continuation.finish(throwing: AIError.network)
                 }
             }

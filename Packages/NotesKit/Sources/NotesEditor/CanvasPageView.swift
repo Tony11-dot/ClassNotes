@@ -1302,10 +1302,29 @@ struct CanvasPageView: UIViewRepresentable {
 
         // MARK: UIPencilInteractionDelegate
 
+        /// Every live page in the lazy stack owns its OWN `PKCanvasView` and so
+        /// its own `UIPencilInteraction` (attached in `makeUIView`) — a real
+        /// double-tap/squeeze isn't scoped to one view's screen location, and
+        /// UIKit calls the delegate of EVERY pencil interaction currently added
+        /// to a view in the key window, not just one. With two or three pages
+        /// kept alive for smooth scrolling (completely normal), one real
+        /// double-tap fired `toggleEraser()` two or three times in the same
+        /// runloop turn — an even count nets out to no visible change at all,
+        /// which is exactly "the double-tap doesn't work." Only the page the
+        /// pencil is actually in front of should act; that's `tracker.activeCanvas`,
+        /// kept current by every drawing/focus callback already. A brand-new
+        /// page nobody has drawn on yet has no active canvas set, so it's let
+        /// through rather than silently eating the first gesture.
+        private var isActivePage: Bool {
+            guard let active = tracker.activeCanvas else { return true }
+            return active === canvas
+        }
+
         func pencilInteraction(
             _ interaction: UIPencilInteraction,
             didReceiveTap tap: UIPencilInteraction.Tap
         ) {
+            guard isActivePage else { return }
             toolState.handlePencilTap()
         }
 
@@ -1313,9 +1332,8 @@ struct CanvasPageView: UIViewRepresentable {
             _ interaction: UIPencilInteraction,
             didReceiveSqueeze squeeze: UIPencilInteraction.Squeeze
         ) {
-            if squeeze.phase == .ended {
-                toolState.handlePencilSqueeze()
-            }
+            guard isActivePage, squeeze.phase == .ended else { return }
+            toolState.handlePencilSqueeze()
         }
     }
 }

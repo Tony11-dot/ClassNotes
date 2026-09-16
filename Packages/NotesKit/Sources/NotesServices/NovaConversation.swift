@@ -197,7 +197,22 @@ public final class NovaConversation {
                         messages[index] = assistant
                     }
                 }
-                if !assistant.content.isEmpty { generateFollowUps() }
+                if !assistant.content.isEmpty {
+                    generateFollowUps()
+                } else {
+                    // The request succeeded but produced nothing SHOWABLE — most
+                    // often an unterminated `<think>`/analysis block from the
+                    // vision path, which `NovaReply.display` (correctly, for a
+                    // real mid-stream case) wipes to "" rather than show
+                    // half-formed reasoning. There is no "still arriving" case
+                    // once the stream has actually finished, so a still-empty
+                    // result here is always a failure, not a pause — leaving it
+                    // alone rendered as a typing indicator that spun forever
+                    // with no error, which is exactly "NOVA couldn't respond,
+                    // no matter what I scan."
+                    errorText = "NOVA couldn't respond. Try again."
+                    removeEmptyAssistant(at: index)
+                }
             } catch AIError.missingKey {
                 errorText = "Sign in to use NOVA."
                 removeEmptyAssistant(at: index)

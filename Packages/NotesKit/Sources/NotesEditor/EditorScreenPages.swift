@@ -211,9 +211,12 @@ extension EditorScreen {
         // easily 100+ of both a second, each one a real `PKCanvasView` zoomScale
         // re-pin plus a `ScrollPosition` write racing the SwiftUI re-layout from
         // `pageZoom` changing underneath it, which is what a coarse pinch felt
-        // like a stutter/blink instead of a continuous scale. A quarter of that
-        // update rate is still well under what a finger can perceive as a step.
-        MagnifyGesture(minimumScaleDelta: 0.04)
+        // like a stutter/blink instead of a continuous scale. 0.04 fixed the
+        // stutter but over-corrected into visibly steppy zoom on the hardware
+        // this actually ships to (iPad Pro, M-series) — plenty of headroom for
+        // a finer step. 0.015 is still well clear of the stutter this was tuned
+        // against while reading as continuous to a finger.
+        MagnifyGesture(minimumScaleDelta: 0.015)
             .onChanged { value in
                 let anchor = pinchZoomAnchor ?? {
                     let captured = capturePinchAnchor(at: value.startLocation, containerWidth: containerWidth)

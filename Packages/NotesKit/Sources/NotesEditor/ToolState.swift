@@ -527,8 +527,31 @@ public final class ToolState {
         let preset = pen
         let settings = settings(for: preset)
         let base = settings.colorHex.flatMap(ThemeColor.init(hex:)) ?? theme.ink
-        let color = base.uiColor.withAlphaComponent(settings.concentration)
+        let color = Self.adaptationSafe(base.uiColor.withAlphaComponent(settings.concentration))
         return (PKInk(preset.ink.pkInkType, color: color), settings.effectiveWidth)
+    }
+
+    /// PencilKit silently INVERTS ink that is exactly black or exactly white to
+    /// keep it visible against the canvas's `overrideUserInterfaceStyle` — a
+    /// black pen on a canvas told it's dark comes out white, and vice versa,
+    /// regardless of what colour the user actually picked. That is the literal
+    /// mechanism behind "I chose black and it wrote white on a dark page": the
+    /// page's own darkness (`CanvasPageView.paperIsDark`) has to be told to
+    /// PencilKit for OTHER reasons (its own chrome), so the only way to stop it
+    /// overriding a colour the user explicitly chose is to stop the ink from
+    /// ever being EXACTLY the two values PencilKit treats specially. Nudging by
+    /// one 8-bit step is invisible on screen but takes the colour out of
+    /// PencilKit's adaptation check entirely, so every selected colour —
+    /// including true black and true white — renders as chosen on any page.
+    private static func adaptationSafe(_ color: UIColor) -> UIColor {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        guard color.getRed(&r, green: &g, blue: &b, alpha: &a) else { return color }
+        let epsilon: CGFloat = 1.0 / 255.0
+        let isNearBlack = r < epsilon && g < epsilon && b < epsilon
+        let isNearWhite = r > 1 - epsilon && g > 1 - epsilon && b > 1 - epsilon
+        guard isNearBlack || isNearWhite else { return color }
+        let nudge: CGFloat = isNearBlack ? epsilon : -epsilon
+        return UIColor(red: r + nudge, green: g + nudge, blue: b + nudge, alpha: a)
     }
 }
 

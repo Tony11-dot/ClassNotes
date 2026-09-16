@@ -88,6 +88,23 @@ struct ScribbleDetectorTests {
         #expect(!ScribbleDetector.isErasureScribble(circle))
     }
 
+    @Test("A fast M or W, corner overshoot included, is never mistaken for a scrub")
+    func rejectsFastCorneredLetters() {
+        // A compact zigzag with a small hook-back at every peak — exactly what a
+        // fast hand adds at each sharp corner of an M or a W — but small enough
+        // to be a single character, not a scrub across a word. The old 24pt
+        // diagonal floor let a shape like this through if it happened to touch
+        // the previous letter, deleting both.
+        var cornered: [CGPoint] = []
+        let peaks: [CGFloat] = [30, 5, 30, 5, 30]
+        for (index, peakY) in peaks.enumerated() {
+            let x = CGFloat(index) * 7
+            cornered.append(CGPoint(x: x, y: peakY))
+            cornered.append(CGPoint(x: x + 1, y: peakY - 2))
+        }
+        #expect(!ScribbleDetector.isErasureScribble(cornered))
+    }
+
     @Test("A tap or a tiny mark is never an erase gesture")
     func rejectsTinyMarks() {
         #expect(!ScribbleDetector.isErasureScribble([CGPoint(x: 5, y: 5)]))

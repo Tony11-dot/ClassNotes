@@ -117,6 +117,34 @@ struct ToolStateTests {
         #expect(abs(tool.color.cgColor.alpha - 0.4) < 0.02)
     }
 
+    @Test("True black and true white ink never hit PencilKit's own colour-adaptation exactly")
+    func inkColorAvoidsPencilKitAdaptation() throws {
+        // PencilKit silently inverts ink that is EXACTLY black or white to stay
+        // visible against whatever `overrideUserInterfaceStyle` the canvas has —
+        // which is the literal mechanism behind "I chose black and it wrote white
+        // on a dark page." `currentPenInk` nudges the exact values out of that
+        // check by one 8-bit step; this pins that both directions are covered.
+        let state = ToolState()
+        let theme = ThemePreset.matcha.spec
+
+        var settings = state.penSettings
+        settings.colorHex = "#000000"
+        settings.concentration = 1
+        state.penSettings = settings
+        let black = try #require(state.pkTool(theme: theme) as? PKInkingTool)
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        black.color.getRed(&r, green: &g, blue: &b, alpha: &a)
+        #expect(!(r == 0 && g == 0 && b == 0))
+        #expect(r < 0.01 && g < 0.01 && b < 0.01)
+
+        settings.colorHex = "#FFFFFF"
+        state.penSettings = settings
+        let white = try #require(state.pkTool(theme: theme) as? PKInkingTool)
+        white.color.getRed(&r, green: &g, blue: &b, alpha: &a)
+        #expect(!(r == 1 && g == 1 && b == 1))
+        #expect(r > 0.99 && g > 0.99 && b > 0.99)
+    }
+
     @Test("Default ink colors follow the theme until overridden")
     func themedDefaults() {
         let state = ToolState()

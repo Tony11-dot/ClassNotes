@@ -46,7 +46,16 @@ public enum ScribbleDetector {
         guard points.count >= 8 else { return false }
         let box = boundingBox(points)
         let diagonal = hypot(box.width, box.height)
-        guard diagonal > 24 else { return false }
+        // A real scrub-out covers a WORD or more; a single letter's own corners
+        // (an M or a W, above all written fast, where overshoot at each peak adds
+        // extra direction changes) fits comfortably inside a much smaller box than
+        // that. The old 24pt floor was sized for "is this a tap," not for telling
+        // a scrub apart from a letter, and a fast M/W crossing the word right
+        // before it (completely normal spacing) was enough to read as one and
+        // take both strokes with it. 70pt is still well under a real scrub's span
+        // (see `scrub` in the tests: ~108pt) while sitting above ordinary letter
+        // height at any pen size this app offers.
+        guard diagonal > 70 else { return false }
         let length = pathLength(points)
         guard length / diagonal >= minimumFoldRatio else { return false }
         return reversals(points, horizontal: box.width >= box.height) >= minimumReversals
