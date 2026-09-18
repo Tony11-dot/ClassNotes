@@ -67,6 +67,16 @@ public struct EditorScreen: View {
     /// The scroll position bound to the page stack, driven programmatically to
     /// keep the pinch anchor under the fingers while `pageZoom` changes.
     @State var pageScrollPosition = ScrollPosition()
+    /// Guards `handleOverscroll` against a spurious trigger right after any
+    /// page-count change (delete, insert, duplicate). The page stack's total
+    /// content height changes the instant `model.pages.count` does, and the
+    /// scroll offset hasn't caught up yet — for one geometry read the gap
+    /// between the (unchanged) offset and the (now shorter) content reads as
+    /// a genuine overscroll past the last page, even though nobody dragged
+    /// there. That false read is what made deleting a page ironically insert
+    /// a brand new one right back, or jump the stack around, as a side effect
+    /// with nothing to do with the drag itself.
+    @State var overscrollSuppressedUntil: Date = .distantPast
     /// What the lasso is currently holding, and on which page. Backed by
     /// `lassoSelectionStorage` so every change also tells `tracker` which page
     /// (if any) has an open selection — see `ActiveCanvasTracker.lassoHoldPageID`.

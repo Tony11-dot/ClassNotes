@@ -102,6 +102,31 @@ struct PageManagementTests {
         #expect(remainingShared != nil)
     }
 
+    @Test("A save that lands after its page is deleted can't resurrect it")
+    func saveAfterDeleteDoesNotResurrectPage() async throws {
+        // A `PKCanvasView`'s coordinator has no way to know its page was just
+        // deleted out from under it — SwiftUI tears the view down as a direct
+        // consequence of the deletion, and that teardown always flushes
+        // whatever save was still pending. Without a manifest check at the
+        // write itself, that stale flush rewrites the very `.drawing` blob
+        // `deletePage` just removed, and the next manifest read re-adopts the
+        // resurrected file as a brand new blank page — "delete" that silently
+        // grows the notebook back by one.
+        let (store, root) = makeStore()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let id = UUID()
+        let created = try await store.createDocument(id: id, firstPageTemplate: .blank)
+        let firstPage = created.pages[0].id
+        _ = try await store.insertPage(notebook: id, at: 1, template: .grid, margin: .default)
+
+        _ = try await store.deletePage(notebook: id, page: firstPage)
+        try await store.savePageData(Data("late write".utf8), notebook: id, page: firstPage)
+
+        let reloaded = try await store.manifest(for: id)
+        #expect(!reloaded.pages.contains { $0.id == firstPage })
+        #expect(reloaded.pages.count == 1)
+    }
+
     @Test("Duplicate copies settings and ink under a new id, right after source")
     func duplicate() async throws {
         let (store, root) = makeStore()

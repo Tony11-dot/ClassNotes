@@ -28,6 +28,16 @@ public actor DocumentStore {
     private let rootURL: URL
     private let encoder: JSONEncoder
     private let decoder = JSONDecoder()
+    /// Page ids explicitly deleted this session, so a save already in flight
+    /// when the deletion happens can never write that ink back — see
+    /// `savePageData`'s doc comment for the exact race this closes. Unlike
+    /// ordinary orphan recovery (a manifest write that never landed for a page
+    /// that was always meant to exist, which this must NOT block), a
+    /// tombstoned id is a page that's gone for good: once here, always here,
+    /// for the life of this store. In-memory only — the race it guards
+    /// against can only happen with an in-flight save from THIS run, and a
+    /// fresh launch starts with no pending saves to race against.
+    private var deletedPageIDs: Set<UUID> = []
 
     public init(rootURL: URL? = nil) {
         if let rootURL {
@@ -241,7 +251,30 @@ public actor DocumentStore {
         try? Data(contentsOf: pageURL(notebook: notebook, page: page))
     }
 
+    /// A no-op once `page` has been explicitly deleted — checked against
+    /// `deletedPageIDs`, not against manifest membership: a page can
+    /// legitimately have ink on disk before its manifest entry exists (a crash
+    /// between the two, which `orphanPageIDs` exists to recover from), and
+    /// rejecting THAT write would silently lose ink the durability contract at
+    /// the top of this file promises never to lose.
+    ///
+    /// A canvas's own coordinator has no way to know its page was deleted out
+    /// from under it: SwiftUI tears down a `PKCanvasView` the instant its page
+    /// leaves `model.pages`, and that teardown (`dismantleUIView`) always
+    /// flushes whatever save was still pending — that's the ONE guarantee
+    /// nothing gets lost when a page scrolls out of the lazy stack. But
+    /// "always flush on teardown" and "a page just got deleted" are the same
+    /// event from the canvas's side, and flushing then simply rewrites the
+    /// `.drawing` blob `deletePage` just removed. The next manifest read
+    /// (`orphanPageIDs`) finds that file back on disk with no manifest entry
+    /// for it and — because that recovery exists to survive a genuinely
+    /// corrupt manifest — re-adopts it as a brand new BLANK page. That is
+    /// "delete ironically produces more pages" and "delete changes the page's
+    /// layout" from the same cause: a delete that looked like it worked, then
+    /// a stale save resurrecting the file, then self-healing mistaking the
+    /// resurrection for a page that always belonged.
     public func savePageData(_ data: Data, notebook: UUID, page: UUID) throws {
+        guard !deletedPageIDs.contains(page) else { return }
         try FileManager.default.createDirectory(
             at: pagesDirectory(for: notebook),
             withIntermediateDirectories: true
@@ -459,6 +492,7 @@ public actor DocumentStore {
     public func deletePage(notebook: UUID, page: UUID) throws -> NotebookManifest {
         var current = try manifest(for: notebook)
         guard let removed = current.pages.first(where: { $0.id == page }) else { return current }
+        deletedPageIDs.insert(page)
         current.pages.removeAll { $0.id == page }
         if current.pages.isEmpty {
             current.pages = [PageRecord(template: .blank)]

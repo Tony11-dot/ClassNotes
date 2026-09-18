@@ -142,6 +142,14 @@ extension EditorScreen {
                 }
                 .padding(.vertical, 28)
                 .frame(width: max(containerWidth, width + Self.pageGutter * 2))
+                // Planted on the CONTENT, not the `ScrollView` itself: a
+                // `.background` on the scroll view sits alongside it in
+                // SwiftUI's own layout, not inside the `UIScrollView` UIKit
+                // actually builds underneath, so walking up from there would
+                // never reach it. The content, by contrast, is guaranteed to
+                // be an actual subview of that scroll view — see
+                // `ScrollTouchLimiter`'s doc comment for what it does there.
+                .background(ScrollTouchLimiter())
             }
             // Pinch zooms the page by making it LAY OUT bigger, not by scaling a
             // rendered picture of it: `PageCanvasView` re-pins its zoom to the new
@@ -200,6 +208,9 @@ extension EditorScreen {
                     proxy.scrollTo(target, anchor: .top)
                 }
                 pageJumpTarget = nil
+            }
+            .onChange(of: model.pages.count) { _, _ in
+                overscrollSuppressedUntil = Date().addingTimeInterval(0.5)
             }
         }
     }
@@ -374,6 +385,11 @@ extension EditorScreen {
         // pages" report: a new page appears and the scroll re-centers around
         // it, which looks like the page you were zooming on jumped away.
         guard pinchZoomAnchor == nil else { return }
+        // Same false-positive shape as the pinch case above, from a different
+        // cause: deleting/inserting/duplicating a page changes the content
+        // height on the spot, a beat before the scroll offset catches up —
+        // see `overscrollSuppressedUntil`'s doc comment.
+        guard Date() >= overscrollSuppressedUntil else { return }
         guard over.scrollable else { return }
         let threshold: CGFloat = 120
         if over.bottom > threshold, !addingBottom {
@@ -640,4 +656,48 @@ extension EditorScreen {
         return font.fontName
     }
 
+}
+
+/// Finds the page stack's own `UIScrollView` and caps its native pan
+/// recognizer to one finger, so a two-finger touch never becomes a candidate
+/// for native scrolling in the first place — structurally, not by reacting to
+/// gesture state. `.scrollDisabled` (used alongside this) only takes effect
+/// once a state change has round-tripped through a SwiftUI render pass, which
+/// lands a frame or two after two fingers actually touched down — by then
+/// `UIScrollView`'s own `panGestureRecognizer` has already begun tracking
+/// both of them, and disabling it mid-recognition is a cancel, not a "never
+/// happened", which is the residual jump/fight `.scrollDisabled` alone
+/// couldn't fully remove. Capping the native pan's touch count removes a
+/// two-finger touch from its candidate set from the very first touch, no
+/// state round-trip needed — the same fix `FingerTransformArea` already uses
+/// to keep the ruler's pan and rotation from fighting over the same touches.
+/// A one-finger drag still scrolls normally; only the two-finger case, which
+/// `zoomGesture` owns exclusively, is affected.
+///
+/// An invisible, non-interactive view rather than a gesture or a modifier:
+/// there is no SwiftUI API for a `ScrollView`'s own gesture recognizer, so
+/// this walks up from a view planted INSIDE the scroll view's own content
+/// (never from a `.background` on the `ScrollView` itself — that sits
+/// alongside it in SwiftUI's own layout, not inside the `UIScrollView` UIKit
+/// builds underneath, so the walk up would never reach it) to find the real
+/// `UIScrollView`. Runs on every update (cheap — a superview walk plus one
+/// property set) because the scroll view isn't guaranteed to exist yet the
+/// first time `makeUIView` runs.
+private struct ScrollTouchLimiter: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        DispatchQueue.main.async {
+            var candidate = uiView.superview
+            while let view = candidate, !(view is UIScrollView) {
+                candidate = view.superview
+            }
+            (candidate as? UIScrollView)?.panGestureRecognizer.maximumNumberOfTouches = 1
+        }
+    }
 }
