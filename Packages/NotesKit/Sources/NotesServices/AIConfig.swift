@@ -19,7 +19,13 @@ public enum AIConfig {
     public static let defaultModel = "openai/gpt-oss-120b"
     /// A vision-capable Groq model for the magic pen (image prompts). Override
     /// with `SUPPORT_AI_VISION_MODEL` if Groq's lineup changes.
-    public static let defaultVisionModel = "meta-llama/llama-4-scout-17b-16e-instruct"
+    ///
+    /// `meta-llama/llama-4-scout-17b-16e-instruct` (the old default) and
+    /// `qwen/qwen3.6-27b` (a value this drifted through) are BOTH gone from
+    /// Groq's catalog as of 2026-09-18 — this is the same bug as ClassMate's
+    /// `classnotes.ai.service.ts`/`ai.service.ts`, just on the keyless-local
+    /// fallback path instead of the server. Kept in step with those.
+    public static let defaultVisionModel = "qwen/qwen3.8-27b"
 
     private static func value(_ name: String) -> String? {
         if let fromEnv = ProcessInfo.processInfo.environment[name] {
