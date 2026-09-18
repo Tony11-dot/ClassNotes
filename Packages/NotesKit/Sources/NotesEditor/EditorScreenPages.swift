@@ -149,6 +149,17 @@ extension EditorScreen {
             // crisp — and it stays in the page's own logical coordinates, which is
             // what keeps a drawing device-independent.
             .simultaneousGesture(zoomGesture(containerWidth: containerWidth))
+            // A two-finger touch is ALSO exactly what `ScrollView`'s own native
+            // pan gesture reads as "scroll by the average of both fingers" — it
+            // was recognizing right alongside `zoomGesture` the whole time, so
+            // every pinch had two independent drivers fighting over the same
+            // content offset: the native pan applying the raw touch delta, and
+            // `applyPinchAnchor`'s own `scrollTo` applying the anchor math, one
+            // frame apart. That fight IS "it keeps jumping" and "I can't move
+            // freely while pinching" — not a tuning problem, a second hand on
+            // the same wheel. Disabling native scrolling for exactly the
+            // window a pinch is open leaves `applyPinchAnchor` the only writer.
+            .scrollDisabled(pinchZoomAnchor != nil)
             // Bound so `zoomGesture` can drive the scroll position programmatically
             // (`ScrollPosition.scrollTo(x:y:)`) to keep the pinch anchor under the
             // fingers. Reading is done separately, below, via
@@ -420,7 +431,10 @@ extension EditorScreen {
             canvasStack(page, displaySize: size, allowsZoom: false)
         }
         .contentShape(Rectangle())
-        .onTapGesture { model.focusedPageID = page.id }
+        .onTapGesture {
+            model.focusedPageID = page.id
+            selectedElementID = nil
+        }
         .frame(width: size.width, height: size.height)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(
@@ -465,6 +479,7 @@ extension EditorScreen {
             logicalSize: page.logicalSize,
             allowsEditing: !toolState.isDrawingEnabled,
             editingTextID: $editingTextID,
+            selectedElementID: $selectedElementID,
             layer: .belowInk,
             tracker: tracker
         )
@@ -490,6 +505,7 @@ extension EditorScreen {
             logicalSize: page.logicalSize,
             allowsEditing: !toolState.isDrawingEnabled,
             editingTextID: $editingTextID,
+            selectedElementID: $selectedElementID,
             layer: .aboveInk,
             tracker: tracker
         )

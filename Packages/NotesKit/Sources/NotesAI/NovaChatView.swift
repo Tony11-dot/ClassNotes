@@ -56,6 +56,7 @@ public struct NovaChatView: View {
                         Text(error)
                             .font(.dsFootnote)
                             .foregroundStyle(.red)
+                            .id("nova-error")
                     }
                 }
                 .padding(18)
@@ -64,6 +65,14 @@ public struct NovaChatView: View {
                 if let last = conversation.visibleMessages.last {
                     withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
                 }
+            }
+            // See the same fix in `NovaSidebar`: a failure drops the empty
+            // assistant placeholder, so the last message's content never
+            // changes and the error line never gets scrolled into view on
+            // its own.
+            .onChange(of: conversation.errorText) { _, error in
+                guard error != nil else { return }
+                withAnimation { proxy.scrollTo("nova-error", anchor: .bottom) }
             }
         }
     }

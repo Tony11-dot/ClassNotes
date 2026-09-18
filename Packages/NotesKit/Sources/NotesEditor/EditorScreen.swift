@@ -93,6 +93,12 @@ public struct EditorScreen: View {
     @State var novaConversation: NovaConversation?
     @State var showNova = false
     @State var editingTextID: UUID?
+    /// The element whose resize handle is showing, because it was tapped. An
+    /// element only wears its handle once you've picked it out — showing it
+    /// on every image/file/text box all the time (the old behaviour) read as
+    /// a permanent frame nothing put there on purpose. Tapping empty page
+    /// space (`pageView`'s own tap gesture) clears it.
+    @State var selectedElementID: UUID?
     @State var beautifying = false
     @State var editorNotice: String?
     @State var pageSettings: PageRecord?

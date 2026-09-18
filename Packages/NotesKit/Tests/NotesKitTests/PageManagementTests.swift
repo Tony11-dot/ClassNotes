@@ -63,6 +63,45 @@ struct PageManagementTests {
         #expect(afterLast.pages.count == 1)
     }
 
+    @Test("Delete sweeps a page's own media, but never a filename another page still uses")
+    func deleteSweepsOrphanedMedia() async throws {
+        let (store, root) = makeStore()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let id = UUID()
+        let created = try await store.createDocument(id: id, firstPageTemplate: .blank)
+        let firstPage = created.pages[0].id
+        let (afterInsert, secondRecord) = try await store.insertPage(
+            notebook: id, at: 1, template: .blank, margin: .default
+        )
+        let secondPage = secondRecord.id
+        #expect(afterInsert.pages.count == 2)
+
+        // Page one owns an image nobody else references; page two owns one AND
+        // shares a second filename with page one (as a duplicate would).
+        let orphaned = try await store.saveMedia(Data("orphan".utf8), notebook: id, fileExtension: "png")
+        let shared = try await store.saveMedia(Data("shared".utf8), notebook: id, fileExtension: "png")
+        try await store.setElements(
+            [PageElement(kind: .image, x: 0, y: 0, width: 10, height: 10, payloadFilename: shared)],
+            notebook: id, page: secondPage
+        )
+        // Page one references BOTH: one filename nobody else uses, and one it
+        // shares with page two, the way a duplicate's copy would.
+        try await store.setElements(
+            [
+                PageElement(kind: .image, x: 0, y: 0, width: 10, height: 10, payloadFilename: orphaned),
+                PageElement(kind: .image, x: 20, y: 20, width: 10, height: 10, payloadFilename: shared)
+            ],
+            notebook: id, page: firstPage
+        )
+
+        _ = try await store.deletePage(notebook: id, page: firstPage)
+
+        let remainingOrphan = await store.mediaData(notebook: id, filename: orphaned)
+        let remainingShared = await store.mediaData(notebook: id, filename: shared)
+        #expect(remainingOrphan == nil)
+        #expect(remainingShared != nil)
+    }
+
     @Test("Duplicate copies settings and ink under a new id, right after source")
     func duplicate() async throws {
         let (store, root) = makeStore()

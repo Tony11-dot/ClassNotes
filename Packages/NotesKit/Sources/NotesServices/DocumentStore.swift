@@ -432,16 +432,42 @@ public actor DocumentStore {
         return (current, page)
     }
 
-    /// Deletes a page (and its ink blob). A notebook always keeps ≥1 page —
-    /// deleting the last one leaves a fresh blank page.
+    /// Every media file a page actually uses: its own background (an imported
+    /// PDF/scan page), plus each element's payload (image/file/audio).
+    private func mediaFilenames(of page: PageRecord) -> Set<String> {
+        var names = Set<String>()
+        if let background = page.backgroundPayloadFilename { names.insert(background) }
+        for element in page.elements {
+            if let filename = element.payloadFilename { names.insert(filename) }
+        }
+        return names
+    }
+
+    /// Deletes a page — its manifest entry, its ink blob, AND any media it
+    /// alone owned. A notebook always keeps ≥1 page — deleting the last one
+    /// leaves a fresh blank page.
+    ///
+    /// The media sweep used to not exist at all: removing a page only ever
+    /// dropped its manifest entry and its `.drawing` blob, so a deleted
+    /// page's photos, scans, files and voice notes sat in `media/` forever —
+    /// gone from every list, permanently unreachable, but never actually off
+    /// disk. A duplicate keeps the SAME filenames as its source
+    /// (`duplicatePage`), so a filename is only safe to remove once no
+    /// surviving page references it — checked against `current.pages` AFTER
+    /// the deletion, not before.
     @discardableResult
     public func deletePage(notebook: UUID, page: UUID) throws -> NotebookManifest {
         var current = try manifest(for: notebook)
+        guard let removed = current.pages.first(where: { $0.id == page }) else { return current }
         current.pages.removeAll { $0.id == page }
         if current.pages.isEmpty {
             current.pages = [PageRecord(template: .blank)]
         }
         try? FileManager.default.removeItem(at: pageURL(notebook: notebook, page: page))
+        let stillNeeded = current.pages.reduce(into: Set<String>()) { $0.formUnion(mediaFilenames(of: $1)) }
+        for filename in mediaFilenames(of: removed) where !stillNeeded.contains(filename) {
+            try? FileManager.default.removeItem(at: mediaURL(notebook: notebook, filename: filename))
+        }
         try writeManifest(current, for: notebook)
         return current
     }

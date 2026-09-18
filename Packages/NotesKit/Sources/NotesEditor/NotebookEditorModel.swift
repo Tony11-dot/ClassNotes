@@ -107,6 +107,21 @@ public final class NotebookEditorModel {
         if focusedPageID == pageID { focusedPageID = manifest?.pages.first?.id }
     }
 
+    /// Deletes several pages at once — the page manager's Select tool. Each
+    /// page goes through the SAME single-page delete (manifest entry, ink
+    /// blob, orphaned media), one at a time, so two selected pages that share
+    /// a background image don't have it pulled out from under the other:
+    /// a filename is only ever removed once nothing LEFT references it,
+    /// re-checked fresh against whatever remains after every step.
+    public func deletePages(_ pageIDs: Set<UUID>) async {
+        for id in pageIDs {
+            manifest = try? await store.deletePage(notebook: notebookID, page: id)
+        }
+        if let focusedPageID, pageIDs.contains(focusedPageID) {
+            self.focusedPageID = manifest?.pages.first?.id
+        }
+    }
+
     /// Flags or unflags a page. A duplicate of a bookmarked page is deliberately
     /// NOT bookmarked — the flag marks a place, and a copy isn't that place.
     public func toggleBookmark(_ pageID: UUID, name: String? = nil) async {

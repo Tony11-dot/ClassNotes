@@ -31,6 +31,11 @@ struct PageElementsLayer: View {
     let allowsEditing: Bool
     /// The text box the keyboard is currently in, owned by the editor screen.
     @Binding var editingTextID: UUID?
+    /// The element currently showing its resize handle, owned by the editor
+    /// screen so both this layer's `belowInk`/`aboveInk` instances and the
+    /// page's own background tap (which clears it) agree on the same value.
+    /// `nil` for non-interactive render targets, same as `tracker`.
+    var selectedElementID: Binding<UUID?> = .constant(nil)
     /// Which elements this instance renders, relative to the ink layer.
     var layer: Layer = .all
     /// So element edits (move, resize, erase, tape toggle) register a real undo
@@ -103,7 +108,7 @@ struct PageElementsLayer: View {
                         // collide with that, and it's the discoverable way to
                         // resize precisely — the whole reason resizing an
                         // element only ever seemed to work by accident.
-                        if allowsEditing, element.kind != .tape {
+                        if allowsEditing, element.kind != .tape, selectedElementID.wrappedValue == element.id {
                             resizeHandle(for: element)
                         }
                     }
@@ -305,24 +310,27 @@ struct PageElementsLayer: View {
         allowsEditing ? .all : .subviews
     }
 
-    /// The eraser takes tape and typeset text off the page. It's live only for
-    /// those two kinds, and only while the eraser is the selected tool —
-    /// anywhere else this gesture must not exist, or it would swallow the taps
-    /// that lift a strip, the drags that move a photo, and the taps that edit a
-    /// text box. Ink under either is untouched: the canvas below still gets
-    /// every touch that isn't on one of them.
+    /// The eraser takes tape, typeset text and pasted images off the page.
+    /// It's live only for those kinds, and only while the eraser is the
+    /// selected tool — anywhere else this gesture must not exist, or it would
+    /// swallow the taps that lift a strip, the drags that move a photo, and
+    /// the taps that edit a text box. Ink under either is untouched: the
+    /// canvas below still gets every touch that isn't on one of them.
     ///
     /// Text is included alongside tape because a beautified (or hand-placed)
     /// run is a `PageElement`, not `PKDrawing` ink — PencilKit's own eraser,
     /// pixel or vector, can only ever touch raw strokes, so without this a
     /// typeset line could never be erased at all. A code block is the same
-    /// kind of typeset content.
+    /// kind of typeset content. `.image` is here for the same reason a lasso
+    /// Paste lands as one: it's a `PageElement`, not ink, so scrubbing the
+    /// eraser across a pasted snip used to do nothing at all — the only way
+    /// to remove it was the context menu's Delete.
     private func eraseMask(for element: PageElement) -> GestureMask {
         toolState.tool == .eraser && Self.erasableKinds.contains(element.kind)
             ? .all : .subviews
     }
 
-    private static let erasableKinds: Set<PageElement.Kind> = [.tape, .text, .codeBlock, .functionPlot]
+    private static let erasableKinds: Set<PageElement.Kind> = [.tape, .text, .codeBlock, .functionPlot, .image]
 
     /// Touch down anywhere on a strip or a text box removes it — so scrubbing
     /// the eraser across a page takes out every one it passes over, which is
@@ -342,6 +350,12 @@ struct PageElementsLayer: View {
     // MARK: - Interactions
 
     private func handleTap(_ element: PageElement) {
+        // Tapping picks the element out — this is what makes its resize
+        // handle appear. Tape excluded: it never wears one (see the `ZStack`
+        // above), and its own tap already means something else entirely.
+        if element.kind != .tape {
+            selectedElementID.wrappedValue = element.id
+        }
         switch element.kind {
         case .tape:
             // Lift the strip to reveal what's underneath, or put it back.

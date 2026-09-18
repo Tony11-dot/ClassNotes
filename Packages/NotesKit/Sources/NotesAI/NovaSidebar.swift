@@ -166,6 +166,7 @@ public struct NovaSidebar: View {
                     }
                     if let error = conversation.errorText {
                         Text(error).font(.dsFootnote).foregroundStyle(.red)
+                            .id("nova-error")
                     }
                 }
                 .padding(16)
@@ -174,6 +175,17 @@ public struct NovaSidebar: View {
                 if let last = conversation.visibleMessages.last {
                     withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
                 }
+            }
+            // A failure removes the empty assistant placeholder (see
+            // `removeEmptyAssistant`), so `visibleMessages.last` reverts to
+            // whatever the user already sent — its content hasn't changed,
+            // so the `onChange` above never fires and the error line lands
+            // below the fold with nothing to scroll to it. That is "NOVA
+            // couldn't respond" reading as NOVA doing nothing at all: the
+            // real answer was on screen, just not in view.
+            .onChange(of: conversation.errorText) { _, error in
+                guard error != nil else { return }
+                withAnimation { proxy.scrollTo("nova-error", anchor: .bottom) }
             }
         }
     }

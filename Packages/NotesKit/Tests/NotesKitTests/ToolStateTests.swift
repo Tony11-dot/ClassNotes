@@ -119,11 +119,13 @@ struct ToolStateTests {
 
     @Test("True black and true white ink never hit PencilKit's own colour-adaptation exactly")
     func inkColorAvoidsPencilKitAdaptation() throws {
-        // PencilKit silently inverts ink that is EXACTLY black or white to stay
+        // PencilKit silently inverts ink that READS AS black or white to stay
         // visible against whatever `overrideUserInterfaceStyle` the canvas has —
         // which is the literal mechanism behind "I chose black and it wrote white
-        // on a dark page." `currentPenInk` nudges the exact values out of that
-        // check by one 8-bit step; this pins that both directions are covered.
+        // on a dark page." That's a THRESHOLD, not an exact `== .black` check —
+        // real hardware falsified a one-8-bit-step nudge — so `currentPenInk`
+        // clamps to a flat 3.5% of the channel range instead, still nowhere near
+        // visually different from true black/white ink on paper.
         let state = ToolState()
         let theme = ThemePreset.matcha.spec
 
@@ -135,14 +137,14 @@ struct ToolStateTests {
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
         black.color.getRed(&r, green: &g, blue: &b, alpha: &a)
         #expect(!(r == 0 && g == 0 && b == 0))
-        #expect(r < 0.01 && g < 0.01 && b < 0.01)
+        #expect(r > 0.01 && r < 0.06 && g > 0.01 && g < 0.06 && b > 0.01 && b < 0.06)
 
         settings.colorHex = "#FFFFFF"
         state.penSettings = settings
         let white = try #require(state.pkTool(theme: theme) as? PKInkingTool)
         white.color.getRed(&r, green: &g, blue: &b, alpha: &a)
         #expect(!(r == 1 && g == 1 && b == 1))
-        #expect(r > 0.99 && g > 0.99 && b > 0.99)
+        #expect(r > 0.94 && r < 0.99 && g > 0.94 && g < 0.99 && b > 0.94 && b < 0.99)
     }
 
     @Test("An un-customized pen's ink is FIXED, never the live theme")

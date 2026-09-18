@@ -482,7 +482,21 @@ struct CanvasPageView: UIViewRepresentable {
         context.coordinator.pageSize = page.logicalSize
         context.coordinator.rulerGuide = rulerGuide
         canvas.logicalSize = page.logicalSize
-        canvas.tool = toolState.pkTool(theme: theme)
+        // A Pencil double-tap/squeeze routes through `toolState.tool` the same
+        // as a tap on the rail, and it can land WHILE the tip is still down —
+        // reflexively tapping the barrel right as a letter finishes is
+        // ordinary handwriting, not a rare edge case. Assigning `canvas.tool`
+        // in that instant hands the REST of the in-flight stroke to the new
+        // tool — if that's the eraser, the tail of the very letter being
+        // written comes out as an erase instead of ink. `pendingTool` holds
+        // the switch until `finishHeldStroke` sees the touch actually end.
+        let desiredTool = toolState.pkTool(theme: theme)
+        if context.coordinator.isPencilDown {
+            context.coordinator.pendingTool = desiredTool
+        } else {
+            canvas.tool = desiredTool
+            context.coordinator.pendingTool = nil
+        }
         // Tape / text / move modes: stop the canvas from capturing the pencil so
         // the overlay's gestures win. Any writing tool draws.
         //
@@ -654,6 +668,10 @@ struct CanvasPageView: UIViewRepresentable {
         /// one that drew it.
         var pendingSnapInk: PKInk?
         var pendingSnapWidth: CGFloat?
+        /// A tool switch `updateUIView` withheld because the pencil was down —
+        /// see its own comment. Applied the moment `finishHeldStroke` sees the
+        /// real touch end, so it never reaches the stroke already in flight.
+        var pendingTool: PKTool?
         /// True while the canvas is deliberately not drawing, because a settled
         /// shape has taken over the pencil.
         private(set) var isSuppressingLiveInk = false
@@ -1058,7 +1076,7 @@ struct CanvasPageView: UIViewRepresentable {
                     from: path,
                     ink: pendingSnapInk
                         ?? tool.map { PKInk($0.inkType, color: $0.color) }
-                        ?? PKInk(.pen, color: .black),
+                        ?? PKInk(.pen, color: ToolState.defaultInk.uiColor),
                     width: pendingSnapWidth ?? tool?.width ?? CGFloat(toolState.penSettings.effectiveWidth)
                 ))
                 return drawing.strokes.count - 1
@@ -1177,6 +1195,12 @@ struct CanvasPageView: UIViewRepresentable {
         /// finished ending), closes the window entirely rather than narrowing it.
         func finishHeldStroke() {
             isSuppressingLiveInk = false
+            // The touch has genuinely ended now — safe to hand the canvas a
+            // tool switch that arrived mid-stroke (see `pendingTool`'s doc).
+            if let pending = pendingTool {
+                canvas?.tool = pending
+                pendingTool = nil
+            }
             // Unconditionally, not only when this call is the one that lifts the
             // mute. Drawing being off is the one state the editor can be left in
             // that the user cannot get out of — the pencil stops marking the page
