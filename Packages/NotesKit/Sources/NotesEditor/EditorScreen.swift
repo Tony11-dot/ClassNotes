@@ -59,11 +59,25 @@ public struct EditorScreen: View {
     /// The point the current pinch is anchored to, captured once when the pinch
     /// begins and held fixed for the rest of that gesture — see `zoomGesture`.
     @State var pinchZoomAnchor: PinchZoomAnchor?
+    /// How far the pinch's own fingers have translated since it began — added
+    /// to `pinchZoomAnchor.viewportPoint` so the page pans WITH the fingers
+    /// while it's being zoomed, like Photos, instead of only scaling around a
+    /// point fixed at the fingers' starting position. See `zoomGesture`.
+    @State var pinchPanTranslation: CGSize = .zero
     /// The scroll position bound to the page stack, driven programmatically to
     /// keep the pinch anchor under the fingers while `pageZoom` changes.
     @State var pageScrollPosition = ScrollPosition()
-    /// What the lasso is currently holding, and on which page.
-    @State var lassoSelection: PageSelection?
+    /// What the lasso is currently holding, and on which page. Backed by
+    /// `lassoSelectionStorage` so every change also tells `tracker` which page
+    /// (if any) has an open selection — see `ActiveCanvasTracker.lassoHoldPageID`.
+    @State var lassoSelectionStorage: PageSelection?
+    var lassoSelection: PageSelection? {
+        get { lassoSelectionStorage }
+        nonmutating set {
+            lassoSelectionStorage = newValue
+            tracker.lassoHoldPageID = newValue?.pageID
+        }
+    }
     /// Bumped when something outside the rail asks for the current pen's panel —
     /// a Pencil squeeze mapped to "show colours". A fresh id each time, so asking
     /// twice in a row still opens it the second time.
@@ -196,7 +210,6 @@ public struct EditorScreen: View {
         .overlay(alignment: .top) { noticeBanner }
         .overlay(alignment: .top) { liveBeautifyIndicator }
         .overlay(alignment: .bottom) { zoomIndicator }
-        .overlay(alignment: .bottomLeading) { pasteChip }
         .overlay { beautifyingOverlay }
         .animation(.spring(duration: 0.3), value: showPages)
         .animation(.spring(duration: 0.3), value: showNova)

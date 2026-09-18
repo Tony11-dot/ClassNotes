@@ -185,6 +185,8 @@ extension EditorScreen {
         let elementsBefore = model.page(selection.pageID)?.elements ?? []
         var drawingBefore: PKDrawing?
         var drawingAfter: PKDrawing?
+        var newStrokeIndices: [Int] = []
+        var newBoxes: [CGRect] = []
         if !selection.caught.strokeIndices.isEmpty,
            let drawing = tracker.drawing(for: selection.pageID) {
             drawingBefore = drawing
@@ -198,17 +200,35 @@ extension EditorScreen {
             }
             let after = PKDrawing(strokes: drawing.strokes + copies)
             drawingAfter = after
+            newStrokeIndices = Array(drawing.strokes.count..<after.strokes.count)
+            newBoxes = copies.map(\.renderBounds)
             tracker.setDrawing(after, for: selection.pageID)
         }
         for id in selection.caught.elementIDs {
             await model.duplicateElement(id, on: selection.pageID, offset: offset)
         }
         let elementsAfter = model.page(selection.pageID)?.elements ?? []
+        let newElementIDs = elementsAfter
+            .map(\.id)
+            .filter { id in !elementsBefore.contains { $0.id == id } }
+        for id in newElementIDs {
+            if let element = elementsAfter.first(where: { $0.id == id }) {
+                newBoxes.append(element.frame)
+            }
+        }
         tracker.registerElementStep(
             pageID: selection.pageID, drawingBefore: drawingBefore, drawingAfter: drawingAfter,
             elementsBefore: elementsBefore, elementsAfter: elementsAfter, named: "Duplicate Selection"
         )
-        lassoSelection = nil
+        // Land the duplicate in a fresh selection over just the new ink/
+        // elements, ready to drag — the same "just made this, now move it"
+        // affordance Paste already gets, instead of leaving the user staring
+        // at an identical-looking page with no sign anything new is there.
+        var newCatch = LassoCatch()
+        newCatch.strokeIndices = newStrokeIndices
+        newCatch.elementIDs = newElementIDs
+        newCatch.bounds = LassoSelection.bounds(of: newBoxes) ?? .null
+        lassoSelection = PageSelection(pageID: selection.pageID, caught: newCatch)
     }
 
     /// Copy takes a PICTURE of what the lasso is holding — the ink, the photos,

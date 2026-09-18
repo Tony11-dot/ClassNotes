@@ -216,6 +216,15 @@ public final class NovaConversation {
             } catch AIError.missingKey {
                 errorText = "Sign in to use NOVA."
                 removeEmptyAssistant(at: index)
+            } catch let AIError.badResponse(status) where status == 401 || status == 403 {
+                // A session token this backend once accepted can go stale mid-
+                // session (nothing re-validates it after launch), and a stale
+                // token 401s on EVERY request — chat or snip, it doesn't matter.
+                // That used to collapse into the same generic "couldn't respond"
+                // text as a real outage, which is why it looked like NOVA was
+                // broken outright rather than needing a fresh sign-in.
+                errorText = "Your session expired — sign out and back in, then ask NOVA again."
+                removeEmptyAssistant(at: index)
             } catch {
                 errorText = "NOVA couldn't respond. Try again."
                 removeEmptyAssistant(at: index)

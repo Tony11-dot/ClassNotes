@@ -137,6 +137,20 @@ struct PageElementsLayer: View {
                     // underneath it. That's the system context menu — a popover
                     // with a pointer was the wrong shape for "act on this".
                     .contextMenu { actionMenu(for: element) }
+                    // Fires once the awaited `model.updateElement` from a drag
+                    // or resize actually lands and this element's own geometry
+                    // changes to match — the right moment to drop the local
+                    // live-drag preview. Resetting `dragOffset`/`resizeDelta`
+                    // synchronously in the gesture's `onEnded`, before that
+                    // update landed, is what made a resize shrink back to its
+                    // OLD size for a frame and then jump to the new one: this
+                    // element's `width`/`height` here were still the pre-resize
+                    // values (the array hadn't refreshed yet) at the exact
+                    // moment the live delta got zeroed.
+                    .onChange(of: element.frame) { _, _ in
+                        if draggingID == element.id { draggingID = nil; dragOffset = .zero }
+                        if resizingID == element.id { resizingID = nil; resizeDelta = .zero }
+                    }
             }
         }
         .frame(width: displaySize.width, height: displaySize.height)
@@ -255,8 +269,16 @@ struct PageElementsLayer: View {
                     .onEnded { value in
                         var updated = element
                         (updated.width, updated.height) = resizedSize(for: element, translation: value.translation)
-                        resizingID = nil
-                        resizeDelta = .zero
+                        // `resizingID`/`resizeDelta` are left alone here — see
+                        // the `.onChange(of: element.frame)` on the element's
+                        // own view, which drops them once this update lands.
+                        // A drag that landed back at the floor size it started
+                        // at produces no frame change, so reset right away —
+                        // same reasoning as the drag handler above.
+                        if updated.frame == element.frame {
+                            resizingID = nil
+                            resizeDelta = .zero
+                        }
                         registerElementStep(before: element, after: updated, named: "Resize")
                         Task { await model.updateElement(updated, on: pageID) }
                     }
@@ -650,8 +672,17 @@ struct PageElementsLayer: View {
                                        element.x + value.translation.width / scale))
                 updated.y = max(0, min(logicalSize.height - element.height,
                                        element.y + value.translation.height / scale))
-                draggingID = nil
-                dragOffset = .zero
+                // `draggingID`/`dragOffset` are left alone here — see the
+                // `.onChange(of: element.frame)` on the element's own view,
+                // which drops them once this update actually lands. A drag
+                // that got clamped straight back to where it started (a shove
+                // against the page edge) produces no frame change at all, so
+                // nothing would ever fire that `onChange` — reset right away
+                // in that case, since there's no update in flight to wait for.
+                if updated.frame == element.frame {
+                    draggingID = nil
+                    dragOffset = .zero
+                }
                 registerElementStep(before: element, after: updated, named: "Move")
                 Task { await model.updateElement(updated, on: pageID) }
             }

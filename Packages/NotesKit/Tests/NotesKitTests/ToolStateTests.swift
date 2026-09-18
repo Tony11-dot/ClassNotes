@@ -145,14 +145,19 @@ struct ToolStateTests {
         #expect(r > 0.99 && g > 0.99 && b > 0.99)
     }
 
-    @Test("Default ink colors follow the theme until overridden")
-    func themedDefaults() {
+    @Test("An un-customized pen's ink is FIXED, never the live theme")
+    func defaultInkIsConstant() {
+        // This used to read `state.currentColor(theme: matcha) == matcha.ink` —
+        // i.e. picking a theme silently repainted every pen nobody had
+        // recoloured yet. That is exactly "why is it not like constant?": a
+        // colour the user never chose must never move underneath them,
+        // including when they change something else (theme, paper) entirely.
         let state = ToolState()
         let matcha = ThemePreset.matcha.spec
         let nord = ThemePreset.nord.spec
 
-        #expect(state.currentColor(theme: matcha) == matcha.ink)
-        #expect(state.currentColor(theme: nord) == nord.ink)
+        #expect(state.currentColor(theme: matcha) == state.currentColor(theme: nord))
+        #expect(state.currentColor(theme: matcha) == ToolState.defaultInk)
 
         state.setCurrentColor(matcha.accent)
         #expect(state.currentColor(theme: nord) == matcha.accent)
@@ -163,10 +168,18 @@ struct ToolStateTests {
         let state = ToolState()
         let spec = preset.spec
         let palette = state.inkPalette(theme: spec)
-        #expect(palette.count <= 10)
+        #expect(palette.count <= 14)
         #expect(palette[0] == spec.ink)
         #expect(palette[1] == spec.accent)
         #expect(Set(palette.map(\.hexString)).count == palette.count)
+    }
+
+    @Test("Ink palette always offers a black-to-white ramp, not just theme colours")
+    func inkPaletteOffersNeutrals() {
+        let state = ToolState()
+        let palette = state.inkPalette(theme: ThemePreset.matcha.spec)
+        #expect(palette.contains(ThemeColor(red: 0, green: 0, blue: 0)))
+        #expect(palette.contains(ThemeColor(red: 1, green: 1, blue: 1)))
     }
 
     @Test("Tape colour falls back to the theme until the user picks one")

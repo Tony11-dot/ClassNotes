@@ -136,8 +136,20 @@ struct LassoSelectionView: View {
                     DragGesture()
                         .onChanged { drag = $0.translation }
                         .onEnded { value in
-                            drag = .zero
-                            guard scale > 0 else { return }
+                            // `drag` is left exactly where the finger left it —
+                            // NOT zeroed here — so the box stays put visually
+                            // until `selection.bounds` itself catches up (see
+                            // `onChange` below). Zeroing it immediately used to
+                            // snap the box back to its PRE-drag position for a
+                            // frame while `onMove`'s model update was still in
+                            // flight, then jump it forward again once that
+                            // landed — the resize handle's "shrink then jump"
+                            // glitch, which this shares the same cause with.
+                            guard scale > 0, value.translation != .zero else {
+                                // Nothing to wait for — no `onChange` is coming.
+                                drag = .zero
+                                return
+                            }
                             onMove(CGSize(
                                 width: value.translation.width / scale,
                                 height: value.translation.height / scale
@@ -163,6 +175,16 @@ struct LassoSelectionView: View {
                 phase = -24
             }
         }
+        // Fires the instant the awaited move/resize actually lands and
+        // `selection.bounds` moves to match — the right moment to drop the
+        // local drag preview, since `frame` (now built from the NEW bounds)
+        // plus the still-live `drag`/`resizeDelta` already reads as the exact
+        // same on-screen box the finger left, so clearing them here changes
+        // nothing the user can see.
+        .onChange(of: selection.bounds) { _, _ in
+            drag = .zero
+            resizeDelta = .zero
+        }
     }
 
     /// A small, precise grab point at the selection's bottom-right corner,
@@ -180,14 +202,23 @@ struct LassoSelectionView: View {
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in resizeDelta = value.translation }
                     .onEnded { value in
-                        resizeDelta = .zero
+                        // Same reasoning as the move handle above: `resizeDelta`
+                        // stays at its final dragged value until `onChange(of:
+                        // selection.bounds)` below zeroes it, once the resize
+                        // has actually landed — not before.
                         guard scale > 0 else { return }
                         let width = max(Self.minimumSide, frame.width + value.translation.width) / scale
                         let height = max(Self.minimumSide, frame.height + value.translation.height) / scale
-                        onResize(CGRect(
+                        let newBounds = CGRect(
                             x: selection.bounds.minX, y: selection.bounds.minY,
                             width: width, height: height
-                        ))
+                        )
+                        guard newBounds != selection.bounds else {
+                            // Nothing to wait for — no `onChange` is coming.
+                            resizeDelta = .zero
+                            return
+                        }
+                        onResize(newBounds)
                     }
             )
     }

@@ -138,7 +138,7 @@ struct PenSettingsPanel: View {
     private var settings: PenSettings { toolState.settings(for: preset) }
 
     private var color: ThemeColor {
-        settings.colorHex.flatMap(ThemeColor.init(hex:)) ?? theme.ink
+        settings.colorHex.flatMap(ThemeColor.init(hex:)) ?? ToolState.defaultInk
     }
 
     var body: some View {
@@ -206,10 +206,10 @@ struct PenSettingsPanel: View {
 
     private var colorBinding: Binding<String?> {
         Binding(
-            get: { settings.colorHex ?? theme.ink.hexString },
+            get: { settings.colorHex ?? ToolState.defaultInk.hexString },
             set: { hex in
                 var updated = settings
-                updated.colorHex = hex ?? theme.ink.hexString
+                updated.colorHex = hex ?? ToolState.defaultInk.hexString
                 toolState.setSettings(updated, for: preset)
             }
         )

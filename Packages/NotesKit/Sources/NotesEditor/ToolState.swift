@@ -464,21 +464,42 @@ public final class ToolState {
 
     // MARK: - Colors
 
-    /// Swatches offered for ink: the theme's ink + accent, then its cover palette.
+    /// A black-to-white ramp, always offered alongside the theme's own
+    /// swatches — everything else (a specific blue, a specific green) is a
+    /// wheel tap away, but black/white/gray are reached for constantly enough
+    /// that making someone open the wheel for them every time isn't worth it.
+    static let neutralSwatches: [ThemeColor] = [
+        ThemeColor(red: 0, green: 0, blue: 0),
+        ThemeColor(red: 0.23, green: 0.23, blue: 0.24),
+        ThemeColor(red: 0.56, green: 0.56, blue: 0.58),
+        ThemeColor(red: 0.82, green: 0.82, blue: 0.84),
+        ThemeColor(red: 1, green: 1, blue: 1)
+    ]
+
+    /// Swatches offered for ink: the theme's ink + accent, the black-to-white
+    /// ramp, then its cover palette.
     public func inkPalette(theme: ThemeSpec) -> [ThemeColor] {
         var seen = Set<String>()
         var palette: [ThemeColor] = []
-        for candidate in [theme.ink, theme.accent] + theme.coverPalette {
+        for candidate in [theme.ink, theme.accent] + Self.neutralSwatches + theme.coverPalette {
             if seen.insert(candidate.hexString).inserted {
                 palette.append(candidate)
             }
-            if palette.count == 10 { break }
+            if palette.count == 14 { break }
         }
         return palette
     }
 
+    /// What an un-customized pen writes with. A FIXED value, deliberately not
+    /// `theme.ink`: that used to mean picking a theme (or anything else that
+    /// happens to change `theme`) silently repainted every pen the user hadn't
+    /// explicitly recolored, which read as "my ink colour keeps changing on its
+    /// own." A colour the user never chose should never move once it's down on
+    /// the page or waiting in the tray.
+    static let defaultInk = ThemeColor(red: 0.11, green: 0.11, blue: 0.12)
+
     public func currentColor(theme: ThemeSpec) -> ThemeColor {
-        penSettings.colorHex.flatMap(ThemeColor.init(hex:)) ?? theme.ink
+        penSettings.colorHex.flatMap(ThemeColor.init(hex:)) ?? Self.defaultInk
     }
 
     public func setCurrentColor(_ color: ThemeColor) {
@@ -526,7 +547,7 @@ public final class ToolState {
     public func currentPenInk(theme: ThemeSpec) -> (ink: PKInk, width: CGFloat) {
         let preset = pen
         let settings = settings(for: preset)
-        let base = settings.colorHex.flatMap(ThemeColor.init(hex:)) ?? theme.ink
+        let base = settings.colorHex.flatMap(ThemeColor.init(hex:)) ?? Self.defaultInk
         let color = Self.adaptationSafe(base.uiColor.withAlphaComponent(settings.concentration))
         return (PKInk(preset.ink.pkInkType, color: color), settings.effectiveWidth)
     }

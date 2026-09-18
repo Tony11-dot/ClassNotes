@@ -124,6 +124,15 @@ extension CanvasPageView.Coordinator {
                 // the beautifier's bookkeeping intact, and the pass re-runs
                 // when the hand next rests.
                 guard !self.isUsingTool, !self.isPencilDown else { return false }
+                // A lasso selection sitting open on THIS page is holding stroke
+                // indices captured at the moment its loop closed. Reindexing
+                // the drawing underneath it — exactly what a beautify rewrite
+                // does — would leave Move/Duplicate/Resize/Delete acting on
+                // whatever now happens to sit at those old positions instead
+                // of what the user actually circled. Refusing here re-arms the
+                // pass, same as the guards above; it fires once the selection
+                // is dismissed.
+                guard self.tracker.lassoHoldPageID != self.pageID else { return false }
                 // Something rewrote a stroke IN PLACE (pen shaping, a shape
                 // snap, ruling, scribble-erase) since this pass took its
                 // starting snapshot — `plan.consumedStrokes` are indices into

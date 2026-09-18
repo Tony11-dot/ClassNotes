@@ -44,7 +44,6 @@ struct SnipOverlay: View {
                             .position(x: rect.midX, y: rect.midY)
                     }
                 }
-                .ignoresSafeArea()
 
             if let rect {
                 // A plain, crisp border — no `.shadow`. A shadow here blooms
@@ -99,6 +98,15 @@ struct SnipOverlay: View {
                     }
                 }
         )
+        // Applied to the WHOLE stack, once, here — not to the dim layer alone.
+        // `ignoresSafeArea` on a single child expands that child past the
+        // ZStack's own (safe-area-inset) bounds while every sibling, including
+        // this `DragGesture`, still measures its coordinates against the
+        // un-expanded frame; that mismatch is what shifted the lit cutout away
+        // from the box the user actually dragged. Expanding the whole subtree
+        // together keeps the drag's `value.location` and every `position()`
+        // call reading off the SAME frame.
+        .ignoresSafeArea()
     }
 
     private func corners(of rect: CGRect) -> [CGPoint] {

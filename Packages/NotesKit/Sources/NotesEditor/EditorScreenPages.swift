@@ -216,7 +216,7 @@ extension EditorScreen {
         // this actually ships to (iPad Pro, M-series) — plenty of headroom for
         // a finer step. 0.015 is still well clear of the stutter this was tuned
         // against while reading as continuous to a finger.
-        MagnifyGesture(minimumScaleDelta: 0.015)
+        let magnify = MagnifyGesture(minimumScaleDelta: 0.015)
             .onChanged { value in
                 let anchor = pinchZoomAnchor ?? {
                     let captured = capturePinchAnchor(at: value.startLocation, containerWidth: containerWidth)
@@ -229,7 +229,30 @@ extension EditorScreen {
             .onEnded { _ in
                 zoomAnchor = pageZoom
                 pinchZoomAnchor = nil
+                pinchPanTranslation = .zero
             }
+        // A pinch's two fingers don't just change distance apart — together
+        // they drift across the page too, and Photos follows both: the page
+        // zooms under the pinch AND slides with it. `MagnifyGesture` only ever
+        // reports the distance change, never where the pinch itself has moved
+        // to, so without this the anchor was locked to wherever the pinch
+        // STARTED — the page couldn't be panned at all while a pinch was live,
+        // which is exactly "I can't move freely while pinching." This rides
+        // alongside the magnify gesture purely to read that drift; it writes
+        // nothing for an ordinary one-finger touch, since every handler below
+        // is gated on a pinch already being open.
+        let pan = DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                guard let anchor = pinchZoomAnchor else { return }
+                pinchPanTranslation = value.translation
+                applyPinchAnchor(anchor, containerWidth: containerWidth)
+            }
+            .onEnded { _ in
+                // Unconditional: harmless to zero an already-zero value for an
+                // ordinary one-finger touch that was never a pinch at all.
+                pinchPanTranslation = .zero
+            }
+        return SimultaneousGesture(magnify, pan)
     }
 
     /// Snapshots where a pinch that just started sits over the page stack, in
@@ -280,10 +303,18 @@ extension EditorScreen {
         let projectedContentHeight = pagesHeightAtStart * widthRatio + verticalConstant
         let targetContentY = anchor.totalHeightFraction * projectedContentHeight
 
+        // The pinch's own drift since it began — see `pinchPanTranslation` —
+        // added to where it started, so the anchor tracks where the fingers
+        // ACTUALLY are right now rather than only where they first touched
+        // down.
+        let viewportPoint = CGPoint(
+            x: anchor.viewportPoint.x + pinchPanTranslation.width,
+            y: anchor.viewportPoint.y + pinchPanTranslation.height
+        )
         let maxOffsetX = max(0, contentWidth - pageScrollGeo.containerSize.width)
         let maxOffsetY = max(0, projectedContentHeight - pageScrollGeo.containerSize.height)
-        let newOffsetX = min(max(targetContentX - anchor.viewportPoint.x, 0), maxOffsetX)
-        let newOffsetY = min(max(targetContentY - anchor.viewportPoint.y, 0), maxOffsetY)
+        let newOffsetX = min(max(targetContentX - viewportPoint.x, 0), maxOffsetX)
+        let newOffsetY = min(max(targetContentY - viewportPoint.y, 0), maxOffsetY)
 
         pageScrollPosition.scrollTo(x: newOffsetX, y: newOffsetY)
     }
@@ -323,6 +354,15 @@ extension EditorScreen {
     /// last page (or above the first) and a new page — inheriting that page's
     /// style — slides in.
     func handleOverscroll(_ over: Overscroll, proxy: ScrollViewProxy) {
+        // A pinch programmatically re-centers the scroll position on every
+        // step (`applyPinchAnchor`) to keep the anchor point under the
+        // fingers — zooming OUT shrinks the content and can transiently push
+        // that offset near an edge purely as a side effect of the zoom, not
+        // because the user scrolled there. Reading that as a real overscroll
+        // and inserting a page mid-pinch is exactly the "it keeps jumping
+        // pages" report: a new page appears and the scroll re-centers around
+        // it, which looks like the page you were zooming on jumped away.
+        guard pinchZoomAnchor == nil else { return }
         guard over.scrollable else { return }
         let threshold: CGFloat = 120
         if over.bottom > threshold, !addingBottom {
@@ -488,6 +528,14 @@ extension EditorScreen {
             TapPlacementLayer(displaySize: displaySize, logicalSize: page.logicalSize) { point in
                 Task { await drawStraightLine(through: point, axis: axis, on: page) }
             }
+        }
+        if let snip = copiedSnip, snip.pageID == page.id, page.logicalSize.width > 0 {
+            let scale = displaySize.width / page.logicalSize.width
+            let displayFrame = CGRect(
+                x: snip.frame.minX * scale, y: snip.frame.minY * scale,
+                width: snip.frame.width * scale, height: snip.frame.height * scale
+            )
+            pasteChip(near: displayFrame, in: displaySize)
         }
         if toolState.tool == .lasso {
             if let selection = lassoSelection, selection.pageID == page.id {

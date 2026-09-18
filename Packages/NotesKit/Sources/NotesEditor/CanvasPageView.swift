@@ -28,6 +28,15 @@ let snapLog = Logger(subsystem: "com.classmate.notes", category: "ShapeSnap")
 @Observable
 public final class ActiveCanvasTracker {
     public weak var activeCanvas: PKCanvasView?
+    /// The page a lasso selection is currently open on, if any. A selection's
+    /// `strokeIndices` are captured once, at the moment the loop closes; any
+    /// background rewrite that reindexes the drawing after that (live
+    /// beautification replacing handwriting with type) would leave those
+    /// indices pointing at whatever now happens to sit there, so Move,
+    /// Duplicate, Resize and Delete would silently act on the wrong ink. Set
+    /// by `EditorScreen` whenever `lassoSelection` changes; checked by the
+    /// beautifier before it rewrites a page's drawing.
+    public var lassoHoldPageID: UUID?
     /// Live canvases by page, so tools (OCR, beautify, circle-to-explain) can read
     /// a page's current ink without waiting for the debounced save.
     private var canvases: [UUID: Weak] = [:]
