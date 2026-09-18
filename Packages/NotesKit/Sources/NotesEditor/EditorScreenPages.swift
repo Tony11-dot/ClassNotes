@@ -149,26 +149,36 @@ extension EditorScreen {
                 // never reach it. The content, by contrast, is guaranteed to
                 // be an actual subview of that scroll view — see
                 // `ScrollTouchLimiter`'s doc comment for what it does there.
+                // `PinchZoomBridge` rides along on the SAME background for the
+                // same reason: it needs the real `UIScrollView` too, to attach
+                // its own `UIPinchGestureRecognizer` directly onto it.
                 .background(ScrollTouchLimiter())
+                .background(PinchZoomBridge { scale, viewportPoint, state in
+                    handlePinch(scale: scale, at: viewportPoint, state: state, containerWidth: containerWidth)
+                })
             }
             // Pinch zooms the page by making it LAY OUT bigger, not by scaling a
             // rendered picture of it: `PageCanvasView` re-pins its zoom to the new
             // width, so the ink is re-rasterized at the new size and stays vector
             // crisp — and it stays in the page's own logical coordinates, which is
-            // what keeps a drawing device-independent.
-            .simultaneousGesture(zoomGesture(containerWidth: containerWidth))
+            // what keeps a drawing device-independent. Driven by UIKit's real
+            // `UIPinchGestureRecognizer` (`PinchZoomBridge`, above), not SwiftUI's
+            // `MagnifyGesture` — see that struct's doc comment for why.
+            //
             // A two-finger touch is ALSO exactly what `ScrollView`'s own native
             // pan gesture reads as "scroll by the average of both fingers" — it
-            // was recognizing right alongside `zoomGesture` the whole time, so
-            // every pinch had two independent drivers fighting over the same
-            // content offset: the native pan applying the raw touch delta, and
+            // was recognizing right alongside the pinch the whole time, so every
+            // pinch had two independent drivers fighting over the same content
+            // offset: the native pan applying the raw touch delta, and
             // `applyPinchAnchor`'s own `scrollTo` applying the anchor math, one
             // frame apart. That fight IS "it keeps jumping" and "I can't move
             // freely while pinching" — not a tuning problem, a second hand on
             // the same wheel. Disabling native scrolling for exactly the
             // window a pinch is open leaves `applyPinchAnchor` the only writer.
+            // (`ScrollTouchLimiter` additionally caps the pan recognizer itself
+            // to one touch, so it never even contests the second finger.)
             .scrollDisabled(pinchZoomAnchor != nil)
-            // Bound so `zoomGesture` can drive the scroll position programmatically
+            // Bound so `handlePinch` can drive the scroll position programmatically
             // (`ScrollPosition.scrollTo(x:y:)`) to keep the pinch anchor under the
             // fingers. Reading is done separately, below, via
             // `onScrollGeometryChange` — that path is already proven live in this
@@ -226,55 +236,45 @@ extension EditorScreen {
     /// anchored to where the pinch actually landed — like Photos, the point
     /// under the fingers stays under them instead of the page jumping while the
     /// scroll offset sits still. See `PinchZoomAnchor` for the anchor math and
-    /// its one deliberate approximation (the vertical axis).
-    func zoomGesture(containerWidth: CGFloat) -> some Gesture {
-        // 0.01 fired a re-layout of every visible page's canvas AND a manual
-        // scroll re-center on every ~1% of magnification — at pinch speed that's
-        // easily 100+ of both a second, each one a real `PKCanvasView` zoomScale
-        // re-pin plus a `ScrollPosition` write racing the SwiftUI re-layout from
-        // `pageZoom` changing underneath it, which is what a coarse pinch felt
-        // like a stutter/blink instead of a continuous scale. 0.04 fixed the
-        // stutter but over-corrected into visibly steppy zoom on the hardware
-        // this actually ships to (iPad Pro, M-series) — plenty of headroom for
-        // a finer step. 0.015 is still well clear of the stutter this was tuned
-        // against while reading as continuous to a finger.
-        let magnify = MagnifyGesture(minimumScaleDelta: 0.015)
-            .onChanged { value in
-                let anchor = pinchZoomAnchor ?? {
-                    let captured = capturePinchAnchor(at: value.startLocation, containerWidth: containerWidth)
-                    pinchZoomAnchor = captured
-                    return captured
-                }()
-                pageZoom = Self.clampZoom(anchor.startZoom * value.magnification)
-                applyPinchAnchor(anchor, containerWidth: containerWidth)
+    /// its one deliberate approximation (the vertical axis), and
+    /// `PinchZoomBridge` for why this reads UIKit's own pinch recognizer
+    /// directly rather than SwiftUI's `MagnifyGesture`.
+    func handlePinch(
+        scale: CGFloat, at viewportPoint: CGPoint, state: UIGestureRecognizer.State, containerWidth: CGFloat
+    ) {
+        switch state {
+        case .began:
+            pinchZoomAnchor = capturePinchAnchor(at: viewportPoint, containerWidth: containerWidth)
+        case .changed:
+            guard let anchor = pinchZoomAnchor else { return }
+            // Writing `pageZoom` is the EXPENSIVE half: it re-lays out every
+            // visible page and re-pins each `PKCanvasView`'s own zoom scale.
+            // A real recognizer reports every touch event (120Hz on
+            // ProMotion), and committing all of them is what this file's
+            // history records as stutter/blink rather than a continuous
+            // scale. Re-anchoring the scroll offset, by contrast, is cheap —
+            // so that runs on EVERY callback, which is what keeps the page
+            // glued to the fingers, while the relayout lands on a coarser
+            // step the eye reads as continuous anyway. Proportional, not
+            // absolute: 1.2% of the CURRENT zoom is the same apparent step
+            // at 0.5x as at 4x.
+            let candidate = Self.clampZoom(anchor.startZoom * scale)
+            if abs(candidate - pageZoom) >= pageZoom * 0.012 {
+                pageZoom = candidate
             }
-            .onEnded { _ in
-                zoomAnchor = pageZoom
-                pinchZoomAnchor = nil
-                pinchPanTranslation = .zero
+            applyPinchAnchor(anchor, keepingContentUnder: viewportPoint, containerWidth: containerWidth)
+        case .ended, .cancelled, .failed:
+            // The last `.changed` may have been under the commit threshold, so
+            // settle on the exact final magnification rather than leaving the
+            // page a fraction of a percent away from where the fingers left it.
+            if let anchor = pinchZoomAnchor {
+                pageZoom = Self.clampZoom(anchor.startZoom * scale)
             }
-        // A pinch's two fingers don't just change distance apart — together
-        // they drift across the page too, and Photos follows both: the page
-        // zooms under the pinch AND slides with it. `MagnifyGesture` only ever
-        // reports the distance change, never where the pinch itself has moved
-        // to, so without this the anchor was locked to wherever the pinch
-        // STARTED — the page couldn't be panned at all while a pinch was live,
-        // which is exactly "I can't move freely while pinching." This rides
-        // alongside the magnify gesture purely to read that drift; it writes
-        // nothing for an ordinary one-finger touch, since every handler below
-        // is gated on a pinch already being open.
-        let pan = DragGesture(minimumDistance: 0)
-            .onChanged { value in
-                guard let anchor = pinchZoomAnchor else { return }
-                pinchPanTranslation = value.translation
-                applyPinchAnchor(anchor, containerWidth: containerWidth)
-            }
-            .onEnded { _ in
-                // Unconditional: harmless to zero an already-zero value for an
-                // ordinary one-finger touch that was never a pinch at all.
-                pinchPanTranslation = .zero
-            }
-        return SimultaneousGesture(magnify, pan)
+            zoomAnchor = pageZoom
+            pinchZoomAnchor = nil
+        default:
+            break
+        }
     }
 
     /// Snapshots where a pinch that just started sits over the page stack, in
@@ -295,7 +295,6 @@ extension EditorScreen {
         let heightFraction = min(max(contentY / totalHeight, 0), 1)
 
         return PinchZoomAnchor(
-            viewportPoint: viewportPoint,
             startZoom: zoom,
             pageFraction: pageFraction,
             totalHeightFraction: heightFraction,
@@ -305,8 +304,12 @@ extension EditorScreen {
 
     /// Reapplies a captured anchor at the CURRENT `pageZoom`: works out where
     /// that same page-relative point now sits in content space, and scrolls so
-    /// it lands back under `anchor.viewportPoint`.
-    func applyPinchAnchor(_ anchor: PinchZoomAnchor, containerWidth: CGFloat) {
+    /// it lands back under the pinch's LIVE viewport position — read fresh from
+    /// `UIPinchGestureRecognizer.location(in:)` on every single callback
+    /// (`PinchZoomBridge`), not reconstructed from a fixed start point plus a
+    /// separately-tracked drift. That's what makes this actually follow the
+    /// fingers instead of merely approximating them a frame behind.
+    func applyPinchAnchor(_ anchor: PinchZoomAnchor, keepingContentUnder viewportPoint: CGPoint, containerWidth: CGFloat) {
         let zoom = pageZoom
         let width = Self.pageWidth(in: containerWidth, zoom: zoom)
         let contentWidth = max(containerWidth, width + Self.pageGutter * 2)
@@ -325,14 +328,6 @@ extension EditorScreen {
         let projectedContentHeight = pagesHeightAtStart * widthRatio + verticalConstant
         let targetContentY = anchor.totalHeightFraction * projectedContentHeight
 
-        // The pinch's own drift since it began — see `pinchPanTranslation` —
-        // added to where it started, so the anchor tracks where the fingers
-        // ACTUALLY are right now rather than only where they first touched
-        // down.
-        let viewportPoint = CGPoint(
-            x: anchor.viewportPoint.x + pinchPanTranslation.width,
-            y: anchor.viewportPoint.y + pinchPanTranslation.height
-        )
         let maxOffsetX = max(0, contentWidth - pageScrollGeo.containerSize.width)
         let maxOffsetY = max(0, projectedContentHeight - pageScrollGeo.containerSize.height)
         let newOffsetX = min(max(targetContentX - viewportPoint.x, 0), maxOffsetX)
@@ -569,6 +564,9 @@ extension EditorScreen {
             )
             pasteChip(near: displayFrame, in: displaySize)
         }
+        if let pendingID = pendingPasteElementID, let element = page.elements.first(where: { $0.id == pendingID }) {
+            pastePendingActions(for: element, on: page.id, displaySize: displaySize, logicalSize: page.logicalSize)
+        }
         if toolState.tool == .lasso {
             if let selection = lassoSelection, selection.pageID == page.id {
                 LassoSelectionView(
@@ -672,7 +670,7 @@ extension EditorScreen {
 /// state round-trip needed — the same fix `FingerTransformArea` already uses
 /// to keep the ruler's pan and rotation from fighting over the same touches.
 /// A one-finger drag still scrolls normally; only the two-finger case, which
-/// `zoomGesture` owns exclusively, is affected.
+/// `PinchZoomBridge` owns exclusively, is affected.
 ///
 /// An invisible, non-interactive view rather than a gesture or a modifier:
 /// there is no SwiftUI API for a `ScrollView`'s own gesture recognizer, so
@@ -698,6 +696,89 @@ private struct ScrollTouchLimiter: UIViewRepresentable {
                 candidate = view.superview
             }
             (candidate as? UIScrollView)?.panGestureRecognizer.maximumNumberOfTouches = 1
+        }
+    }
+}
+
+/// Bridges the page stack's two-finger pinch straight from UIKit's own
+/// `UIPinchGestureRecognizer`, attached directly to the same backing
+/// `UIScrollView` `ScrollTouchLimiter` finds, instead of SwiftUI's
+/// `MagnifyGesture`.
+///
+/// `MagnifyGesture`'s `Value` only ever carries `startLocation` — where the
+/// pinch began, fixed for the gesture's whole lifetime — never where it has
+/// drifted to since. The old implementation worked around that with a SECOND,
+/// separately-recognized `DragGesture` purely to read that drift and feed it
+/// back in as a correction, applied a frame apart from the magnify gesture's
+/// own update. Two independently-recognized gestures racing to apply
+/// overlapping deltas is exactly the class of bug `ScrollTouchLimiter`'s own
+/// doc comment describes for scrolling — here it read as the zoom never quite
+/// tracking the fingers: "the screen isn't aware of my fingers." A real
+/// `UIPinchGestureRecognizer`'s `location(in:)` is the LIVE centroid of both
+/// touches, recomputed by UIKit itself on every single callback, so one
+/// recognizer already carries everything two SwiftUI gestures were needed for.
+///
+/// `location(in: scrollView)` reports a point in the scroll view's own BOUNDS
+/// space — which, because a scroll view's `bounds.origin` tracks its content
+/// offset, already has that offset baked in. Subtracting the scroll view's own
+/// (authoritative, un-lagged) `contentOffset` right here turns it back into a
+/// plain viewport-relative point — exactly what `capturePinchAnchor`/
+/// `applyPinchAnchor` already expect — without depending on `pageScrollGeo`,
+/// which is only ever a frame-old copy read back through SwiftUI.
+private struct PinchZoomBridge: UIViewRepresentable {
+    var onPinch: (_ scale: CGFloat, _ viewportPoint: CGPoint, _ state: UIGestureRecognizer.State) -> Void
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        context.coordinator.onPinch = onPinch
+        guard context.coordinator.recognizer == nil else { return }
+        DispatchQueue.main.async {
+            var candidate = uiView.superview
+            while let view = candidate, !(view is UIScrollView) {
+                candidate = view.superview
+            }
+            guard let scrollView = candidate as? UIScrollView, context.coordinator.recognizer == nil else { return }
+            let recognizer = UIPinchGestureRecognizer(
+                target: context.coordinator, action: #selector(Coordinator.handle(_:))
+            )
+            recognizer.delegate = context.coordinator
+            scrollView.addGestureRecognizer(recognizer)
+            context.coordinator.recognizer = recognizer
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(onPinch: onPinch) }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var onPinch: (CGFloat, CGPoint, UIGestureRecognizer.State) -> Void
+        weak var recognizer: UIPinchGestureRecognizer?
+
+        init(onPinch: @escaping (CGFloat, CGPoint, UIGestureRecognizer.State) -> Void) {
+            self.onPinch = onPinch
+        }
+
+        /// Without this, UIKit's default one-recognizer-per-touch-sequence
+        /// exclusivity would let the scroll view's own pan silently block this
+        /// — see `FingerTransformArea.Coordinator` for the same reasoning.
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool { true }
+
+        @objc func handle(_ recognizer: UIPinchGestureRecognizer) {
+            guard let scrollView = recognizer.view as? UIScrollView else { return }
+            let contentPoint = recognizer.location(in: scrollView)
+            let viewportPoint = CGPoint(
+                x: contentPoint.x - scrollView.contentOffset.x,
+                y: contentPoint.y - scrollView.contentOffset.y
+            )
+            onPinch(recognizer.scale, viewportPoint, recognizer.state)
         }
     }
 }

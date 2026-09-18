@@ -37,6 +37,11 @@ public struct EditorScreen: View {
     /// frame (see `CopiedSnip`) so Paste still lands in the right place even
     /// after the lasso selection itself has been dismissed.
     @State var copiedSnip: CopiedSnip?
+    /// A just-pasted element still waiting on its own Confirm/Discard bar
+    /// (`pastePendingActions`) — cleared the moment either button is pressed.
+    /// `nil` the rest of the time, including for every element that ISN'T the
+    /// most recent paste: only one paste is ever pending at once.
+    @State var pendingPasteElementID: UUID?
     @State var explainMode = false
     @State var showPages = false
     @State var addingBottom = false
@@ -57,13 +62,8 @@ public struct EditorScreen: View {
     /// gesture can anchor to it without ever reading UIKit directly.
     @State var pageScrollGeo = PageScrollGeometry()
     /// The point the current pinch is anchored to, captured once when the pinch
-    /// begins and held fixed for the rest of that gesture — see `zoomGesture`.
+    /// begins and held fixed for the rest of that gesture — see `handlePinch`.
     @State var pinchZoomAnchor: PinchZoomAnchor?
-    /// How far the pinch's own fingers have translated since it began — added
-    /// to `pinchZoomAnchor.viewportPoint` so the page pans WITH the fingers
-    /// while it's being zoomed, like Photos, instead of only scaling around a
-    /// point fixed at the fingers' starting position. See `zoomGesture`.
-    @State var pinchPanTranslation: CGSize = .zero
     /// The scroll position bound to the page stack, driven programmatically to
     /// keep the pinch anchor under the fingers while `pageZoom` changes.
     @State var pageScrollPosition = ScrollPosition()
@@ -156,6 +156,13 @@ public struct EditorScreen: View {
         .onChange(of: scenePhase) { _, phase in
             guard phase != .active else { return }
             tracker.flushAllPendingSaves()
+        }
+        // Selecting anything else — tapping away, picking a different element —
+        // settles a pending paste exactly like pressing its own Confirm would.
+        // Without this, tapping elsewhere left `pastePendingActions` floating
+        // over an element that was no longer even selected.
+        .onChange(of: selectedElementID) { _, newValue in
+            if newValue != pendingPasteElementID { pendingPasteElementID = nil }
         }
     }
 
@@ -833,9 +840,6 @@ struct PageScrollGeometry: Equatable {
 /// pages — an acceptable tradeoff since a gap has no ink to keep still under
 /// the finger anyway.
 struct PinchZoomAnchor {
-    /// Where the pinch started, in the page stack's own (viewport) coordinate
-    /// space — this is what stays fixed on screen for the whole gesture.
-    var viewportPoint: CGPoint
     /// The zoom the pinch started from.
     var startZoom: CGFloat
     /// Horizontal position across the page, 0...1, clamped — 0/1 if the pinch

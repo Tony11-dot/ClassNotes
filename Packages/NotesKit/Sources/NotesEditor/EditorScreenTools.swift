@@ -280,18 +280,17 @@ extension EditorScreen {
     @MainActor
     func pasteSnip() async {
         lassoSelection = nil
+        let landedPageID: UUID
+        let elementsBefore: [PageElement]
         if let snip = copiedSnip {
             guard let data = snip.image.pngData() else {
                 editorNotice = "Nothing to paste."
                 return
             }
-            let elementsBefore = model.page(snip.pageID)?.elements ?? []
+            landedPageID = snip.pageID
+            elementsBefore = model.page(snip.pageID)?.elements ?? []
             await model.insertImage(
                 data, fileExtension: "png", frame: snip.frame, on: snip.pageID, renderAboveInk: true
-            )
-            let elementsAfter = model.page(snip.pageID)?.elements ?? []
-            tracker.registerElementStep(
-                pageID: snip.pageID, elementsBefore: elementsBefore, elementsAfter: elementsAfter, named: "Paste"
             )
         } else if let pbImage = UIPasteboard.general.image, let data = pbImage.pngData() {
             // Something copied from outside the app: there's no source page or
@@ -301,21 +300,59 @@ extension EditorScreen {
                 editorNotice = "Nothing to paste."
                 return
             }
-            let elementsBefore = model.page(insertedPageID)?.elements ?? []
+            landedPageID = insertedPageID
+            elementsBefore = model.page(insertedPageID)?.elements ?? []
             await model.insertImage(data, fileExtension: "png", renderAboveInk: true)
-            let elementsAfter = model.page(insertedPageID)?.elements ?? []
-            tracker.registerElementStep(
-                pageID: insertedPageID, elementsBefore: elementsBefore, elementsAfter: elementsAfter, named: "Paste"
-            )
         } else {
             editorNotice = "Nothing to paste."
             return
         }
+        let elementsAfter = model.page(landedPageID)?.elements ?? []
+        tracker.registerElementStep(
+            pageID: landedPageID, elementsBefore: elementsBefore, elementsAfter: elementsAfter, named: "Paste"
+        )
+        // The one element in `elementsAfter` that wasn't in `elementsBefore` —
+        // there's exactly one, since this function only ever appends a single
+        // image. Marks it pending: adjustable (drag/pinch already work off
+        // `selectedElementID`'s resize handle) with its own Confirm/Discard bar
+        // (`pastePendingActions`) until the user settles on where it lands,
+        // instead of dropping it silently with no way to undo but the
+        // page-wide undo button or a long-press Delete.
+        let beforeIDs = Set(elementsBefore.map(\.id))
+        let newElementID = elementsAfter.first { !beforeIDs.contains($0.id) }?.id
+        selectedElementID = newElementID
+        pendingPasteElementID = newElementID
         // Drag and pinch only work when the pencil isn't drawing, so the mode that
         // makes the paste adjustable is the mode it should arrive in.
         toolState.select(.hand)
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         editorNotice = "Pasted — drag to move, pinch to resize."
+    }
+
+    /// Confirm on the pending-paste bar: the placement is settled, so the
+    /// adjustment frame goes away. The element itself is untouched — it's an
+    /// ordinary page element from here on, tap it again like any other image
+    /// to bring its resize handle back and move it further.
+    @MainActor
+    func confirmPendingPaste() {
+        pendingPasteElementID = nil
+        selectedElementID = nil
+    }
+
+    /// The X on the pending-paste bar: undoes the paste outright rather than
+    /// leaving it on the page for a long-press Delete to find, since the whole
+    /// point of showing this bar before the user has moved on is "I didn't
+    /// mean to put that there."
+    @MainActor
+    func discardPendingPaste(_ element: PageElement, on pageID: UUID) async {
+        let before = model.page(pageID)?.elements ?? []
+        tracker.registerElementStep(
+            pageID: pageID, elementsBefore: before,
+            elementsAfter: before.filter { $0.id != element.id }, named: "Discard paste"
+        )
+        await model.deleteElement(element.id, on: pageID)
+        pendingPasteElementID = nil
+        selectedElementID = nil
     }
 
     /// Renders the caught region at its page-logical size, ink first and page
