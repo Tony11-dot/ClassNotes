@@ -225,6 +225,13 @@ public final class NovaConversation {
                 // broken outright rather than needing a fresh sign-in.
                 errorText = "Your session expired — sign out and back in, then ask NOVA again."
                 removeEmptyAssistant(at: index)
+            } catch AIError.badResponse(status: 429) {
+                // Survived the provider's own retry, so this is a sustained rate
+                // limit rather than one unlucky request. "Couldn't respond" reads
+                // as NOVA being broken; it is only busy, and waiting actually
+                // works — so say that instead.
+                errorText = "NOVA is catching up — ask again in a few seconds."
+                removeEmptyAssistant(at: index)
             } catch {
                 errorText = "NOVA couldn't respond. Try again."
                 removeEmptyAssistant(at: index)

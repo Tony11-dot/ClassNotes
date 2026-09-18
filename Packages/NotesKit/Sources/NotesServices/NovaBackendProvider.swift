@@ -38,6 +38,11 @@ public struct NovaBackendProvider: AIProvider {
 
     var endpoint: URL { baseURL.appendingPathComponent("classnotes/ai") }
 
+    /// Statuses where the request itself was fine and the server was only
+    /// momentarily unwilling — worth asking once more. Everything else (400,
+    /// 401, 404) is a contract or auth problem that a retry just repeats.
+    static let retryableStatuses: Set<Int> = [429, 500, 502, 503, 504]
+
     /// Splits `messages` the way the endpoint expects: a task, the latest
     /// question, the turns before it, and any system prompt as page context.
     ///
@@ -132,12 +137,26 @@ public struct NovaBackendProvider: AIProvider {
                     let answer: String
                     do {
                         answer = try await attempt(messages: messages, token: token)
-                    } catch let error as AIError {
+                    } catch let AIError.badResponse(status) where Self.retryableStatuses.contains(status) {
                         // A bad response SHAPE is a server/contract problem, not a
                         // blip — retrying it just asks the same broken question
-                        // again. A transport-level failure (timeout, dropped
-                        // connection, DNS hiccup) genuinely can be transient, so
-                        // it gets exactly one retry before giving up for real.
+                        // again. But a 429 or a 5xx is the opposite: the request
+                        // was fine and the server was momentarily unwilling.
+                        //
+                        // 429 in particular is routine rather than exceptional
+                        // here. The endpoint allows 20 requests a minute and
+                        // every visible turn spends TWO of them — the reply, plus
+                        // the throwaway call `generateFollowUps` makes for the
+                        // suggestion chips — so a student typing briskly can be
+                        // rate-limited after ~10 questions and be told NOVA
+                        // "couldn't respond", which reads as broken rather than
+                        // busy. Waiting a beat and asking once more is usually
+                        // the whole fix.
+                        novaLog.error("NOVA backend returned \(status), retrying once")
+                        try? await Task.sleep(for: .milliseconds(status == 429 ? 1200 : 400))
+                        guard !Task.isCancelled else { throw AIError.network }
+                        answer = try await attempt(messages: messages, token: token)
+                    } catch let error as AIError {
                         throw error
                     } catch {
                         novaLog.error("NOVA request failed, retrying once: \(String(describing: error), privacy: .public)")

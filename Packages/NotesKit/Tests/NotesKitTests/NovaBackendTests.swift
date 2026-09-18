@@ -60,6 +60,25 @@ struct NovaBackendTests {
         #expect(NovaBackendProvider.answer(from: Data("not json".utf8)) == nil)
     }
 
+    @Test("Busy and broken are told apart: a rate limit is retried, a bad request isn't")
+    func retryableStatusesCoverBusyNotBroken() {
+        // 20 requests a minute, two spent per visible turn (the reply plus the
+        // follow-up chips), so a student typing briskly meets 429 in ordinary
+        // use. Retrying it is the difference between NOVA looking broken and
+        // NOVA being briefly busy.
+        #expect(NovaBackendProvider.retryableStatuses.contains(429))
+        for serverError in [500, 502, 503, 504] {
+            #expect(NovaBackendProvider.retryableStatuses.contains(serverError))
+        }
+        // Asking a contract or auth failure a second time only repeats it.
+        for permanent in [400, 401, 403, 404] {
+            #expect(
+                !NovaBackendProvider.retryableStatuses.contains(permanent),
+                "\(permanent) is the request being wrong, not the server being busy"
+            )
+        }
+    }
+
     @Test("A whole answer is delivered in pieces, losing nothing")
     func chunkingPreservesTheAnswer() {
         let answer = "Photosynthesis turns light into sugar.\nIt happens in chloroplasts."
