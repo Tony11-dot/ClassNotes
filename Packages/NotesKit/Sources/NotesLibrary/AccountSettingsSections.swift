@@ -69,6 +69,9 @@ struct AboutSettingsSection: View {
             Link(destination: ClassMateLinks.privacy) {
                 Label("Privacy Policy", systemImage: "shield")
             }
+            Link(destination: ClassMateLinks.accessibility) {
+                Label("Accessibility", systemImage: "accessibility")
+            }
         } header: {
             Text("Help")
         } footer: {

@@ -6,6 +6,7 @@ import SwiftUI
 public enum ClassMateLinks {
     public static let legalHome = URL(string: "https://tony11-dot.github.io/classmate-legal/")!
     public static let privacy = URL(string: "https://tony11-dot.github.io/classmate-legal/privacy.html")!
+    public static let accessibility = URL(string: "https://tony11-dot.github.io/classmate-legal/accessibility.html#classnotes")!
     public static let supportEmail = "support@classmateapp.org"
     public static let supportPhone = "+972525488441"
     public static var appVersion: String {
@@ -124,6 +125,8 @@ public struct AboutScreen: View {
                     block("Contact",
                           "Built by the ClassMate team.\nQuestions: \(ClassMateLinks.supportEmail)")
                     Link("Privacy Policy", destination: ClassMateLinks.privacy)
+                        .foregroundStyle(theme.accent.color)
+                    Link("Accessibility", destination: ClassMateLinks.accessibility)
                         .foregroundStyle(theme.accent.color)
                     Text("ClassNotes · v\(ClassMateLinks.appVersion)")
                         .font(.dsCaption)
