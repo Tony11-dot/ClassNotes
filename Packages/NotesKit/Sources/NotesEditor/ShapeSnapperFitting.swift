@@ -11,12 +11,43 @@ extension ShapeSnapper {
     // MARK: - Fitting
 
     static func fit(_ points: [CGPoint]) -> [CGPoint]? {
-        guard let (shape, box) = classify(points),
+        guard let fit = classify(points),
               let start = points.first, let end = points.last else { return nil }
-        switch shape {
+        switch fit.shape {
         case .line: return [start, end]
         case .angle(let bend): return densify([start, bend, end])
-        default: return path(for: shape, in: box)
+        case .arc(let bulge): return arcPath(from: start, to: end, bulge: bulge)
+        default:
+            let frame = Frame(rotation: fit.rotation, pivot: fit.pivot)
+            return path(for: fit.shape, in: fit.box).map(frame.toPage)
+        }
+    }
+
+    /// What the ink was taken to be: the shape, the box it fills — in the shape's
+    /// OWN frame — and that frame's tilt about `pivot` (0 for a shape drawn
+    /// square to the page).
+    struct Classification {
+        var shape: Shape
+        var box: CGRect
+        var rotation: CGFloat = 0
+        var pivot: CGPoint = .zero
+    }
+
+    /// A rotation about a pivot: page space ⇄ a tilted shape's own frame.
+    struct Frame {
+        var rotation: CGFloat
+        var pivot: CGPoint
+
+        func toFrame(_ point: CGPoint) -> CGPoint { turn(point, by: -rotation) }
+        func toPage(_ point: CGPoint) -> CGPoint { turn(point, by: rotation) }
+
+        private func turn(_ point: CGPoint, by angle: CGFloat) -> CGPoint {
+            guard angle != 0 else { return point }
+            let dx = point.x - pivot.x, dy = point.y - pivot.y
+            return CGPoint(
+                x: pivot.x + dx * cos(angle) - dy * sin(angle),
+                y: pivot.y + dx * sin(angle) + dy * cos(angle)
+            )
         }
     }
 
@@ -42,7 +73,7 @@ extension ShapeSnapper {
     static let minimumSnapSize: CGFloat = 46
 
     /// What the ink looks like it was meant to be, and the box it occupies.
-    static func classify(_ points: [CGPoint]) -> (shape: Shape, box: CGRect)? {
+    static func classify(_ points: [CGPoint]) -> Classification? {
         guard let start = points.first, let end = points.last else { return nil }
         let box = boundingBox(points)
         let diagonal = hypot(box.width, box.height)
@@ -51,15 +82,111 @@ extension ShapeSnapper {
         let closed = distance(start, end) < diagonal * 0.33
 
         if !closed {
-            if isStraight(points) { return (.line, box) }
-            // One deliberate bend and nothing else: an angle, cleaned into two
-            // straight legs rather than left as a wobble.
-            if cornerCount(points, closed: false) == 1, let bend = sharpestCorner(points) {
-                return (.angle(bendAt: bend), box)
-            }
-            return nil
+            if isStraight(points) { return Classification(shape: .line, box: box) }
+            return bestOpenShape(points, diagonal: diagonal).map { Classification(shape: $0, box: box) }
         }
-        return (bestClosedShape(points, in: box), box)
+
+        // Square to the page first — that is how almost everything is drawn, and
+        // a hand-drawn box a few degrees off is meant upright.
+        let upright = scoredClosedShape(points, in: box)
+        var best = Classification(shape: upright.shape, box: box)
+        // A shape drawn on a real slant — a tilted ellipse, a rectangle turned
+        // 30° — is fitted in its own frame instead. Fitting it to the page's
+        // axes kept the classification and lost the shape: a tilted ellipse
+        // snapped to an upright one, fatter and pointing the wrong way.
+        if let tilt = principalTilt(points) {
+            let frame = Frame(rotation: tilt.angle, pivot: tilt.pivot)
+            let turned = points.map(frame.toFrame)
+            let turnedBox = boundingBox(turned)
+            let tilted = scoredClosedShape(turned, in: turnedBox)
+            if tilted.score + tiltPenalty < upright.score {
+                best = Classification(
+                    shape: tilted.shape, box: turnedBox, rotation: tilt.angle, pivot: tilt.pivot
+                )
+            }
+        }
+        return best
+    }
+
+    /// What an open stroke that isn't straight meant: one deliberate bend (an
+    /// angle) or one smooth bow (an arc) — whichever its ink actually follows.
+    ///
+    /// Arcs used to have no candidate at all, so a drawn half circle either
+    /// snapped to nothing or — when sampling noise read its curve as one
+    /// corner — to a V. And an angle was accepted on a corner COUNT alone, with
+    /// the bend at the sharpest local turn: hand tremor at a rounded corner
+    /// counted as two corners (a quarter of drawn L's never snapped) while an S
+    /// curve could count as one (and snapped to a V). Both are now measured the
+    /// same way — how closely the ink follows the shape drawn through it.
+    static func bestOpenShape(_ points: [CGPoint], diagonal: CGFloat) -> Shape? {
+        guard let start = points.first, let end = points.last else { return nil }
+        let sample = reduce(points)
+        var candidates: [(shape: Shape, residual: CGFloat)] = []
+        if let bend = furthestFromChord(points) {
+            let legs = densify([start, bend, end])
+            let residual = meanDistance(from: sample, to: legs) / diagonal
+            if residual < angleTolerance { candidates.append((.angle(bendAt: bend), residual)) }
+        }
+        if let bulge = arcBulge(points) {
+            let arc = arcPath(from: start, to: end, bulge: bulge)
+            let residual = meanDistance(from: sample, to: arc) / diagonal
+            // An arc has to be followed closely: a squiggle bows too, and an arc
+            // is the one open shape that can't be told apart by its corners.
+            if residual < arcTolerance { candidates.append((.arc(bulge: bulge), residual)) }
+        }
+        return candidates.min { $0.residual < $1.residual }?.shape
+    }
+
+    /// How closely the ink must follow a circular arc to be snapped to one, as a
+    /// fraction of its size.
+    static let arcTolerance: CGFloat = 0.03
+    /// The same for two straight legs. A drawn L or V follows its legs to within
+    /// about 0.01; an S curve or a half circle is nearer 0.08.
+    static let angleTolerance: CGFloat = 0.03
+
+    /// The corner of an angle: the point of the ink furthest from the straight
+    /// line between its ends. Unlike the sharpest local turn, a wobble on one leg
+    /// can't win this.
+    static func furthestFromChord(_ points: [CGPoint]) -> CGPoint? {
+        guard let start = points.first, let end = points.last, points.count > 2 else { return nil }
+        return points.dropFirst().dropLast().max {
+            perpendicularDistance($0, lineStart: start, lineEnd: end)
+                < perpendicularDistance($1, lineStart: start, lineEnd: end)
+        }
+    }
+
+    /// How much better a tilted fit has to be than an upright one to win.
+    static let tiltPenalty: CGFloat = 0.004
+    /// Within this of level/upright, a shape is taken to be drawn square.
+    static let minimumTilt: CGFloat = .pi / 180 * 8
+    /// How much longer than wide (by the spread of its ink) a shape must be for
+    /// its axis to mean anything. A circle or a square has no direction.
+    static let minimumElongation: CGFloat = 1.3
+
+    /// The direction a closed shape's ink is stretched along, from the spread of
+    /// its points (principal axes), when it is clearly stretched AND clearly
+    /// tilted. Nil for anything round, square, or near enough upright.
+    static func principalTilt(_ points: [CGPoint]) -> (angle: CGFloat, pivot: CGPoint)? {
+        guard points.count > 2 else { return nil }
+        let count = CGFloat(points.count)
+        let mean = CGPoint(
+            x: points.reduce(0) { $0 + $1.x } / count, y: points.reduce(0) { $0 + $1.y } / count
+        )
+        var xx: CGFloat = 0, yy: CGFloat = 0, xy: CGFloat = 0
+        for point in points {
+            let dx = point.x - mean.x, dy = point.y - mean.y
+            xx += dx * dx; yy += dy * dy; xy += dx * dy
+        }
+        let spread = sqrt((xx - yy) * (xx - yy) + 4 * xy * xy)
+        let major = (xx + yy + spread) / 2, minor = (xx + yy - spread) / 2
+        guard minor > 0.0001, major / minor > minimumElongation * minimumElongation else { return nil }
+        let angle = 0.5 * atan2(2 * xy, xx - yy)
+        // Distance to the nearest of level and upright; a rectangle tilted 80° is
+        // one tilted -10°.
+        let quarter = CGFloat.pi / 2
+        let offset = angle - (angle / quarter).rounded() * quarter
+        guard abs(offset) > minimumTilt else { return nil }
+        return (offset, mean)
     }
 
     /// Which primitive the closed ink actually resembles, decided by DRAWING each
@@ -74,24 +201,44 @@ extension ShapeSnapper {
     /// asking ("which of these did I mean?") and a square is nowhere near a
     /// triangle however its corners were drawn.
     static func bestClosedShape(_ points: [CGPoint], in box: CGRect) -> Shape {
+        scoredClosedShape(points, in: box).shape
+    }
+
+    /// `bestClosedShape`, with how well it fit (mean residual over the box's
+    /// diagonal, plus the candidate's penalty) — so an upright fit and a tilted
+    /// one can be compared.
+    ///
+    /// Every candidate fills the same box, so they differ only in shape. The
+    /// pentagon used to carry a 0.03 penalty on top of a pentagon that didn't even
+    /// reach its box's edges: a drawn pentagon fitted it better than anything
+    /// (0.022 against the ellipse's 0.034) and still lost every time. Triangles
+    /// came only apex-up, so ▽ — and a right triangle with its right angle at the
+    /// top — snapped to a circle.
+    static func scoredClosedShape(_ points: [CGPoint], in box: CGRect) -> (shape: Shape, score: CGFloat) {
         let sample = reduce(points)
         let diagonal = max(hypot(box.width, box.height), 1)
-        let candidates: [(shape: Shape, penalty: CGFloat)] = [
-            // Round beats angular on a tie: an ellipse is the shape people draw
-            // fastest and least carefully, so its ink is the loosest.
-            (.ellipse, 0),
-            (.rectangle, 0.012),
-            (.triangle(apexFraction: apexFraction(points, in: box)), 0.012),
-            (.polygon(sides: 5), 0.03)
+        // Round beats angular on a tie: an ellipse is the shape people draw
+        // fastest and least carefully, so its ink is the loosest.
+        var candidates: [(shape: Shape, penalty: CGFloat)] = [(.ellipse, 0), (.rectangle, 0.012)]
+        for side in Side.allCases {
+            candidates.append((.triangle(apexFraction: apexFraction(points, in: box, side: side), apex: side), 0.012))
+        }
+        candidates += [
+            (.polygon(sides: 4), 0.012),  // a diamond: a square stood on its corner
+            (.polygon(sides: 5), 0.012),
+            (.polygon(sides: 5, rotated: true), 0.014),
+            // Little lighter: a hexagon is nearly round, so its fit is never far
+            // ahead of the ellipse's — and a drawn circle is never near a hexagon.
+            (.polygon(sides: 6), 0.004),
+            (.polygon(sides: 6, rotated: true), 0.004)
         ]
-        var best: (shape: Shape, score: CGFloat)?
+        var best: (shape: Shape, score: CGFloat) = (.ellipse, .greatestFiniteMagnitude)
         for candidate in candidates {
             let outline = path(for: candidate.shape, in: box)
-            let residual = meanDistance(from: sample, to: outline) / diagonal
-            let score = residual + candidate.penalty
-            if best == nil || score < best!.score { best = (candidate.shape, score) }
+            let score = meanDistance(from: sample, to: outline) / diagonal + candidate.penalty
+            if score < best.score { best = (candidate.shape, score) }
         }
-        return best?.shape ?? .ellipse
+        return best
     }
 
     /// Mean distance from each point to the nearest place on `outline`.
@@ -126,22 +273,43 @@ extension ShapeSnapper {
             return densify([
                 CGPoint(x: box.minX, y: box.minY), bend, CGPoint(x: box.maxX, y: box.maxY)
             ])
+        case .arc(let bulge):
+            return arcPath(
+                from: CGPoint(x: box.minX, y: box.maxY), to: CGPoint(x: box.maxX, y: box.maxY), bulge: bulge
+            )
         case .ellipse:
             return ellipsePath(in: box)
         case .rectangle:
             return rectanglePath(in: box)
-        case .triangle(let fraction):
-            return trianglePath(in: box, apexFraction: fraction)
-        case .polygon(let sides):
-            return polygonPath(in: box, sides: sides)
+        case .triangle(let fraction, let side):
+            return trianglePath(in: box, apexFraction: fraction, apex: side)
+        case .polygon(let sides, let rotated):
+            return polygonPath(in: box, sides: sides, rotated: rotated)
         }
     }
 
-    /// Where the drawn apex sat across the box, 0…1 — so a leaning triangle keeps
-    /// its lean when it's resized.
-    private static func apexFraction(_ points: [CGPoint], in box: CGRect) -> CGFloat {
-        guard box.width > 0, let apex = points.min(by: { $0.y < $1.y }) else { return 0.5 }
-        return min(max((apex.x - box.minX) / box.width, 0), 1)
+    /// Where the drawn apex sat along `side`, 0…1 — so a leaning triangle keeps
+    /// its lean when it's resized. The apex is the ink that reaches furthest
+    /// toward that side.
+    private static func apexFraction(_ points: [CGPoint], in box: CGRect, side: Side = .top) -> CGFloat {
+        let apex: CGPoint?
+        switch side {
+        case .top: apex = points.min { $0.y < $1.y }
+        case .bottom: apex = points.max { $0.y < $1.y }
+        case .left: apex = points.min { $0.x < $1.x }
+        case .right: apex = points.max { $0.x < $1.x }
+        }
+        guard let apex else { return 0.5 }
+        let fraction: CGFloat
+        switch side {
+        case .top, .bottom:
+            guard box.width > 0 else { return 0.5 }
+            fraction = (apex.x - box.minX) / box.width
+        case .left, .right:
+            guard box.height > 0 else { return 0.5 }
+            fraction = (apex.y - box.minY) / box.height
+        }
+        return min(max(fraction, 0), 1)
     }
 
     private static func ellipsePath(in box: CGRect) -> [CGPoint] {
@@ -165,29 +333,101 @@ extension ShapeSnapper {
         return densify(corners)
     }
 
-    private static func trianglePath(in box: CGRect, apexFraction: CGFloat) -> [CGPoint] {
-        // Apex across the top; base = the two bottom box corners.
-        let apex = CGPoint(x: box.minX + box.width * apexFraction, y: box.minY)
-        let corners = [
-            CGPoint(x: apex.x, y: box.minY),
-            CGPoint(x: box.maxX, y: box.maxY),
-            CGPoint(x: box.minX, y: box.maxY),
-            CGPoint(x: apex.x, y: box.minY)
-        ]
+    /// The apex on `apex`'s side of the box, the base along the opposite side.
+    private static func trianglePath(in box: CGRect, apexFraction: CGFloat, apex side: Side) -> [CGPoint] {
+        let corners: [CGPoint]
+        switch side {
+        case .top:
+            let apex = CGPoint(x: box.minX + box.width * apexFraction, y: box.minY)
+            corners = [apex, CGPoint(x: box.maxX, y: box.maxY), CGPoint(x: box.minX, y: box.maxY), apex]
+        case .bottom:
+            let apex = CGPoint(x: box.minX + box.width * apexFraction, y: box.maxY)
+            corners = [apex, CGPoint(x: box.minX, y: box.minY), CGPoint(x: box.maxX, y: box.minY), apex]
+        case .left:
+            let apex = CGPoint(x: box.minX, y: box.minY + box.height * apexFraction)
+            corners = [apex, CGPoint(x: box.maxX, y: box.minY), CGPoint(x: box.maxX, y: box.maxY), apex]
+        case .right:
+            let apex = CGPoint(x: box.maxX, y: box.minY + box.height * apexFraction)
+            corners = [apex, CGPoint(x: box.minX, y: box.maxY), CGPoint(x: box.minX, y: box.minY), apex]
+        }
         return densify(corners)
     }
 
-    /// A regular polygon inscribed in the box, first vertex pointing up — which is
-    /// how a pentagon gets drawn by hand.
-    private static func polygonPath(in box: CGRect, sides: Int) -> [CGPoint] {
+    /// A regular polygon stretched to fill the box exactly, first vertex pointing
+    /// up (or, `rotated`, half a step round so an edge sits on top). It used to be
+    /// inscribed in the box's ellipse, which leaves a pentagon short of the box's
+    /// bottom and sides — a worse fit to a drawn pentagon than a circle was.
+    private static func polygonPath(in box: CGRect, sides: Int, rotated: Bool = false) -> [CGPoint] {
         guard sides >= 3 else { return rectanglePath(in: box) }
-        let cx = box.midX, cy = box.midY
-        let rx = box.width / 2, ry = box.height / 2
-        let corners = (0...sides).map { index -> CGPoint in
-            let angle = -CGFloat.pi / 2 + CGFloat(index) * 2 * .pi / CGFloat(sides)
-            return CGPoint(x: cx + rx * cos(angle), y: cy + ry * sin(angle))
+        let start = -CGFloat.pi / 2 + (rotated ? .pi / CGFloat(sides) : 0)
+        let unit = (0...sides).map { index -> CGPoint in
+            let angle = start + CGFloat(index) * 2 * .pi / CGFloat(sides)
+            return CGPoint(x: cos(angle), y: sin(angle))
+        }
+        let own = boundingBox(unit)
+        guard own.width > 0, own.height > 0 else { return rectanglePath(in: box) }
+        let corners = unit.map { point in
+            CGPoint(
+                x: box.minX + (point.x - own.minX) / own.width * box.width,
+                y: box.minY + (point.y - own.minY) / own.height * box.height
+            )
         }
         return densify(corners)
+    }
+
+    // MARK: - Arcs
+
+    /// How far, and to which side, the ink bows away from the straight line
+    /// between its ends — as a fraction of that line's length, signed to the LEFT
+    /// of start → end. Nil when the ends coincide.
+    static func arcBulge(_ points: [CGPoint]) -> CGFloat? {
+        guard let start = points.first, let end = points.last else { return nil }
+        let dx = end.x - start.x, dy = end.y - start.y
+        let length = hypot(dx, dy)
+        guard length > 1 else { return nil }
+        // Signed distance off the chord: positive on the left (-dy, dx) side.
+        var furthest: CGFloat = 0
+        for point in points {
+            let offset = ((point.x - start.x) * -dy + (point.y - start.y) * dx) / length
+            if abs(offset) > abs(furthest) { furthest = offset }
+        }
+        return furthest / length
+    }
+
+    /// A circular arc from `start` to `end`, bowing `bulge` × their distance to
+    /// the left of start → end (negative: to the right). Past 0.5 it is more than
+    /// half a circle.
+    static func arcPath(from start: CGPoint, to end: CGPoint, bulge: CGFloat) -> [CGPoint] {
+        let dx = end.x - start.x, dy = end.y - start.y
+        let chord = hypot(dx, dy)
+        let sagitta = abs(bulge) * chord
+        guard chord > 0.0001, sagitta > 0.0001 else { return [start, end] }
+        // Unit normal toward the bulge.
+        let side: CGFloat = bulge >= 0 ? 1 : -1
+        let normal = CGPoint(x: -dy / chord * side, y: dx / chord * side)
+        let middle = CGPoint(x: (start.x + end.x) / 2, y: (start.y + end.y) / 2)
+        let radius = (chord * chord / 4 + sagitta * sagitta) / (2 * sagitta)
+        // The centre sits on the normal through the chord's middle: behind the
+        // chord for less than half a circle, in front of it for more.
+        let centre = CGPoint(
+            x: middle.x + normal.x * (sagitta - radius), y: middle.y + normal.y * (sagitta - radius)
+        )
+        let from = atan2(start.y - centre.y, start.x - centre.x)
+        let to = atan2(end.y - centre.y, end.x - centre.x)
+        let peak = atan2(normal.y, normal.x)
+        // Go the way round that passes through the peak of the bow.
+        let twoPi = 2 * CGFloat.pi
+        func wrapped(_ angle: CGFloat) -> CGFloat {
+            let turned = angle.truncatingRemainder(dividingBy: twoPi)
+            return turned < 0 ? turned + twoPi : turned
+        }
+        let ahead = wrapped(to - from)
+        let sweep = wrapped(peak - from) <= ahead ? ahead : ahead - twoPi
+        let steps = max(8, Int(abs(sweep) * radius / 6))
+        return (0...steps).map { index in
+            let angle = from + sweep * CGFloat(index) / CGFloat(steps)
+            return CGPoint(x: centre.x + radius * cos(angle), y: centre.y + radius * sin(angle))
+        }
     }
 
     /// Adds intermediate points along each segment so the rebuilt stroke has a
@@ -222,21 +462,6 @@ extension ShapeSnapper {
             maxDev = max(maxDev, perpendicularDistance(point, lineStart: a, lineEnd: b))
         }
         return maxDev / len < straightTolerance
-    }
-
-    /// The point that turns the path most sharply — the corner of a hand-drawn
-    /// angle. Endpoints are excluded so a hooked start never wins.
-    private static func sharpestCorner(_ points: [CGPoint]) -> CGPoint? {
-        let reduced = reduce(points)
-        guard reduced.count >= 3 else { return nil }
-        var best: (angle: CGFloat, point: CGPoint)?
-        for j in 1..<(reduced.count - 1) {
-            let v1 = CGVector(dx: reduced[j].x - reduced[j - 1].x, dy: reduced[j].y - reduced[j - 1].y)
-            let v2 = CGVector(dx: reduced[j + 1].x - reduced[j].x, dy: reduced[j + 1].y - reduced[j].y)
-            let angle = abs(angleBetween(v1, v2))
-            if best == nil || angle > best!.angle { best = (angle, reduced[j]) }
-        }
-        return best?.point
     }
 
     /// Counts sharp direction changes (> ~50°) along the path — used to tell an

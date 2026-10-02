@@ -20,14 +20,27 @@ public actor SearchIndexer {
     /// `private` is file-scoped, and the two halves of search live in two files.
     let store: DocumentStore
     private let ocr: OCRService
+    /// The language handwriting is read in — the one the user picked for
+    /// beautification. Asked for on every pass rather than captured once, so a
+    /// change in Settings applies to the next page read.
+    ///
+    /// This used to be absent and recognition ran on `OCRService`'s `en-US`
+    /// default: Hebrew (or Arabic, Russian…) notes went through the English
+    /// model, came back as noise, and a search for any word in them found nothing.
+    private let language: @Sendable () async -> String
 
     /// Notebooks currently being read, so two callers asking at once (the search
     /// field and the launch pass) don't do the same work twice.
     private var inFlight: Set<UUID> = []
 
-    public init(store: DocumentStore, ocr: OCRService = OCRService()) {
+    public init(
+        store: DocumentStore,
+        ocr: OCRService = OCRService(),
+        language: @escaping @Sendable () async -> String = { BeautifyLanguage.default.code }
+    ) {
         self.store = store
         self.ocr = ocr
+        self.language = language
     }
 
     /// The longest side handed to Vision. A page rendered without a ceiling is
@@ -51,15 +64,20 @@ public actor SearchIndexer {
         guard let manifest = try? await store.manifest(for: id) else { return SearchIndex() }
         var index = await store.searchIndex(for: id)
         index.prune(toPages: manifest.pages.map(\.id))
+        // An index read in another language is a reading of the wrong words:
+        // every page is read again, once, in the language now chosen.
+        let language = await self.language()
+        let relanguaged = index.isRead(in: language) == false
 
-        var changed = false
+        var changed = relanguaged
         for page in manifest.pages {
             let modified = await store.pageModifiedAt(notebook: id, page: page.id) ?? page.createdAt
-            guard force || index.needsReindex(page.id, changedAt: modified) else { continue }
-            let text = await read(page: page, notebook: id)
+            guard force || relanguaged || index.needsReindex(page.id, changedAt: modified) else { continue }
+            let text = await read(page: page, notebook: id, language: language)
             index.set(text, for: page.id)
             changed = true
         }
+        index.language = language
 
         if changed || index.version != SearchIndex.currentVersion {
             index.version = SearchIndex.currentVersion
@@ -70,10 +88,10 @@ public actor SearchIndexer {
 
     /// Everything one page says: the words already typed on it, plus whatever
     /// recognition makes of the handwriting.
-    private func read(page: PageRecord, notebook: UUID) async -> String {
+    private func read(page: PageRecord, notebook: UUID, language: String) async -> String {
         let recognized: String
         #if canImport(UIKit)
-        recognized = await recognizeInk(page: page, notebook: notebook)
+        recognized = await recognizeInk(page: page, notebook: notebook, language: language)
         #else
         recognized = ""
         #endif
@@ -81,7 +99,7 @@ public actor SearchIndexer {
     }
 
     #if canImport(UIKit)
-    private func recognizeInk(page: PageRecord, notebook: UUID) async -> String {
+    private func recognizeInk(page: PageRecord, notebook: UUID, language: String) async -> String {
         guard let data = await store.pageData(notebook: notebook, page: page.id),
               let drawing = try? PKDrawing(data: data),
               !drawing.strokes.isEmpty else { return "" }
@@ -92,7 +110,7 @@ public actor SearchIndexer {
             scale: Self.renderScale(for: page.logicalSize),
             minimumInkWidth: Self.minimumInkWidth
         )
-        guard let lines = try? await ocr.recognize(in: image) else { return "" }
+        guard let lines = try? await ocr.recognize(in: image, languages: [language]) else { return "" }
         return OCRService.assemble(lines)
     }
     #endif

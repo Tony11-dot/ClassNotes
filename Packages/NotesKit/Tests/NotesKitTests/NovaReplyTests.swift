@@ -159,6 +159,30 @@ struct NovaMathTests {
         #expect(NovaMath.render("\\text{speed} = \\frac{d}{t}") == "speed = d/t")
     }
 
+    @Test("Physics accents sit on their letter instead of spelling out the command")
+    func accents() {
+        // The bug: unknown commands fell through as their own name, so
+        // `\vec{F} = m\vec{a}` read "vecF = mveca".
+        #expect(NovaMath.render("\\vec{F} = m\\vec{a}") == "F\u{20D7} = ma\u{20D7}")
+        #expect(NovaMath.render("\\dot{x}") == "x\u{0307}")
+        #expect(NovaMath.render("\\ddot{\\vec{r}}") == "r\u{20D7}\u{0308}")
+        #expect(NovaMath.render("\\hat{n}") == "n\u{0302}")
+        #expect(NovaMath.render("\\tilde{f}") == "f\u{0303}")
+        // A bar runs over every letter of the group.
+        #expect(NovaMath.render("\\overline{AB}") == "A\u{0305}B\u{0305}")
+        #expect(!NovaMath.render("\\bar{v} + \\hat{x}").contains("bar"))
+    }
+
+    @Test("Binomials, number sets and delimiters render as notation")
+    func setsAndDelimiters() {
+        #expect(NovaMath.render("\\binom{n}{k}") == "C(n, k)")
+        #expect(NovaMath.render("\\mathbb{R}^n") == "ℝⁿ")
+        #expect(NovaMath.render("\\mathbb{N} \\subseteq \\mathbb{Z}") == "ℕ ⊆ ℤ")
+        #expect(NovaMath.render("\\{x \\mid x > 0\\}") == "{x | x > 0}")
+        #expect(NovaMath.render("\\|x\\|") == "‖x‖")
+        #expect(NovaMath.render("\\langle u, v \\rangle") == "⟨ u, v ⟩")
+    }
+
     @Test("Inline maths is rendered inside a sentence, and prices are left alone")
     func inlineMath() {
         #expect(

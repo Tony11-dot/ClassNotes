@@ -148,6 +148,68 @@ struct SearchIndexTests {
         #expect(decoded.text(for: page) == "chlorophyll")
         #expect(decoded.version == SearchIndex.currentVersion)
     }
+
+    @Test("An index from before languages were recorded reads as English, not as unread")
+    func legacyIndexIsEnglish() throws {
+        let legacy = Data(#"{"version":1,"pages":[]}"#.utf8)
+        let index = try JSONDecoder().decode(SearchIndex.self, from: legacy)
+        #expect(index.language == nil)
+        // Every pre-existing index was read with the English model, so an English
+        // user must not have their whole library read again for nothing…
+        #expect(index.isRead(in: "en-US"))
+        // …and a Hebrew user's must be, because it was read in the wrong language.
+        #expect(!index.isRead(in: "he-IL"))
+    }
+}
+
+/// The language the indexer is asked to read in, changeable mid-test.
+private actor RecognitionLanguage {
+    var code: String
+    init(_ code: String) { self.code = code }
+    func set(_ code: String) { self.code = code }
+}
+
+@Suite("Search reads in the user's language")
+struct SearchLanguageTests {
+    private func temporaryRoot() -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cmnote-search-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    @Test("Changing the recognition language re-reads every page once, in the new language")
+    func languageChangeRereads() async throws {
+        let store = DocumentStore(rootURL: temporaryRoot())
+        let id = UUID()
+        let manifest = try await store.createDocument(id: id, style: PageStyle(template: .ruled))
+        let page = try #require(manifest.pages.first?.id)
+        _ = try await store.setElements(
+            [PageElement(kind: .text, x: 0, y: 0, width: 100, height: 40, text: "photosynthesis")],
+            notebook: id, page: page
+        )
+        let language = RecognitionLanguage("en-US")
+        let indexer = SearchIndexer(store: store) { await language.code }
+
+        let first = await indexer.index(notebook: id)
+        #expect(first.language == "en-US")
+        #expect(first.text(for: page) == "photosynthesis")
+        let firstRead = try #require(first.pages.first?.indexedAt)
+
+        // Nothing changed: the page is not read again.
+        try await Task.sleep(for: .milliseconds(20))
+        let again = await indexer.index(notebook: id)
+        #expect(again.pages.first?.indexedAt == firstRead)
+
+        // The user switched to Hebrew: the English reading is stale.
+        await language.set("he-IL")
+        try await Task.sleep(for: .milliseconds(20))
+        let hebrew = await indexer.index(notebook: id)
+        #expect(hebrew.language == "he-IL")
+        #expect((hebrew.pages.first?.indexedAt ?? .distantPast) > firstRead)
+        // And it was persisted, so the next launch doesn't read it all over again.
+        #expect(await store.searchIndex(for: id).language == "he-IL")
+    }
 }
 
 @Suite("What a page contributes to search")

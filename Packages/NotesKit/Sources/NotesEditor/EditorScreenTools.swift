@@ -64,7 +64,7 @@ extension EditorScreen {
             editorNotice = "Draw a shape first, then tap inside it to fill it."
             return
         }
-        guard let outline = FillTool.outline(
+        guard let region = FillTool.region(
             in: drawing, at: point, pageSize: page.logicalSize
         ) else {
             // An open shape is no longer a failure — the paint simply goes as far
@@ -74,7 +74,7 @@ extension EditorScreen {
         }
         let colour = toolState.currentColor(theme: theme)
         await model.insertFill(
-            outline: outline, colorHex: colour.hexString, on: page.id
+            outline: region.outline, holes: region.holes, colorHex: colour.hexString, on: page.id
         )
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
@@ -407,16 +407,19 @@ extension EditorScreen {
                 image.draw(in: frame)
             }
         case .fill:
-            let outline = element.points.map { CGPoint(x: $0.x, y: $0.y) }
+            let outline = element.points.map(\.cgPoint)
             guard outline.count > 2, let hex = element.colorHex,
                   let color = ThemeColor(hex: hex) else { break }
             context.saveGState()
             context.setFillColor(color.uiColor.cgColor)
             context.beginPath()
-            context.move(to: outline[0])
-            for point in outline.dropFirst() { context.addLine(to: point) }
-            context.closePath()
-            context.fillPath()
+            // The outline and its holes, even-odd — as the page draws it.
+            for ring in [outline] + element.holes.map({ $0.map(\.cgPoint) }) where ring.count > 2 {
+                context.move(to: ring[0])
+                for point in ring.dropFirst() { context.addLine(to: point) }
+                context.closePath()
+            }
+            context.fillPath(using: .evenOdd)
             context.restoreGState()
         case .text, .codeBlock:
             guard let text = element.text, !text.isEmpty else { break }

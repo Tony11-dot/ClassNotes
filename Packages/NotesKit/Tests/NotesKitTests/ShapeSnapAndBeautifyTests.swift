@@ -420,6 +420,221 @@ struct ShapeSnapperTests {
     func holdRadiusGuardsDegenerateZoom() {
         #expect(ShapeSnapper.holdRadius(forTolerance: 22, zoomScale: 0).isFinite)
     }
+
+    // MARK: - Every orientation, tilt and arc
+
+    /// A deterministic hand: `corners` walked every ~2 points with a slow wobble
+    /// on both axes, so the same ink comes out on every run.
+    private func sketch(_ corners: [CGPoint], wobble: CGFloat = 2) -> [CGPoint] {
+        var points: [CGPoint] = []
+        for index in 0..<(corners.count - 1) {
+            let a = corners[index], b = corners[index + 1]
+            let steps = max(1, Int(hypot(b.x - a.x, b.y - a.y) / 2))
+            for step in 0..<steps {
+                let t = CGFloat(step) / CGFloat(steps)
+                points.append(CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t))
+            }
+        }
+        points.append(corners[corners.count - 1])
+        let count = CGFloat(points.count)
+        return points.enumerated().map { index, point in
+            let t = CGFloat(index) / count * 2 * .pi
+            return CGPoint(x: point.x + wobble * sin(3 * t), y: point.y + wobble * cos(4 * t))
+        }
+    }
+
+    /// `points` (offsets from `centre`) turned by `angle` and placed at `centre`.
+    private func turned(_ points: [CGPoint], by angle: CGFloat, centre: CGPoint) -> [CGPoint] {
+        let c = cos(angle), s = sin(angle)
+        return points.map { point in
+            let x: CGFloat = point.x * c - point.y * s
+            let y: CGFloat = point.x * s + point.y * c
+            return CGPoint(x: centre.x + x, y: centre.y + y)
+        }
+    }
+
+    /// Where the path turns by more than about 30° — the corners of a polygon.
+    private func corners(of path: [CGPoint]) -> [CGPoint] {
+        guard path.count > 2 else { return path }
+        var found = [path[0]]
+        for index in 1..<(path.count - 1) {
+            let before = atan2(path[index].y - path[index - 1].y, path[index].x - path[index - 1].x)
+            let after = atan2(path[index + 1].y - path[index].y, path[index + 1].x - path[index].x)
+            var turn = abs(after - before)
+            if turn > .pi { turn = 2 * .pi - turn }
+            if turn > 0.5 { found.append(path[index]) }
+        }
+        return found
+    }
+
+    private func regular(_ sides: Int, centre: CGPoint, radius: CGFloat, start: CGFloat) -> [CGPoint] {
+        (0...sides).map { index in
+            let angle = start + CGFloat(index) * 2 * .pi / CGFloat(sides)
+            return CGPoint(x: centre.x + radius * cos(angle), y: centre.y + radius * sin(angle))
+        }
+    }
+
+    @Test("A triangle pointing down snaps to one pointing down, not to a circle")
+    func downwardTriangle() {
+        let ink = sketch([
+            CGPoint(x: 220, y: 240), CGPoint(x: 380, y: 240), CGPoint(x: 300, y: 380), CGPoint(x: 221, y: 241)
+        ])
+        guard case .triangle(_, let side)? = ShapeSnapper.classify(ink)?.shape else {
+            Issue.record("▽ came back as \(String(describing: ShapeSnapper.classify(ink)?.shape))")
+            return
+        }
+        #expect(side == .bottom)
+    }
+
+    @Test("A right triangle with its right angle at the top stays a right triangle")
+    func rightTriangleAtTheTop() throws {
+        let ink = sketch([
+            CGPoint(x: 220, y: 220), CGPoint(x: 380, y: 220), CGPoint(x: 220, y: 360), CGPoint(x: 220, y: 222)
+        ])
+        let fitted = try #require(ShapeSnapper.fit(ink))
+        // The corners it snapped to are the corners that were drawn.
+        for corner in [CGPoint(x: 220, y: 220), CGPoint(x: 380, y: 220), CGPoint(x: 220, y: 360)] {
+            let nearest = fitted.map { hypot($0.x - corner.x, $0.y - corner.y) }.min() ?? .infinity
+            #expect(nearest < 6, "no snapped vertex near \(corner)")
+        }
+        // …and nothing is drawn in the empty bottom-right of the box.
+        #expect(!fitted.contains { $0.x > 330 && $0.y > 310 })
+    }
+
+    @Test("A diamond, a pentagon and both hexagons each snap to themselves")
+    func polygons() {
+        let centre = CGPoint(x: 300, y: 300)
+        let diamond = sketch(regular(4, centre: centre, radius: 70, start: -.pi / 2))
+        #expect(ShapeSnapper.classify(diamond)?.shape == .polygon(sides: 4))
+        // The pentagon fitted best and still lost to a 0.03 penalty, every time.
+        let pentagon = sketch(regular(5, centre: centre, radius: 70, start: -.pi / 2))
+        #expect(ShapeSnapper.classify(pentagon)?.shape == .polygon(sides: 5))
+        let pointyTop = sketch(regular(6, centre: centre, radius: 70, start: -.pi / 2))
+        #expect(ShapeSnapper.classify(pointyTop)?.shape == .polygon(sides: 6))
+        let flatTop = sketch(regular(6, centre: centre, radius: 70, start: 0))
+        #expect(ShapeSnapper.classify(flatTop)?.shape == .polygon(sides: 6, rotated: true))
+        // And a circle is still a circle, not a polygon with many sides.
+        let circle = sketch(regular(72, centre: centre, radius: 70, start: 0))
+        #expect(ShapeSnapper.classify(circle)?.shape == .ellipse)
+    }
+
+    @Test("A tilted ellipse keeps its tilt instead of snapping upright")
+    func tiltedEllipse() throws {
+        let tilt: CGFloat = .pi / 180 * 35
+        let upright = (0...72).map { index -> CGPoint in
+            let t = CGFloat(index) / 72 * 2 * .pi
+            return CGPoint(x: 90 * cos(t), y: 40 * sin(t))
+        }
+        let drawn = turned(upright, by: tilt, centre: CGPoint(x: 300, y: 300))
+        let fit = try #require(ShapeSnapper.classify(sketch(drawn)))
+        #expect(fit.shape == .ellipse)
+        #expect(abs(fit.rotation - tilt) < .pi / 180 * 4, "fitted at \(fit.rotation * 180 / .pi)°")
+        // The snapped outline follows the drawn one, not the upright ellipse in
+        // its bounding box.
+        let fitted = try #require(ShapeSnapper.fit(sketch(drawn)))
+        #expect(ShapeSnapper.meanDistance(from: fitted, to: drawn) < 4)
+    }
+
+    @Test("A shape drawn a few degrees off level still snaps square to the page")
+    func nearlyLevelStaysUpright() throws {
+        let box: [CGPoint] = [
+            CGPoint(x: -80, y: -40), CGPoint(x: 80, y: -40), CGPoint(x: 80, y: 40),
+            CGPoint(x: -80, y: 40), CGPoint(x: -80, y: -39)
+        ]
+        let drawn = turned(box, by: .pi / 180 * 4, centre: CGPoint(x: 300, y: 300))
+        let fit = try #require(ShapeSnapper.classify(sketch(drawn)))
+        #expect(fit.shape == .rectangle)
+        #expect(fit.rotation == 0)
+    }
+
+    @Test("A tilted shape resized under the pencil stays tilted")
+    func tiltedLiveResize() throws {
+        let tilt: CGFloat = .pi / 180 * 30
+        let box: [CGPoint] = [
+            CGPoint(x: -90, y: -35), CGPoint(x: 90, y: -35), CGPoint(x: 90, y: 35),
+            CGPoint(x: -90, y: 35), CGPoint(x: -90, y: -33)
+        ]
+        let rectangle = turned(box, by: tilt, centre: CGPoint(x: 300, y: 300))
+        let snap = try #require(ShapeSnapper.liveSnap(sketch(rectangle)))
+        #expect(snap.shape == .rectangle)
+        #expect(abs(snap.rotation - tilt) < .pi / 180 * 4)
+
+        // Drag the handle further out along the shape's own long axis.
+        let along = CGPoint(x: cos(snap.rotation) * 60, y: sin(snap.rotation) * 60)
+        let path = try #require(ShapeSnapper.path(
+            for: snap, handle: CGPoint(x: snap.handle.x + along.x, y: snap.handle.y + along.y)
+        ))
+        // Every side of the result still runs at the tilt (or square to it).
+        let vertices = corners(of: path)
+        #expect(vertices.count >= 4)
+        guard vertices.count >= 2 else { return }
+        let side = atan2(vertices[1].y - vertices[0].y, vertices[1].x - vertices[0].x)
+        let quarter = CGFloat.pi / 2
+        // Square to the snap's OWN axes — the shape is redrawn in the frame it
+        // was fitted in, not re-fitted to the page.
+        let offset = side - snap.rotation - ((side - snap.rotation) / quarter).rounded() * quarter
+        #expect(abs(offset) < 0.01, "a side runs at \(side * 180 / .pi)°")
+    }
+
+    @Test("A drawn arc snaps to a clean arc, either way round")
+    func arcs() throws {
+        let centre = CGPoint(x: 300, y: 300)
+        // Top half of a circle, drawn left to right.
+        let half = (0...36).map { index -> CGPoint in
+            let angle = CGFloat.pi + CGFloat(index) / 36 * .pi
+            return CGPoint(x: centre.x + 80 * cos(angle), y: centre.y + 80 * sin(angle))
+        }
+        let snapped = try #require(ShapeSnapper.classify(sketch(half)))
+        guard case .arc(let bulge) = snapped.shape else {
+            Issue.record("a half circle came back as \(snapped.shape)")
+            return
+        }
+        #expect(abs(abs(bulge) - 0.5) < 0.05, "a half circle bows half its width")
+        let fitted = try #require(ShapeSnapper.fit(sketch(half)))
+        #expect(ShapeSnapper.meanDistance(from: fitted, to: half) < 3)
+        #expect(fitted.first == sketch(half).first, "it starts where the pencil started")
+
+        // The same arc drawn right to left bows to the other side of its chord.
+        let reversed = try #require(ShapeSnapper.fit(sketch(Array(half.reversed()))))
+        #expect(ShapeSnapper.meanDistance(from: reversed, to: half) < 3)
+    }
+
+    @Test("A held arc is redrawn to the pencil without losing its bow")
+    func liveArc() throws {
+        let third = (0...24).map { index -> CGPoint in
+            let angle = 0.3 + CGFloat(index) / 24 * 2.1
+            return CGPoint(x: 300 + 100 * cos(angle), y: 300 + 100 * sin(angle))
+        }
+        let snap = try #require(ShapeSnapper.liveSnap(sketch(third)))
+        guard case .arc(let bulge) = snap.shape else {
+            Issue.record("expected an arc, got \(snap.shape)")
+            return
+        }
+        let moved = CGPoint(x: snap.handle.x - 40, y: snap.handle.y + 10)
+        let path = try #require(ShapeSnapper.path(for: snap, handle: moved))
+        #expect(path.first == snap.anchor)
+        #expect(hypot((path.last?.x ?? 0) - moved.x, (path.last?.y ?? 0) - moved.y) < 0.01)
+        #expect(abs((ShapeSnapper.arcBulge(path) ?? 0) - bulge) < 0.02)
+    }
+
+    @Test("An L and a V snap to angles; an S curve snaps to nothing")
+    func anglesAndCurves() {
+        let l = sketch([CGPoint(x: 220, y: 200), CGPoint(x: 220, y: 360), CGPoint(x: 380, y: 360)])
+        if case .angle(let bend)? = ShapeSnapper.classify(l)?.shape {
+            #expect(hypot(bend.x - 220, bend.y - 360) < 8, "the bend is the drawn corner")
+        } else {
+            Issue.record("an L came back as \(String(describing: ShapeSnapper.classify(l)?.shape))")
+        }
+        let v = sketch([CGPoint(x: 200, y: 220), CGPoint(x: 290, y: 380), CGPoint(x: 380, y: 220)])
+        if case .angle? = ShapeSnapper.classify(v)?.shape {} else { Issue.record("a V didn't snap to an angle") }
+
+        let s = sketch((0...60).map { index in
+            let t = CGFloat(index) / 60
+            return CGPoint(x: 200 + 200 * t, y: 300 + 50 * sin(2 * .pi * t))
+        })
+        #expect(ShapeSnapper.classify(s) == nil, "an S is neither one bend nor one bow")
+    }
+
 }
 
 /// The beautification pass end to end — everything except Vision, which is

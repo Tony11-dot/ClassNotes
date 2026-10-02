@@ -25,12 +25,23 @@ enum FillTool {
     /// fill stop a pixel or two short and leaves a halo.
     static let inkThreshold: UInt8 = 60
 
-    /// Builds the region under `point` and returns its outline in page space, or
-    /// nil when the tap was on the ink itself or the fill escaped the shape.
+    /// The smallest enclosure the flood keeps out as a HOLE, in page points —
+    /// about a 24-point square. A box drawn inside a box is a hole; the inside of
+    /// a written "o" is not, so paint still sits behind words written in a shape.
+    static let minimumHoleSide: CGFloat = 24
+
+    /// A fill in page space: the outer ring, and the rings cut out of it.
+    struct Region {
+        var outline: [CGPoint]
+        var holes: [[CGPoint]]
+    }
+
+    /// Builds the region under `point` in page space, or nil when the tap was on
+    /// the ink itself or the fill escaped the shape.
     @MainActor
-    static func outline(
+    static func region(
         in drawing: PKDrawing, at point: CGPoint, pageSize: CGSize
-    ) -> [CGPoint]? {
+    ) -> Region? {
         guard pageSize.width > 0, pageSize.height > 0,
               CGRect(origin: .zero, size: pageSize).contains(point) else { return nil }
         guard let mask = inkMask(of: drawing, pageSize: pageSize) else { return nil }
@@ -46,7 +57,14 @@ enum FillTool {
         let path = FillGeometry.path(
             forOutline: traced, maskOrigin: .zero, scale: maskScale
         )
-        return path.count > 2 ? path : nil
+        guard path.count > 2 else { return nil }
+        // The flood stopped at every shape inside this one; the paint has to
+        // stop there too, or the inner circle of a ring gets painted with it.
+        let side = Int((minimumHoleSide * maskScale).rounded())
+        let holes = FillGeometry.holes(in: region, ink: mask, minimumEnclosedPixels: side * side)
+            .map { FillGeometry.path(forOutline: $0, maskOrigin: .zero, scale: maskScale, growth: -1.2) }
+            .filter { $0.count > 2 }
+        return Region(outline: path, holes: holes)
     }
 
     /// The page's ink as a boolean raster. Every stroke is drawn opaque black on

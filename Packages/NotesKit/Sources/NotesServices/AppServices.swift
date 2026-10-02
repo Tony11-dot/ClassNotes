@@ -52,13 +52,18 @@ public final class AppServices {
         self.remoteNotebookCache = RemoteNotebookCache(client: ClassMateAPIClient())
         self.themeService = ThemeService(context: context, entitlements: entitlements)
         self.novaChats = NovaChatStore(context: context)
-        self.settings = SettingsStore(context: context)
+        let settings = SettingsStore(context: context)
+        self.settings = settings
         self.repository = NotebookRepository(
             context: context, store: store, entitlements: entitlements, sync: sync
         )
         self.aiProvider = NovaProviderRouter(keychain: keychain)
         self.fontStore = CustomFontStore()
-        self.searchIndexer = SearchIndexer(store: store)
+        // Handwriting is read for search in the language the user writes in —
+        // the same one beautification reads it in.
+        self.searchIndexer = SearchIndexer(store: store) { @MainActor in
+            settings.tools.beautify.language
+        }
     }
 
     // MARK: - Groq key (entered in Settings, stored in Keychain)

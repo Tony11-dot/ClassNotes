@@ -14,10 +14,23 @@ public struct SearchIndex: Codable, Sendable, Equatable {
 
     public var version: Int
     public var pages: [PageText]
+    /// The recognition language the handwriting was read in (`nil` in an index
+    /// written before this was recorded — those were all read as English).
+    public var language: String?
 
-    public init(version: Int = SearchIndex.currentVersion, pages: [PageText] = []) {
+    public init(
+        version: Int = SearchIndex.currentVersion, pages: [PageText] = [], language: String? = nil
+    ) {
         self.version = version
         self.pages = pages
+        self.language = language
+    }
+
+    /// Whether this index's handwriting was read in `code`. An index from before
+    /// the language was recorded was read in English, so it counts as `en-US`
+    /// rather than forcing every English notebook to be read again for nothing.
+    public func isRead(in code: String) -> Bool {
+        (language ?? "en-US") == code
     }
 
     /// One page's readable content: the words in its text boxes plus whatever

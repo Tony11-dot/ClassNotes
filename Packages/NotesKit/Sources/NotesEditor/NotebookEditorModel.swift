@@ -276,7 +276,9 @@ public final class NotebookEditorModel {
     /// Adds a flooded region. Fills go in FIRST in the element list so anything
     /// placed on the page later — a text box, a photo, a strip of tape — draws
     /// over the colour rather than under it.
-    public func insertFill(outline: [CGPoint], colorHex: String, on pageID: UUID) async {
+    public func insertFill(
+        outline: [CGPoint], holes: [[CGPoint]] = [], colorHex: String, on pageID: UUID
+    ) async {
         guard outline.count > 2, var current = manifest,
               let index = current.pages.firstIndex(where: { $0.id == pageID }) else { return }
         let box = outline.dropFirst().reduce(
@@ -286,7 +288,8 @@ public final class NotebookEditorModel {
             kind: .fill,
             x: box.minX, y: box.minY, width: box.width, height: box.height,
             colorHex: colorHex,
-            points: outline.map(PagePoint.init)
+            points: outline.map(PagePoint.init),
+            holes: holes.map { $0.map(PagePoint.init) }
         )
         current.pages[index].elements.insert(element, at: 0)
         manifest = current
@@ -309,6 +312,9 @@ public final class NotebookEditorModel {
         copy.points = source.points.map {
             PagePoint(x: $0.x + offset.width, y: $0.y + offset.height)
         }
+        copy.holes = source.holes.map { ring in
+            ring.map { PagePoint(x: $0.x + offset.width, y: $0.y + offset.height) }
+        }
         current.pages[pageIndex].elements.append(copy)
         manifest = current
         _ = try? await store.setElements(
@@ -330,6 +336,9 @@ public final class NotebookEditorModel {
         // moving the frame without moving the path leaves the colour behind.
         element.points = element.points.map {
             PagePoint(x: $0.x + offset.width, y: $0.y + offset.height)
+        }
+        element.holes = element.holes.map { ring in
+            ring.map { PagePoint(x: $0.x + offset.width, y: $0.y + offset.height) }
         }
         current.pages[pageIndex].elements[elementIndex] = element
         manifest = current
@@ -355,6 +364,7 @@ public final class NotebookEditorModel {
         element.width = frame.width
         element.height = frame.height
         element.points = element.points.map { PagePoint($0.cgPoint.applying(transform)) }
+        element.holes = element.holes.map { ring in ring.map { PagePoint($0.cgPoint.applying(transform)) } }
         current.pages[pageIndex].elements[elementIndex] = element
         manifest = current
         _ = try? await store.setElements(

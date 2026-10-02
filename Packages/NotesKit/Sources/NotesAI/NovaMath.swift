@@ -182,6 +182,7 @@ public enum NovaMath {
                 index += 1
                 switch symbol {
                 case "\\": return "\n"
+                case "|": return "‖"
                 case ",", ";", ":", "!", " ": return " "
                 default: return String(symbol)
                 }
@@ -212,8 +213,14 @@ public enum NovaMath {
                 let root = degree.flatMap { NovaMath.raise($0) }.map { "\($0)√" } ?? "√"
                 return "\(root)\(wrap(body))"
             case "text", "textrm", "textbf", "textit", "mathrm", "mathbf", "mathit",
-                 "mathsf", "mathbb", "mathcal", "operatorname", "boxed", "displaystyle":
+                 "mathsf", "mathcal", "operatorname", "boxed", "displaystyle":
                 return group()
+            case "mathbb":
+                return String(group().map { NovaMath.blackboard[$0] ?? $0 })
+            case "binom", "dbinom", "tbinom":
+                let total = group()
+                let chosen = group()
+                return "C(\(total), \(chosen))"
             case "left", "right":
                 skipSpaces()
                 guard index < chars.count else { return "" }
@@ -232,6 +239,9 @@ public enum NovaMath {
                 _ = group()  // the environment's name; the rows render on their own
                 return "\n"
             default:
+                if let mark = NovaMath.accents[name] {
+                    return NovaMath.accent(group(), mark: mark)
+                }
                 return NovaMath.symbols[name] ?? name
             }
         }
@@ -276,6 +286,34 @@ public enum NovaMath {
         "t": "ₜ", "u": "ᵤ", "v": "ᵥ", "x": "ₓ"
     ]
 
+    /// Accent commands, as the combining mark that sits on the letter. Physics is
+    /// written in these — `\vec{F}`, `\dot{x}`, `\hat{n}` — and falling through
+    /// as the bare command name turned `\vec{F} = m\vec{a}` into "vecF = mveca".
+    static let accents: [String: Character] = [
+        "vec": "\u{20D7}", "overrightarrow": "\u{20D7}",
+        "hat": "\u{0302}", "widehat": "\u{0302}",
+        "dot": "\u{0307}", "ddot": "\u{0308}",
+        "bar": "\u{0305}", "overline": "\u{0305}",
+        "tilde": "\u{0303}", "widetilde": "\u{0303}",
+        "underline": "\u{0332}"
+    ]
+
+    /// Puts `mark` on `body`. A bar or an underline runs under/over every letter
+    /// (`\overline{AB}` is one line across both); an arrow or a dot belongs to the
+    /// whole group, so it goes on the last letter, where it reads as the group's.
+    static func accent(_ body: String, mark: Character) -> String {
+        guard let last = body.last else { return "" }
+        if mark == "\u{0305}" || mark == "\u{0332}" {
+            return body.map { $0.isWhitespace ? String($0) : "\($0)\(mark)" }.joined()
+        }
+        return String(body.dropLast()) + "\(last)\(mark)"
+    }
+
+    /// `\mathbb{R}` and friends — the number sets every course writes.
+    static let blackboard: [Character: Character] = [
+        "R": "ℝ", "N": "ℕ", "Z": "ℤ", "Q": "ℚ", "C": "ℂ", "P": "ℙ", "H": "ℍ"
+    ]
+
     static func raise(_ body: String) -> String? { map(body, through: superscripts) }
     static func lower(_ body: String) -> String? { map(body, through: subscripts) }
 
@@ -314,7 +352,13 @@ public enum NovaMath {
         "supset": "⊃", "supseteq": "⊇", "cup": "∪", "cap": "∩",
         "emptyset": "∅", "varnothing": "∅", "forall": "∀", "exists": "∃",
         "neg": "¬", "land": "∧", "lor": "∨", "therefore": "∴", "because": "∵",
-        "mathbbR": "ℝ", "Re": "ℜ", "Im": "ℑ", "aleph": "ℵ",
+        "Re": "ℜ", "Im": "ℑ", "aleph": "ℵ", "setminus": "∖", "nexists": "∄",
+        // Delimiters
+        "mid": "|", "vert": "|", "lvert": "|", "rvert": "|",
+        "Vert": "‖", "lVert": "‖", "rVert": "‖", "langle": "⟨", "rangle": "⟩",
+        "lfloor": "⌊", "rfloor": "⌋", "lceil": "⌈", "rceil": "⌉",
+        // Physics
+        "hbar": "ħ", "ell": "ℓ", "oplus": "⊕", "otimes": "⊗",
         // Arrows
         "to": "→", "rightarrow": "→", "leftarrow": "←", "leftrightarrow": "↔",
         "Rightarrow": "⇒", "Leftarrow": "⇐", "Leftrightarrow": "⇔",

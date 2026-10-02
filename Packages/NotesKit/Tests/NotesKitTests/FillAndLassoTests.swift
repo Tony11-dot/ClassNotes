@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 import Testing
 @testable import NotesModels
 
@@ -249,5 +250,152 @@ struct LassoSelectionTests {
         #expect(box.maxX == 238)
         #expect(box.maxY == 178)
         #expect(LassoSelection.bounds(of: []) == nil)
+    }
+}
+
+// MARK: - Holes
+
+/// Draws a ring of ink of the given radius and thickness.
+private func ring(_ mask: inout FillGeometry.Mask, centre: CGPoint, radius: CGFloat, width: CGFloat = 2) {
+    for y in 0..<mask.height {
+        for x in 0..<mask.width
+        where abs(hypot(CGFloat(x) - centre.x, CGFloat(y) - centre.y) - radius) <= width {
+            mask[x, y] = true
+        }
+    }
+}
+
+/// Draws the outline of a box of ink.
+private func frame(_ mask: inout FillGeometry.Mask, _ x0: Int, _ y0: Int, _ x1: Int, _ y1: Int) {
+    for x in x0...x1 { mask[x, y0] = true; mask[x, y1] = true }
+    for y in y0...y1 { mask[x0, y] = true; mask[x1, y] = true }
+}
+
+/// Even-odd point-in-polygon over several rings — how the fill is drawn.
+private func painted(_ point: CGPoint, outline: [CGPoint], holes: [[CGPoint]]) -> Bool {
+    var inside = false
+    for ring in [outline] + holes {
+        var j = ring.count - 1
+        for i in 0..<ring.count {
+            let a = ring[i], b = ring[j]
+            if (a.y > point.y) != (b.y > point.y),
+               point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x {
+                inside.toggle()
+            }
+            j = i
+        }
+    }
+    return inside
+}
+
+@Suite("A fill goes round what it encloses")
+struct FillHoleTests {
+    @Test("Between two circles, the inner disc is a hole — not painted")
+    func concentricCirclesLeaveTheMiddle() throws {
+        var mask = FillGeometry.Mask(width: 200, height: 200)
+        ring(&mask, centre: CGPoint(x: 100, y: 100), radius: 80)
+        ring(&mask, centre: CGPoint(x: 100, y: 100), radius: 30)
+        let region = try #require(FillGeometry.region(in: mask, from: (100, 40)))
+        let outline = FillGeometry.path(
+            forOutline: FillGeometry.outline(of: region), maskOrigin: .zero, scale: 1
+        )
+        let holes = FillGeometry.holes(in: region, ink: mask, minimumEnclosedPixels: 100)
+            .map { FillGeometry.path(forOutline: $0, maskOrigin: .zero, scale: 1, growth: -1.2) }
+
+        #expect(holes.count == 1)
+        // The bug: one ring traced, so the centre was painted with the band.
+        #expect(!painted(CGPoint(x: 100, y: 100), outline: outline, holes: holes))
+        #expect(painted(CGPoint(x: 100, y: 45), outline: outline, holes: holes), "the band itself is")
+        #expect(!painted(CGPoint(x: 5, y: 5), outline: outline, holes: holes), "outside is not")
+    }
+
+    @Test("A box drawn inside a box stays unpainted, every one of them")
+    func boxesInsideABox() throws {
+        var mask = FillGeometry.Mask(width: 200, height: 200)
+        frame(&mask, 10, 10, 190, 190)
+        frame(&mask, 30, 30, 80, 80)
+        frame(&mask, 110, 110, 170, 170)
+        let region = try #require(FillGeometry.region(in: mask, from: (150, 40)))
+        let outline = FillGeometry.path(
+            forOutline: FillGeometry.outline(of: region), maskOrigin: .zero, scale: 1
+        )
+        let holes = FillGeometry.holes(in: region, ink: mask, minimumEnclosedPixels: 100)
+            .map { FillGeometry.path(forOutline: $0, maskOrigin: .zero, scale: 1, growth: -1.2) }
+
+        #expect(holes.count == 2)
+        #expect(!painted(CGPoint(x: 55, y: 55), outline: outline, holes: holes))
+        #expect(!painted(CGPoint(x: 140, y: 140), outline: outline, holes: holes))
+        #expect(painted(CGPoint(x: 100, y: 50), outline: outline, holes: holes))
+    }
+
+    @Test("Writing inside a shape is not a hole — the paint stays behind the words")
+    func smallEnclosuresStayPainted() throws {
+        var mask = FillGeometry.Mask(width: 200, height: 200)
+        frame(&mask, 10, 10, 190, 190)
+        // A written "o": a little loop, far below the hole threshold.
+        ring(&mask, centre: CGPoint(x: 100, y: 100), radius: 5, width: 1)
+        let region = try #require(FillGeometry.region(in: mask, from: (40, 40)))
+        #expect(FillGeometry.holes(in: region, ink: mask, minimumEnclosedPixels: 400).isEmpty)
+    }
+
+    @Test("A region with nothing inside it has no holes")
+    func noHoles() throws {
+        var mask = FillGeometry.Mask(width: 60, height: 60)
+        frame(&mask, 5, 5, 55, 55)
+        let region = try #require(FillGeometry.region(in: mask, from: (30, 30)))
+        #expect(FillGeometry.holes(in: region, minimumEnclosedPixels: 1).isEmpty)
+    }
+
+    @Test("A fill that reaches the page edge has no phantom hole along it")
+    func pageEdgeIsNotAHole() throws {
+        var mask = FillGeometry.Mask(width: 100, height: 100)
+        // A shape open to the page edge, and a closed shape in the open.
+        frame(&mask, 40, 40, 60, 60)
+        let region = try #require(FillGeometry.region(in: mask, from: (5, 5)))
+        let holes = FillGeometry.holes(in: region, ink: mask, minimumEnclosedPixels: 50)
+        #expect(holes.count == 1, "only the closed box is enclosed")
+    }
+
+    @Test("Erasing in the middle of a fill cuts a hole, and the holes it had stay cut")
+    func erasingInTheMiddleCutsAHole() throws {
+        let square = [
+            CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 0),
+            CGPoint(x: 100, y: 100), CGPoint(x: 0, y: 100), CGPoint(x: 0, y: 0)
+        ]
+        // A dab in the middle touches no edge. Tracing only the outer ring used
+        // to throw it away, so erasing there did nothing at all.
+        let bitten = try #require(FillGeometry.erasedRegion(
+            outline: square, holes: [], erasedPoints: [CGPoint(x: 50, y: 50)], radius: 10, scale: 1
+        ))
+        #expect(bitten.holes.count == 1)
+        #expect(!painted(CGPoint(x: 50, y: 50), outline: bitten.outline, holes: bitten.holes))
+        #expect(painted(CGPoint(x: 20, y: 20), outline: bitten.outline, holes: bitten.holes))
+
+        // A hole the fill already had survives an erase somewhere else.
+        let hole = [CGPoint(x: 60, y: 60), CGPoint(x: 85, y: 60), CGPoint(x: 85, y: 85), CGPoint(x: 60, y: 85)]
+        let again = try #require(FillGeometry.erasedRegion(
+            outline: square, holes: [hole], erasedPoints: [CGPoint(x: 0, y: 0)], radius: 10, scale: 1
+        ))
+        #expect(!painted(CGPoint(x: 72, y: 72), outline: again.outline, holes: again.holes))
+        #expect(painted(CGPoint(x: 30, y: 70), outline: again.outline, holes: again.holes))
+    }
+
+    @Test("Holes survive a round trip through the manifest, and old fills decode without any")
+    func holesRoundTrip() throws {
+        let element = PageElement(
+            kind: .fill, x: 0, y: 0, width: 10, height: 10,
+            points: [PagePoint(x: 0, y: 0), PagePoint(x: 10, y: 0), PagePoint(x: 10, y: 10)],
+            holes: [[PagePoint(x: 2, y: 2), PagePoint(x: 4, y: 2), PagePoint(x: 4, y: 4)]]
+        )
+        let decoded = try JSONDecoder().decode(PageElement.self, from: JSONEncoder().encode(element))
+        #expect(decoded.holes == element.holes)
+
+        var legacy = try JSONSerialization.jsonObject(with: JSONEncoder().encode(element)) as? [String: Any]
+        legacy?["holes"] = nil
+        let old = try JSONDecoder().decode(
+            PageElement.self, from: JSONSerialization.data(withJSONObject: legacy ?? [:])
+        )
+        #expect(old.holes.isEmpty)
+        #expect(old.points == element.points)
     }
 }

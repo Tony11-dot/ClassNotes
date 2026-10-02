@@ -32,6 +32,7 @@ struct PageFillLayer: View {
             ForEach(elements.filter { $0.kind == .fill }) { element in
                 FillRegionView(
                     points: element.points.map { CGPoint(x: $0.x * scale, y: $0.y * scale) },
+                    holes: element.holes.map { ring in ring.map { CGPoint(x: $0.x * scale, y: $0.y * scale) } },
                     color: element.colorHex.flatMap(ThemeColor.init(hex:)) ?? theme.accentMuted
                 )
             }

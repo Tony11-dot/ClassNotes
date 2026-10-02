@@ -527,3 +527,36 @@ ML feature — distinct from the shipped handwriting→text) stays a premium stu
   It used to write the result straight onto the canvas with `setDrawing`, which
   changes the page without telling its undo stack anything — so the one action
   most likely to be regretted was the one action that couldn't be taken back.
+
+## Architecture invariants (snap shapes, fill holes, search language, NOVA accents)
+
+- Which shape the ink meant is decided by FIT RESIDUAL across every candidate, in
+  every orientation it can be drawn in — never by a fixed orientation plus a
+  penalty. Triangles carry their apex SIDE (`Shape.triangle(apexFraction:apex:)`):
+  apex-up only meant ▽ and a right triangle with its right angle at the top
+  snapped to circles. Polygons fill their box (`polygonPath`), and diamonds and
+  both hexagons are candidates; the pentagon's old 0.03 penalty on an outline
+  that didn't reach its box meant a drawn pentagon fitted best and lost every
+  time. A closed shape that is clearly stretched AND tilted more than
+  `minimumTilt` is fitted in its own principal-axis frame (`principalTilt`,
+  `Frame`) and resized live in that frame (`LiveSnap.rotation`/`pivot`); fitting it
+  to the page's axes kept the label and lost the shape. Anything within
+  `minimumTilt` of level is meant upright and snaps upright.
+- Open strokes are an angle or an ARC, chosen by residual (`bestOpenShape`), each
+  under its own tolerance. The angle's bend is the point furthest from the chord,
+  not the sharpest local turn — tremor at a rounded corner counted as two corners,
+  and an S curve could count as one.
+- A fill is an outer ring MINUS its holes (`PageElement.holes`, drawn even-odd
+  everywhere a fill is drawn: `FillRegionView`, the eraser's hit area, the lasso
+  snapshot). `FillGeometry.outline` traces only the outer boundary, so a tap
+  between two circles painted the inner disc. `FillGeometry.holes` keeps only
+  enclosures of at least `FillTool.minimumHoleSide` squared of free space: the
+  inside of a written "o" stays painted, so colour still reads as behind the
+  words. Anything that moves or scales `points` must move `holes` the same way.
+- Search reads handwriting in the user's beautify language, asked for on every
+  pass (`SearchIndexer(language:)`), and `SearchIndex.language` records what an
+  index was read in. A mismatch re-reads the notebook once; an index from before
+  the field existed counts as `en-US`, so English libraries are not re-read.
+- NovaMath accents (`\vec`, `\dot`, `\ddot`, `\hat`, `\bar`, `\overline`, `\tilde`)
+  render as combining marks on the letter; an unknown command falls through as its
+  own name, which is how `\vec{F}` used to read "vecF".
