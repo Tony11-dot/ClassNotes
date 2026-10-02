@@ -62,19 +62,33 @@ enum ShapeSnapper {
         case line
         /// A single deliberate bend, at a fraction along the way to the handle.
         case angle(bendAt: CGPoint)
+        /// A circular arc from one end to the other. `bulge` is how far it bows
+        /// out, as a fraction of the distance between its ends (a half circle is
+        /// 0.5); the sign says which side, measured to the LEFT of start → end.
+        case arc(bulge: CGFloat)
         case ellipse
         case rectangle
-        /// Apex position across the box, 0…1 — so a leaning triangle keeps leaning
-        /// as it's resized.
-        case triangle(apexFraction: CGFloat)
-        case polygon(sides: Int)
+        /// Apex position along the side it sits on, 0…1 — so a leaning triangle
+        /// keeps leaning as it's resized — and WHICH side: a triangle drawn
+        /// pointing down, or a right triangle with its right angle at the top,
+        /// is not an upright triangle and used to have no candidate at all.
+        case triangle(apexFraction: CGFloat, apex: Side = .top)
+        /// A regular polygon stretched to its box. Unrotated, the first vertex
+        /// points up (a pentagon's house shape, a diamond for four sides);
+        /// `rotated` turns it half a step, so a flat edge sits on top instead.
+        case polygon(sides: Int, rotated: Bool = false)
 
         var isClosed: Bool {
             switch self {
-            case .line, .angle: false
+            case .line, .angle, .arc: false
             default: true
             }
         }
+    }
+
+    /// The side of its box a triangle's apex sits on.
+    enum Side: CaseIterable, Equatable {
+        case top, bottom, left, right
     }
 
     /// A shape that has settled under a pencil which is STILL DOWN: the corner or
@@ -90,29 +104,41 @@ enum ShapeSnapper {
         var anchor: CGPoint
         /// Where the pencil is; moving it redraws the shape.
         var handle: CGPoint
+        /// The tilt of a closed shape's own axes, in radians, about `pivot`. A
+        /// tilted ellipse or rectangle is fitted — and resized — in its own frame,
+        /// then turned back; 0 for everything drawn square to the page.
+        var rotation: CGFloat = 0
+        var pivot: CGPoint = .zero
     }
 
     /// Classifies an in-progress path and works out which end the pencil holds.
     static func liveSnap(_ points: [CGPoint], holdRadius: CGFloat = holdRadius) -> LiveSnap? {
         let trimmed = trimmedTail(points, holdRadius: holdRadius)
-        guard trimmed.count >= 6, let (shape, box) = classify(trimmed),
+        guard trimmed.count >= 6, let fit = classify(trimmed),
               let start = trimmed.first, let rest = trimmed.last else { return nil }
+        let (shape, box) = (fit.shape, fit.box)
 
         guard shape.isClosed else {
             return LiveSnap(shape: shape, anchor: start, handle: rest)
         }
         // A closed shape is sized by its box, so the pencil takes the corner
-        // nearest where it stopped and the opposite corner stays put.
+        // nearest where it stopped and the opposite corner stays put. The box is
+        // in the shape's own frame; the corners go back onto the page.
+        let frame = Frame(rotation: fit.rotation, pivot: fit.pivot)
         let corners = [
             CGPoint(x: box.minX, y: box.minY), CGPoint(x: box.maxX, y: box.minY),
             CGPoint(x: box.maxX, y: box.maxY), CGPoint(x: box.minX, y: box.maxY)
         ]
-        let handle = corners.min { distance($0, rest) < distance($1, rest) } ?? corners[2]
-        let anchor = CGPoint(
-            x: handle.x == box.minX ? box.maxX : box.minX,
-            y: handle.y == box.minY ? box.maxY : box.minY
+        let nearest = corners.indices.min {
+            distance(frame.toPage(corners[$0]), rest) < distance(frame.toPage(corners[$1]), rest)
+        } ?? 2
+        return LiveSnap(
+            shape: shape,
+            anchor: frame.toPage(corners[(nearest + 2) % 4]),
+            handle: frame.toPage(corners[nearest]),
+            rotation: fit.rotation,
+            pivot: fit.pivot
         )
-        return LiveSnap(shape: shape, anchor: anchor, handle: handle)
     }
 
     /// How near a line has to come to level or upright before it clicks onto it.
@@ -198,14 +224,20 @@ enum ShapeSnapper {
         case .angle(let bend):
             guard distance(anchor, handle) > 6 else { return nil }
             return (densify([anchor, bend, handle]), false)
+        case .arc(let bulge):
+            guard distance(anchor, handle) > 6 else { return nil }
+            return (arcPath(from: anchor, to: handle, bulge: bulge), false)
         default:
+            // Sized in the shape's own frame, so a tilted shape stays tilted.
+            let frame = Frame(rotation: snap.rotation, pivot: snap.pivot)
+            let from = frame.toFrame(anchor), to = frame.toFrame(handle)
             let drawn = CGRect(
-                x: min(anchor.x, handle.x), y: min(anchor.y, handle.y),
-                width: abs(handle.x - anchor.x), height: abs(handle.y - anchor.y)
+                x: min(from.x, to.x), y: min(from.y, to.y),
+                width: abs(to.x - from.x), height: abs(to.y - from.y)
             )
             guard drawn.width > 8, drawn.height > 8 else { return nil }
-            let settled = squared(drawn, anchoredAt: anchor)
-            return (path(for: snap.shape, in: settled.box), settled.isDetent)
+            let settled = squared(drawn, anchoredAt: from)
+            return (path(for: snap.shape, in: settled.box).map(frame.toPage), settled.isDetent)
         }
     }
 

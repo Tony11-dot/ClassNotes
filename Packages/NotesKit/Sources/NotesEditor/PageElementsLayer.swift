@@ -770,7 +770,7 @@ struct EraseCatcherLayer: View {
             // shape's whole bounding box.
             ForEach(elements.filter { $0.kind == .fill }) { element in
                 Color.clear
-                    .contentShape(fillOutline(element))
+                    .contentShape(fillOutline(element), eoFill: true)
                     .frame(width: displaySize.width, height: displaySize.height)
                     // `.highPriorityGesture`, not `.gesture` — this drag has to
                     // WIN outright the instant it starts, not merely compete.
@@ -792,14 +792,13 @@ struct EraseCatcherLayer: View {
         .allowsHitTesting(toolState.tool == .eraser)
     }
 
+    /// The fill's paint, holes cut out — so the eraser can't catch a fill by
+    /// touching the empty middle of a ring it was drawn around.
     private func fillOutline(_ element: PageElement) -> Path {
-        var path = Path()
-        let scaled = element.points.map { CGPoint(x: $0.x * scale, y: $0.y * scale) }
-        guard let first = scaled.first else { return path }
-        path.move(to: first)
-        for point in scaled.dropFirst() { path.addLine(to: point) }
-        path.closeSubpath()
-        return path
+        let scaled: ([PagePoint]) -> [CGPoint] = { ring in
+            ring.map { CGPoint(x: $0.x * scale, y: $0.y * scale) }
+        }
+        return FillRegionView.path(outline: scaled(element.points), holes: element.holes.map(scaled))
     }
 
     private func eraseGesture(for element: PageElement) -> some Gesture {
@@ -839,15 +838,17 @@ struct EraseCatcherLayer: View {
                 defer { erasePath[element.id] = nil }
                 guard let swept = erasePath[element.id], !swept.isEmpty else { return }
                 let before = elements
-                let survivingOutline = FillGeometry.erased(
+                let surviving = FillGeometry.erasedRegion(
                     outline: element.points.map(\.cgPoint),
+                    holes: element.holes.map { $0.map(\.cgPoint) },
                     erasedPoints: swept,
                     radius: CGFloat(max(toolState.eraserWidth / 2, 6)),
                     scale: FillTool.maskScale
                 )
-                if let survivingOutline {
+                if let surviving {
                     var updated = element
-                    updated.points = survivingOutline.map(PagePoint.init)
+                    updated.points = surviving.outline.map(PagePoint.init)
+                    updated.holes = surviving.holes.map { $0.map(PagePoint.init) }
                     tracker?.registerElementStep(
                         pageID: pageID, elementsBefore: before,
                         elementsAfter: before.map { $0.id == element.id ? updated : $0 }, named: "Erase"

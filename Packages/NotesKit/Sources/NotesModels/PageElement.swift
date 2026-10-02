@@ -149,6 +149,11 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
     /// For tape: the freeform / line path in logical page points, relative to the
     /// page (not the element frame). Empty for rectangles.
     public var points: [PagePoint]
+    /// For fill: the rings cut OUT of `points` — shapes the flood went round
+    /// (the inner circle of a ring, the cells inside a box). Page space, like
+    /// `points`; drawn even-odd. Empty for everything else, and for fills made
+    /// before holes were traced, which decode exactly as they always drew.
+    public var holes: [[PagePoint]]
     /// For tape: the strip's thickness in logical points.
     public var strokeWidth: Double?
     /// For tape: `true` = the strip is lifted, so what's underneath shows through
@@ -207,6 +212,7 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
         tapePattern: TapePattern? = nil,
         colorHex: String? = nil,
         points: [PagePoint] = [],
+        holes: [[PagePoint]] = [],
         strokeWidth: Double? = nil,
         isHidden: Bool = false,
         renderAboveInk: Bool = false
@@ -252,6 +258,7 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
         self.tapePattern = tapePattern
         self.colorHex = colorHex
         self.points = points
+        self.holes = holes
         self.strokeWidth = strokeWidth
         self.isHidden = isHidden
         self.renderAboveInk = renderAboveInk
@@ -324,7 +331,7 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
         case axisXUnit, axisYUnit, axisZUnit
         case axisXTickFormat, axisYTickFormat, axisZTickFormat
         case axisXTickInterval, axisYTickInterval, axisZTickInterval
-        case tapeShape, tapePattern, colorHex, points, strokeWidth, isHidden, renderAboveInk
+        case tapeShape, tapePattern, colorHex, points, holes, strokeWidth, isHidden, renderAboveInk
     }
 
     /// Custom decode so v2–v5 elements (which had none of the tape / text-size /
@@ -372,6 +379,7 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
         tapePattern = try c.decodeIfPresent(TapePattern.self, forKey: .tapePattern)
         colorHex = try c.decodeIfPresent(String.self, forKey: .colorHex)
         points = try c.decodeIfPresent([PagePoint].self, forKey: .points) ?? []
+        holes = try c.decodeIfPresent([[PagePoint]].self, forKey: .holes) ?? []
         strokeWidth = try c.decodeIfPresent(Double.self, forKey: .strokeWidth)
         isHidden = try c.decodeIfPresent(Bool.self, forKey: .isHidden) ?? false
         renderAboveInk = try c.decodeIfPresent(Bool.self, forKey: .renderAboveInk) ?? false

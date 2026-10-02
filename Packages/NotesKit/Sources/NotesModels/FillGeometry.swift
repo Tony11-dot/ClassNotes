@@ -160,6 +160,115 @@ public enum FillGeometry {
         return contour
     }
 
+    // MARK: - Holes
+
+    /// The most holes one fill keeps. Each is stored in the manifest and drawn on
+    /// every frame; a page of tiny boxes keeps its biggest ones.
+    public static let maximumHoles = 64
+
+    /// The shapes ENCLOSED by a filled region, each traced as a ring in mask
+    /// coordinates — the parts of the page the flood surrounded but never reached.
+    ///
+    /// `outline(of:)` traces only the region's OUTER boundary, and a fill used to
+    /// be drawn as that one ring. So a tap between two concentric circles painted
+    /// the inner disc too, and a tap in the frame around a table painted every
+    /// cell of it, though the flood itself had stopped at each one. A fill is the
+    /// outer ring with these rings cut out of it (even-odd).
+    ///
+    /// A hole is something the flood went round: what is neither paint nor
+    /// connected to the outside. Only holes enclosing at least
+    /// `minimumEnclosedPixels` of free (non-`ink`) space count. Writing inside a
+    /// shape is full of tiny enclosures — the inside of every o, e and a — and
+    /// those stay painted, so the colour still reads as being behind the words.
+    /// With no `ink` mask every pixel of a hole counts as free.
+    public static func holes(
+        in region: Mask, ink: Mask? = nil, minimumEnclosedPixels: Int, limit: Int = maximumHoles
+    ) -> [[CGPoint]] {
+        guard let bounds = bounds(of: region) else { return [] }
+        // Only inside the region's own box can anything be enclosed by it; the
+        // one-pixel margin around the box is all "outside", which is where the
+        // labelling starts from.
+        let minX = bounds.minX - 1, minY = bounds.minY - 1
+        let width = bounds.maxX - bounds.minX + 3, height = bounds.maxY - bounds.minY + 3
+
+        struct Component {
+            var minX = Int.max, minY = Int.max, maxX = Int.min, maxY = Int.min
+            var free = 0
+            var enclosed = true
+        }
+        var labels = [Int32](repeating: 0, count: width * height)
+        var components: [Component] = []
+        var stack: [Int] = []
+
+        for startY in 0..<height {
+            for startX in 0..<width {
+                let start = startY * width + startX
+                guard labels[start] == 0, !region[startX + minX, startY + minY] else { continue }
+                components.append(Component())
+                let label = Int32(components.count)
+                var component = Component()
+                labels[start] = label
+                stack.append(start)
+                // Eight-connected: the region was flooded four-connected, so what
+                // it didn't reach meets diagonally across its corners.
+                while let index = stack.popLast() {
+                    let x = index % width, y = index / width
+                    let pageX = x + minX, pageY = y + minY
+                    component.minX = min(component.minX, pageX); component.maxX = max(component.maxX, pageX)
+                    component.minY = min(component.minY, pageY); component.maxY = max(component.maxY, pageY)
+                    if x == 0 || y == 0 || x == width - 1 || y == height - 1 { component.enclosed = false }
+                    if !(ink?[pageX, pageY] ?? false) { component.free += 1 }
+                    for dy in -1...1 {
+                        for dx in -1...1 where dx != 0 || dy != 0 {
+                            let nx = x + dx, ny = y + dy
+                            guard nx >= 0, ny >= 0, nx < width, ny < height else { continue }
+                            let next = ny * width + nx
+                            guard labels[next] == 0, !region[nx + minX, ny + minY] else { continue }
+                            labels[next] = label
+                            stack.append(next)
+                        }
+                    }
+                }
+                components[Int(label) - 1] = component
+            }
+        }
+
+        let kept = components.enumerated()
+            .filter { $0.element.enclosed && $0.element.free >= max(minimumEnclosedPixels, 1) }
+            .sorted { $0.element.free > $1.element.free }
+            .prefix(max(limit, 0))
+
+        return kept.map { offset, component in
+            // The hole on its own, cropped with a one-pixel margin so tracing
+            // starts outside it.
+            let label = Int32(offset + 1)
+            let cropX = component.minX - 1, cropY = component.minY - 1
+            var crop = Mask(
+                width: component.maxX - component.minX + 3,
+                height: component.maxY - component.minY + 3
+            )
+            for y in component.minY...component.maxY {
+                for x in component.minX...component.maxX
+                where labels[(y - minY) * width + (x - minX)] == label {
+                    crop[x - cropX, y - cropY] = true
+                }
+            }
+            return outline(of: crop).map { CGPoint(x: $0.x + CGFloat(cropX), y: $0.y + CGFloat(cropY)) }
+        }
+    }
+
+    /// The smallest box holding every `true` pixel, in mask coordinates.
+    private static func bounds(of mask: Mask) -> (minX: Int, minY: Int, maxX: Int, maxY: Int)? {
+        var minX = Int.max, minY = Int.max, maxX = Int.min, maxY = Int.min
+        for y in 0..<mask.height {
+            for x in 0..<mask.width where mask.pixels[y * mask.width + x] {
+                minX = min(minX, x); maxX = max(maxX, x)
+                minY = min(minY, y); maxY = max(maxY, y)
+            }
+        }
+        return minX == Int.max ? nil : (minX, minY, maxX, maxY)
+    }
+
     private static func firstPixel(of region: Mask) -> (x: Int, y: Int)? {
         for y in 0..<region.height {
             for x in 0..<region.width where region[x, y] {
@@ -212,16 +321,19 @@ public enum FillGeometry {
     /// tucks UNDER the stroke that bounds it. Without that, the fill stops at the
     /// outer edge of the ink's antialiasing and leaves a pale halo following every
     /// line — which reads as a fill that missed.
+    ///
+    /// A HOLE's ring is the same problem from the other side: pass a negative
+    /// `growth` so it shrinks, and the paint tucks under the ink around the hole.
     public static func path(
         forOutline outline: [CGPoint],
         maskOrigin: CGPoint,
         scale: CGFloat,
-        tolerance: CGFloat = 1.1
+        tolerance: CGFloat = 1.1,
+        growth: CGFloat = 1.2
     ) -> [CGPoint] {
         let simplified = simplified(outline, tolerance: tolerance)
         guard simplified.count > 2, scale > 0 else { return [] }
         let centre = centroid(simplified)
-        let growth: CGFloat = 1.2
         return simplified.map { point in
             let outward = CGVector(dx: point.x - centre.x, dy: point.y - centre.y)
             let length = hypot(outward.dx, outward.dy)
@@ -259,7 +371,19 @@ public enum FillGeometry {
     public static func erased(
         outline: [CGPoint], erasedPoints: [CGPoint], radius: CGFloat, scale: CGFloat
     ) -> [CGPoint]? {
-        guard outline.count > 2, scale > 0, !erasedPoints.isEmpty else { return outline }
+        erasedRegion(
+            outline: outline, holes: [], erasedPoints: erasedPoints, radius: radius, scale: scale
+        )?.outline
+    }
+
+    /// `erased(outline:erasedPoints:radius:scale:)` for a fill with holes: the
+    /// holes it already had stay cut out, and a bite taken out of the MIDDLE of
+    /// the paint — which touches no edge, so tracing the outer ring alone used to
+    /// throw it away — becomes a hole of its own.
+    public static func erasedRegion(
+        outline: [CGPoint], holes: [[CGPoint]], erasedPoints: [CGPoint], radius: CGFloat, scale: CGFloat
+    ) -> (outline: [CGPoint], holes: [[CGPoint]])? {
+        guard outline.count > 2, scale > 0, !erasedPoints.isEmpty else { return (outline, holes) }
         let minX = outline.map(\.x).min() ?? 0, maxX = outline.map(\.x).max() ?? 0
         let minY = outline.map(\.y).min() ?? 0, maxY = outline.map(\.y).max() ?? 0
         let origin = CGPoint(x: minX, y: minY)
@@ -267,7 +391,10 @@ public enum FillGeometry {
         let height = Int(((maxY - minY) * scale).rounded(.up)) + 1
         guard width > 1, height > 1 else { return nil }
 
-        var mask = polygonMask(outline, origin: origin, scale: scale, width: width, height: height)
+        var mask = polygonMask(
+            [outline] + holes.filter { $0.count > 2 },
+            origin: origin, scale: scale, width: width, height: height
+        )
         let radiusPixels = max(1, radius * scale)
         for point in erasedPoints {
             punchHole(
@@ -281,15 +408,22 @@ public enum FillGeometry {
         let traced = Self.outline(of: survivor)
         guard traced.count > 8 else { return nil }
         let result = Self.path(forOutline: traced, maskOrigin: origin, scale: scale)
-        return result.count > 2 ? result : nil
+        guard result.count > 2 else { return nil }
+        // A speck the eraser's own edge left behind is not a hole worth keeping.
+        let speck = Int((radiusPixels * radiusPixels).rounded())
+        let survivingHoles = Self.holes(in: survivor, minimumEnclosedPixels: speck)
+            .map { Self.path(forOutline: $0, maskOrigin: origin, scale: scale, growth: 0) }
+            .filter { $0.count > 2 }
+        return (result, survivingHoles)
     }
 
     /// A polygon's interior as a raster, via the same "draw it and read the
     /// pixels" approach `FillTool.inkMask` rasterizes ink with — a scanline
     /// polygon-fill algorithm would be a second implementation of exactly what
     /// `CGContext` already does correctly for self-intersecting/concave outlines.
+    /// Rings after the first are holes: the whole set is filled even-odd.
     private static func polygonMask(
-        _ outline: [CGPoint], origin: CGPoint, scale: CGFloat, width: Int, height: Int
+        _ rings: [[CGPoint]], origin: CGPoint, scale: CGFloat, width: Int, height: Int
     ) -> Mask {
         var pixels = [UInt8](repeating: 0, count: width * height)
         let space = CGColorSpaceCreateDeviceGray()
@@ -300,12 +434,15 @@ public enum FillGeometry {
         ) else { return Mask(width: width, height: height) }
         context.setFillColor(gray: 1, alpha: 1)
         context.beginPath()
-        context.move(to: CGPoint(x: (outline[0].x - origin.x) * scale, y: (outline[0].y - origin.y) * scale))
-        for point in outline.dropFirst() {
-            context.addLine(to: CGPoint(x: (point.x - origin.x) * scale, y: (point.y - origin.y) * scale))
+        for ring in rings {
+            guard let first = ring.first else { continue }
+            context.move(to: CGPoint(x: (first.x - origin.x) * scale, y: (first.y - origin.y) * scale))
+            for point in ring.dropFirst() {
+                context.addLine(to: CGPoint(x: (point.x - origin.x) * scale, y: (point.y - origin.y) * scale))
+            }
+            context.closePath()
         }
-        context.closePath()
-        context.fillPath()
+        context.fillPath(using: .evenOdd)
         return Mask(width: width, height: height, pixels: pixels.map { $0 > 127 })
     }
 
