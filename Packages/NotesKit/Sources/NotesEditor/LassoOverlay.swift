@@ -51,9 +51,30 @@ struct LassoOverlay: View {
         .contentShape(Rectangle())
         .gesture(
             DragGesture(minimumDistance: 2)
-                .onChanged { value in trail.append(value.location) }
+                .onChanged { value in append(value.location) }
                 .onEnded { _ in finish() }
         )
+    }
+
+    /// The least a point has to travel to be worth keeping, in display points.
+    ///
+    /// A drag reports far more samples than the loop needs: a slow, careful
+    /// lasso emits hundreds, many of them a fraction of a point apart, and
+    /// every one of them is both a segment the Canvas redraws each frame and
+    /// an edge that `LassoSelection.catches` tests against EVERY sampled point
+    /// of EVERY stroke on the page. Two points is below what a hand can aim
+    /// anyway, so dropping anything closer costs no accuracy the user could
+    /// have exercised and takes a large constant factor off the hit test.
+    private static let minimumStep: CGFloat = 2
+
+    private func append(_ point: CGPoint) {
+        guard let last = trail.last else {
+            trail.append(point)
+            return
+        }
+        let dx = point.x - last.x, dy = point.y - last.y
+        guard dx * dx + dy * dy >= Self.minimumStep * Self.minimumStep else { return }
+        trail.append(point)
     }
 
     private func finish() {
@@ -99,6 +120,12 @@ struct LassoSelectionView: View {
     @State private var resizeDelta: CGSize = .zero
 
     private static let minimumSide: CGFloat = 32
+    /// Four 44-point buttons plus the capsule's 6-point padding either side.
+    /// Derived rather than guessed, so adding a fifth action cannot quietly
+    /// start pushing the bar off the right edge.
+    private static let actionCount = 4
+    private static let actionsWidth = CGFloat(actionCount) * 44 + 12
+    private static let actionsHeight: CGFloat = 40
 
     private var scale: CGFloat {
         logicalSize.width > 0 ? displaySize.width / logicalSize.width : 1
@@ -113,6 +140,17 @@ struct LassoSelectionView: View {
 
     private var liveWidth: CGFloat { max(Self.minimumSide, frame.width + resizeDelta.width) }
     private var liveHeight: CGFloat { max(Self.minimumSide, frame.height + resizeDelta.height) }
+
+    private var actionsOrigin: CGPoint {
+        SelectionBarPlacement.origin(
+            for: CGRect(
+                x: frame.minX + drag.width, y: frame.minY + drag.height,
+                width: liveWidth, height: liveHeight
+            ),
+            barSize: CGSize(width: Self.actionsWidth, height: Self.actionsHeight),
+            in: displaySize
+        )
+    }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -164,10 +202,7 @@ struct LassoSelectionView: View {
                 )
 
             actions
-                .offset(
-                    x: max(8, min(frame.minX + drag.width, displaySize.width - 232)),
-                    y: max(8, frame.minY + drag.height - 52)
-                )
+                .offset(x: actionsOrigin.x, y: actionsOrigin.y)
         }
         .frame(width: displaySize.width, height: displaySize.height)
         .onAppear {
@@ -223,12 +258,25 @@ struct LassoSelectionView: View {
             )
     }
 
+    /// The bar's buttons, each also reachable from a keyboard.
+    ///
+    /// An iPad with a keyboard attached is the machine this app is mostly used
+    /// on, and ⌘C / ⌘D are what anyone would try first on something they have
+    /// just selected. The shortcuts hang off these buttons rather than the
+    /// editor, so they exist only while a selection does — there is no hidden
+    /// global ⌘C quietly doing something else to the page. Delete takes ⌘⌫
+    /// rather than a bare Backspace on purpose: a bare one would fire from
+    /// ordinary typing the moment anything else on screen took focus.
     private var actions: some View {
         HStack(spacing: 2) {
             action("Copy", systemImage: "doc.on.doc", onCopy)
+                .keyboardShortcut("c", modifiers: .command)
             action("Duplicate", systemImage: "plus.square.on.square", onDuplicate)
+                .keyboardShortcut("d", modifiers: .command)
             action("Delete", systemImage: "trash", onDelete, destructive: true)
+                .keyboardShortcut(.delete, modifiers: .command)
             action("Done", systemImage: "checkmark", onDismiss)
+                .keyboardShortcut(.escape, modifiers: [])
         }
         .padding(.horizontal, 6)
         .frame(height: 40)
@@ -249,5 +297,38 @@ struct LassoSelectionView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(title)
+    }
+}
+
+/// Where a floating action bar goes relative to the thing it acts on.
+///
+/// Pulled out of the view because this is the whole of the behaviour worth
+/// pinning, and a render test cannot see it: the bar is drawn on `dsGlass`, and
+/// `ImageRenderer` rasterizes a material as nothing at all, so a pixel read of
+/// the rendered view finds an empty page whether the bar is placed correctly,
+/// placed off-screen, or placed straight on top of the selection.
+enum SelectionBarPlacement {
+    /// How close the bar may come to the edge of the page.
+    static let margin: CGFloat = 8
+    /// The gap between the bar and the selection it belongs to.
+    static let gap: CGFloat = 12
+
+    /// Above the selection by preference, below it when there is no room, and
+    /// never past an edge.
+    ///
+    /// The "below" case is the one that matters: clamping to the top margin
+    /// instead — which is what a plain `max(margin, …)` does — lays the bar over
+    /// the top of the selection, so the buttons cover the very thing they are
+    /// about to act on.
+    static func origin(for selection: CGRect, barSize: CGSize, in display: CGSize) -> CGPoint {
+        let x = max(margin, min(selection.minX, display.width - barSize.width - margin))
+
+        let above = selection.minY - barSize.height - gap
+        if above >= margin {
+            return CGPoint(x: x, y: above)
+        }
+        let below = selection.maxY + gap
+        let lowest = display.height - barSize.height - margin
+        return CGPoint(x: x, y: below <= lowest ? below : max(margin, lowest))
     }
 }

@@ -29,6 +29,13 @@ struct PageSelection: Equatable {
 /// avoid.
 struct CopiedSnip {
     let image: UIImage
+    /// The SAME bytes that went on the pasteboard. Copy has to encode a PNG
+    /// anyway, and Paste needs a PNG to store beside the page — so keeping the
+    /// first one spares the second encode entirely. That is not a micro
+    /// optimisation: a half-page selection is a couple of megapixels, and
+    /// encoding it is tens of milliseconds of a blocked main actor, which is
+    /// felt as the Paste button hanging before anything appears.
+    let png: Data
     let pageID: UUID
     let frame: CGRect
 }
@@ -125,9 +132,16 @@ extension EditorScreen {
     func resolveLasso(_ loop: [CGPoint], on page: PageRecord) -> LassoCatch {
         var caught = LassoCatch()
         var boxes: [CGRect] = []
+        // Anything whose box misses the loop's box cannot have a single point
+        // inside the loop, so it is dropped before the per-point test — which is
+        // the expensive one, and which a page of handwriting would otherwise pay
+        // for thousands of times over for ink nowhere near the circle drawn.
+        // Exact, not approximate: the result is identical either way.
+        let reach = LassoSelection.boundingBox(of: loop) ?? .null
 
         if let drawing = tracker.drawing(for: page.id) {
             for (index, stroke) in drawing.strokes.enumerated() {
+                guard stroke.renderBounds.intersects(reach) else { continue }
                 let samples = stroke.path
                     .interpolatedPoints(by: .distance(6))
                     .map { $0.location.applying(stroke.transform) }
@@ -140,6 +154,7 @@ extension EditorScreen {
             let frame = CGRect(
                 x: element.x, y: element.y, width: element.width, height: element.height
             )
+            guard frame.intersects(reach) else { continue }
             guard LassoSelection.catches(loop, frame: frame) else { continue }
             caught.elementIDs.append(element.id)
             boxes.append(frame)
@@ -165,9 +180,7 @@ extension EditorScreen {
             drawingAfter = after
             tracker.setDrawing(after, for: selection.pageID)
         }
-        for id in selection.caught.elementIDs {
-            await model.deleteElement(id, on: selection.pageID)
-        }
+        await model.deleteElements(selection.caught.elementIDs, on: selection.pageID)
         let elementsAfter = elementsBefore.filter { !selection.caught.elementIDs.contains($0.id) }
         tracker.registerElementStep(
             pageID: selection.pageID, drawingBefore: drawingBefore, drawingAfter: drawingAfter,
@@ -177,11 +190,16 @@ extension EditorScreen {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
     }
 
+    /// How far a copy lands from what it was copied from. Shared by Duplicate
+    /// and Paste so the two behave the same way: far enough to read as a second
+    /// object, near enough to stay inside the region the user was looking at.
+    static let pasteOffset: CGFloat = 24
+
     @MainActor
     func duplicateSelection() async {
         guard let selection = lassoSelection else { return }
         // A copy has to land somewhere you can see it, so it comes in offset.
-        let offset = CGSize(width: 24, height: 24)
+        let offset = CGSize(width: Self.pasteOffset, height: Self.pasteOffset)
         let elementsBefore = model.page(selection.pageID)?.elements ?? []
         var drawingBefore: PKDrawing?
         var drawingAfter: PKDrawing?
@@ -204,13 +222,10 @@ extension EditorScreen {
             newBoxes = copies.map(\.renderBounds)
             tracker.setDrawing(after, for: selection.pageID)
         }
-        for id in selection.caught.elementIDs {
-            await model.duplicateElement(id, on: selection.pageID, offset: offset)
-        }
+        let newElementIDs = await model.duplicateElements(
+            selection.caught.elementIDs, on: selection.pageID, offset: offset
+        )
         let elementsAfter = model.page(selection.pageID)?.elements ?? []
-        let newElementIDs = elementsAfter
-            .map(\.id)
-            .filter { id in !elementsBefore.contains { $0.id == id } }
         for id in newElementIDs {
             if let element = elementsAfter.first(where: { $0.id == id }) {
                 newBoxes.append(element.frame)
@@ -228,7 +243,17 @@ extension EditorScreen {
         newCatch.strokeIndices = newStrokeIndices
         newCatch.elementIDs = newElementIDs
         newCatch.bounds = LassoSelection.bounds(of: newBoxes) ?? .null
+        // If nothing could actually be copied, put the selection down rather
+        // than hand the marching ants a null box to draw itself around.
+        guard !newCatch.isEmpty, !newCatch.bounds.isNull else {
+            lassoSelection = nil
+            return
+        }
         lassoSelection = PageSelection(pageID: selection.pageID, caught: newCatch)
+        // Delete, Copy and Paste all tap the hand; Duplicate was silent, which
+        // made the one action whose result looks almost identical to the page
+        // before it the one action that gave no sign it had run.
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
     /// Copy takes a PICTURE of what the lasso is holding — the ink, the photos,
@@ -241,25 +266,36 @@ extension EditorScreen {
     /// it looks. Text boxes are rendered along with everything else rather than
     /// extracted, so what lands in the other app is what was on the page.
     @MainActor
-    func copySelection() {
+    func copySelection() async {
         guard let selection = lassoSelection else { return }
         guard let image = snapshotSelection(selection) else {
             editorNotice = "Nothing to copy."
             return
         }
+        // Encoding happens OFF the main actor. The snapshot itself has to be
+        // rendered here — it reads the live page — but turning a couple of
+        // megapixels into PNG is tens of milliseconds of pure CPU, and doing
+        // that inline is a visible freeze on the one button whose whole job is
+        // to feel instant.
+        let png = await Task.detached(priority: .userInitiated) { image.pngData() }.value
+        guard let png else {
+            editorNotice = "Nothing to copy."
+            return
+        }
         // Both representations: apps that want a picture get the PNG (with its
         // transparency intact), and the plain image satisfies everything else.
-        var item: [String: Any] = [UTType.image.identifier: image]
-        if let png = image.pngData() {
-            item[UTType.png.identifier] = png
-        }
-        UIPasteboard.general.items = [item]
+        UIPasteboard.general.items = [[
+            UTType.image.identifier: image,
+            UTType.png.identifier: png,
+        ]]
         // Kept in hand as well, so the Paste chip can put it straight back onto
         // the page. A Copy you can only spend in another app is half a Copy.
         // The page and frame travel WITH the image (see `CopiedSnip`) rather
         // than being read back off `lassoSelection`, which the user is free to
         // dismiss before ever pressing Paste.
-        let snip = CopiedSnip(image: image, pageID: selection.pageID, frame: selection.caught.bounds)
+        let snip = CopiedSnip(
+            image: image, png: png, pageID: selection.pageID, frame: selection.caught.bounds
+        )
         withAnimation(.spring(duration: 0.3)) { copiedSnip = snip }
         editorNotice = "Copied — press Paste to place it."
     }
@@ -283,14 +319,22 @@ extension EditorScreen {
         let landedPageID: UUID
         let elementsBefore: [PageElement]
         if let snip = copiedSnip {
-            guard let data = snip.image.pngData() else {
-                editorNotice = "Nothing to paste."
-                return
-            }
             landedPageID = snip.pageID
             elementsBefore = model.page(snip.pageID)?.elements ?? []
+            // Offset, for the same reason Duplicate is: landing a copy exactly
+            // on top of what it was copied from puts a pixel-identical picture
+            // over the original, which looks precisely like nothing happened.
+            // Still anchored to where the region came from — which is the point
+            // of carrying `frame` at all, since a centered paste on a page
+            // taller than the viewport can land off-screen — just nudged far
+            // enough to be visibly a second thing.
+            let landing = Self.landingFrame(
+                for: snip.frame, offsetBy: Self.pasteOffset,
+                onPageOfSize: model.page(snip.pageID)?.logicalSize ?? .zero
+            )
             await model.insertImage(
-                data, fileExtension: "png", frame: snip.frame, on: snip.pageID, renderAboveInk: true
+                snip.png, fileExtension: "png", frame: landing, on: snip.pageID,
+                renderAboveInk: true
             )
         } else if let pbImage = UIPasteboard.general.image, let data = pbImage.pngData() {
             // Something copied from outside the app: there's no source page or
@@ -327,6 +371,28 @@ extension EditorScreen {
         toolState.select(.hand)
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         editorNotice = "Pasted — drag to move, pinch to resize."
+    }
+
+    /// Where a pasted copy lands: nudged off the original so it reads as a
+    /// second object, then kept on the page.
+    ///
+    /// The nudge alone is not enough. A region copied from the bottom-right
+    /// corner would be pushed partly over the edge, and a page element that
+    /// starts off-page is one the user has to find before they can drag it
+    /// back. Shifting it back inside is always possible here because the source
+    /// frame was on the page to begin with — the copy is the same size.
+    static func landingFrame(
+        for source: CGRect, offsetBy offset: CGFloat, onPageOfSize page: CGSize
+    ) -> CGRect {
+        let nudged = source.offsetBy(dx: offset, dy: offset)
+        guard page.width > 0, page.height > 0 else { return nudged }
+        // A region wider or taller than the page can't be fitted; leave it be
+        // rather than dragging it somewhere arbitrary.
+        let x = nudged.width <= page.width
+            ? min(nudged.minX, page.width - nudged.width) : nudged.minX
+        let y = nudged.height <= page.height
+            ? min(nudged.minY, page.height - nudged.height) : nudged.minY
+        return CGRect(x: max(0, x), y: max(0, y), width: nudged.width, height: nudged.height)
     }
 
     /// Confirm on the pending-paste bar: the placement is settled, so the
@@ -508,9 +574,7 @@ extension EditorScreen {
             drawingAfter = after
             tracker.setDrawing(after, for: selection.pageID)
         }
-        for id in selection.caught.elementIDs {
-            await model.moveElement(id, on: selection.pageID, by: offset)
-        }
+        await model.moveElements(selection.caught.elementIDs, on: selection.pageID, by: offset)
         let elementsAfter = model.page(selection.pageID)?.elements ?? []
         tracker.registerElementStep(
             pageID: selection.pageID, drawingBefore: drawingBefore, drawingAfter: drawingAfter,
@@ -550,9 +614,9 @@ extension EditorScreen {
             drawingAfter = after
             tracker.setDrawing(after, for: selection.pageID)
         }
-        for id in selection.caught.elementIDs {
-            await model.transformElement(id, on: selection.pageID, by: transform)
-        }
+        await model.transformElements(
+            selection.caught.elementIDs, on: selection.pageID, by: transform
+        )
         let elementsAfter = model.page(selection.pageID)?.elements ?? []
         tracker.registerElementStep(
             pageID: selection.pageID, drawingBefore: drawingBefore, drawingAfter: drawingAfter,

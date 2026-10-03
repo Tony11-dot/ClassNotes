@@ -42,6 +42,7 @@ extension EditorScreen {
                     .frame(height: 44)
                 }
                 .buttonStyle(.plain)
+                .keyboardShortcut("v", modifiers: .command)
                 .accessibilityLabel("Paste the copied region")
 
                 Divider().frame(height: 20)
@@ -59,6 +60,7 @@ extension EditorScreen {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .keyboardShortcut(.escape, modifiers: [])
                 .accessibilityLabel("Discard the copied region")
             }
             .dsGlass(in: Capsule(), interactive: true)

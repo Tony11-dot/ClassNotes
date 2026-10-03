@@ -575,7 +575,7 @@ extension EditorScreen {
                     logicalSize: page.logicalSize,
                     onDelete: { Task { await deleteSelection() } },
                     onDuplicate: { Task { await duplicateSelection() } },
-                    onCopy: { copySelection() },
+                    onCopy: { Task { await copySelection() } },
                     onMove: { offset in Task { await moveSelection(by: offset) } },
                     onResize: { bounds in Task { await resizeSelection(to: bounds) } },
                     onDismiss: { lassoSelection = nil }

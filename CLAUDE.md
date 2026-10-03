@@ -493,6 +493,59 @@ ML feature — distinct from the shipped handwriting→text) stays a premium stu
   sheet appeared to do nothing at all. `settingsTargetPage` skips it, and the
   sheet says which page it is editing and offers "Apply to every page".
 
+## Architecture invariants (lasso round)
+
+- A lasso selection holds POSITIONS, not identities. `LassoCatch.strokeIndices`
+  are indices into the page's `PKDrawing`, captured once when the loop closed,
+  and `PKStroke` has no stable id to hold instead. So the selection must be put
+  down whenever the drawing can change underneath it: leaving the lasso tool
+  (`onChange(of: toolState.tool)`) and any undo or redo
+  (`ActiveCanvasTracker.historyRevision`, bumped ONLY by an actual undo/redo —
+  `undoRevision` counts every pushed step and would clear the selection on every
+  stroke). Hiding the UI is not enough: the selection used to survive a tool
+  change, so erasing a stroke with the eraser and coming back made Delete act on
+  ink the user never circled. A live selection also sets
+  `tracker.lassoHoldPageID`, which stops live beautification reindexing that
+  page — so a selection left alive silently disabled beautification for the rest
+  of the session.
+- Whole-selection edits write the manifest ONCE. `deleteElements` /
+  `moveElements` / `transformElements` / `duplicateElements` exist because every
+  single-element mutator ends in `DocumentStore.setElements`, which re-reads,
+  re-encodes and atomically rewrites the WHOLE manifest — so a loop over a
+  selection of a dozen photos was a dozen sequential rewrites on one drag
+  release, eleven of them thrown away. Same bargain as
+  `NotebookRepository.delete(_:[Notebook])` in the library.
+- The lasso hit test rejects by bounding box first
+  (`LassoSelection.boundingBox`). This is EXACT, not a heuristic — nothing
+  outside the loop's own box can be inside the loop — and it is most of the work
+  on a busy page, where `catches` would otherwise run one edge test per loop
+  segment per sampled point for ink nowhere near the circle. The drag trail is
+  also decimated to 2-point steps, below what a hand can aim.
+- Copy renders a PICTURE and keeps its PNG BYTES (`CopiedSnip.png`). Copy has to
+  encode a PNG for the pasteboard anyway, and Paste needs one to store beside
+  the page; encoding twice is tens of milliseconds of blocked main actor each
+  way on a multi-megapixel selection. The encode itself runs off the main actor.
+- A copy lands OFFSET from its source and clamped to the page
+  (`EditorScreen.landingFrame`, shared `pasteOffset` with Duplicate). Landing at
+  the exact source frame puts a pixel-identical picture over the original and
+  reads as "paste did nothing"; nudging without clamping pushes a copy taken
+  from the page's corner off the edge.
+- `FillGeometry`'s masks are TOP-DOWN: `Mask[x, y]` row y is page y, matching
+  `FillTool.inkMask`. A bitmap `CGContext` runs the other way, so `polygonMask`
+  flips before drawing. Without it the polygon rasterized upside down and every
+  reader worked mirrored — `punchHole` takes its centre from the page, so
+  erasing the top of a fill bit the bottom. It hid for a long time because the
+  fixtures that exercised it (a square, a dab in the dead centre) are symmetric
+  about exactly the mirrored axis; test fills ASYMMETRICALLY.
+- `search.json` stores dates as raw intervals, not ISO-8601. The shared
+  `DocumentStore` encoder is `.iso8601`, which has no fractional seconds, and
+  `SearchIndex.needsReindex` compares `indexedAt` against a page's modification
+  time — a reading stamped up to a second early reads as stale against ink saved
+  in the same second, so the page goes back to Vision every launch forever.
+  Fractional seconds are still not enough (a string carries milliseconds, a
+  `Date` is finer); the index is derived data, so it stores the number. The
+  decoder still accepts the ISO strings already on disk.
+
 ## Architecture invariants (library round: search, export, trash, bookmarks)
 
 - Deleting a notebook does NOT destroy it. `Notebook.deletedAt` is the only thing
