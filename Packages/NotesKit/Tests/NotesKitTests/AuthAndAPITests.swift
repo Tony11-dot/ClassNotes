@@ -414,6 +414,23 @@ struct ClassMateNetworkingTests {
         #expect(keychain.get(.authToken) == "jwt-1")
     }
 
+    @Test("The ClassMate token an updating user still holds signs them out cleanly")
+    @MainActor
+    func restoreSignsOutOnTheOldAccountSystemsToken() async {
+        // This is the exact path every existing user takes on first launch after
+        // the update: the Keychain holds a ClassMate session, which still
+        // authenticates — so it is not a 401 — but carries no CLASSNOTES role,
+        // so the role guard answers 403. Reading only 401 as "finished" would
+        // leave them staring at a library that can never load.
+        let keychain = InMemorySecretStore()
+        keychain.set("classmate-era-token", for: .authToken)
+        let service = AuthService(client: makeAuthClient { _ in (403, Data()) }, keychain: keychain)
+        await service.restore()
+        #expect(service.state == .signedOut)
+        #expect(service.account == nil)
+        #expect(keychain.get(.authToken) == nil)
+    }
+
     @Test("A token the server has stopped honouring DOES sign out")
     @MainActor
     func restoreSignsOutOnA401() async {
