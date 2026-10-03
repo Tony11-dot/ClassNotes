@@ -315,7 +315,7 @@ public actor DocumentStore {
 
     public func searchIndex(for id: UUID) -> SearchIndex {
         guard let data = try? Data(contentsOf: searchIndexURL(for: id)),
-              let index = try? decoder.decode(SearchIndex.self, from: data)
+              let index = try? SearchIndexCoding.decoder.decode(SearchIndex.self, from: data)
         else { return SearchIndex() }
         return index
     }
@@ -324,7 +324,7 @@ public actor DocumentStore {
         try FileManager.default.createDirectory(
             at: documentURL(for: id), withIntermediateDirectories: true
         )
-        let data = try encoder.encode(index)
+        let data = try SearchIndexCoding.encoder.encode(index)
         try data.write(to: searchIndexURL(for: id), options: .atomic)
     }
 
