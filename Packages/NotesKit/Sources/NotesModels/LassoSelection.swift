@@ -56,6 +56,24 @@ public enum LassoSelection {
         return corners.filter { contains(loop, $0) }.count >= 3
     }
 
+    /// The box a set of points occupies, or nil for no points.
+    ///
+    /// Exists so a caller can throw away what the loop obviously did not reach
+    /// before paying for the point-in-polygon test. Nothing outside the loop's
+    /// own box can be inside the loop, so the rejection is exact, not a
+    /// heuristic — the answer is identical, it just arrives sooner. On a busy
+    /// page that is most of the work: `catches` costs one edge test per loop
+    /// segment per sampled point, and a page of handwriting has thousands of
+    /// sampled points nowhere near the circle the user drew.
+    public static func boundingBox(of points: [CGPoint]) -> CGRect? {
+        guard let first = points.first else { return nil }
+        var box = CGRect(origin: first, size: .zero)
+        for point in points.dropFirst() {
+            box = box.union(CGRect(origin: point, size: .zero))
+        }
+        return box
+    }
+
     /// A loop closed off, so a lasso the user didn't quite finish still encloses
     /// what they drew it around. Returns nil for a scribble too small to be a
     /// deliberate circle.
