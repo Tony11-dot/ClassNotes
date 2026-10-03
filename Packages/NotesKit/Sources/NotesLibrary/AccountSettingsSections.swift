@@ -17,17 +17,19 @@ struct AccountSettingsSection: View {
                 HStack(spacing: 12) {
                     ZStack {
                         Circle().fill(theme.accentMuted.color)
-                        Text(services.auth.user?.initials ?? "?")
+                        Text(services.auth.account?.initial ?? "?")
                             .font(.dsHeadline.weight(.heavy))
                             .foregroundStyle(theme.accent.color)
                     }
                     .frame(width: 44, height: 44)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(services.auth.user?.bestName ?? "Your profile")
+                        Text(services.auth.account?.displayName ?? "Your profile")
                             .font(.dsBody.weight(.semibold))
                             .foregroundStyle(theme.ink.color)
-                        if let username = services.auth.user?.username {
-                            Text("@\(username)")
+                        // The email, where ClassMate's @username used to be: a
+                        // ClassNotes account has no username to show.
+                        if let email = services.auth.account?.email {
+                            Text(email)
                                 .font(.dsCaption)
                                 .foregroundStyle(theme.inkSecondary.color)
                         }

@@ -1,12 +1,19 @@
 import Foundation
 import Observation
 
-/// The one source of truth for sign-in state. Holds the ClassMate session token
-/// (Keychain) and the cached profile; the app gates the library behind
+/// The one source of truth for sign-in state. Holds the ClassNotes session token
+/// (Keychain) and the cached account; the app gates the library behind
 /// `state == .authenticated`.
 ///
+/// These are ClassNotes' OWN accounts (`/classnotes/auth/*`), not ClassMate
+/// school accounts. The app used to sign in with the latter purely because that
+/// backend already authenticated the library sync — which meant a student who
+/// only wanted a notebook had to be enrolled in a school platform to open one.
+/// The token this holds is accepted by every `/classnotes/*` endpoint the app
+/// already used, NOVA included, so nothing downstream had to change.
+///
 /// Architected so server-side session validation can be strengthened later:
-/// callers only ever read `state`/`user`, never the token itself.
+/// callers only ever read `state`/`account`, never the token itself.
 @MainActor
 @Observable
 public final class AuthService {
@@ -17,65 +24,78 @@ public final class AuthService {
     }
 
     public private(set) var state: State = .loading
-    public private(set) var user: ClassMateUser?
+    public private(set) var account: ClassNotesAccount?
     public private(set) var lastError: String?
 
-    private let client: ClassMateAPIClient
+    private let client: ClassNotesAuthClient
     private let keychain: any SecretStore
-    private let profileDefaultsKey = "cachedProfile.v1"
+    /// v2 because v1 cached a `ClassMateUser`. A stale v1 blob is simply left
+    /// behind rather than migrated: it described a different account space, and
+    /// decoding it into a ClassNotes account would invent an id that names
+    /// nothing on the server.
+    private let profileDefaultsKey = "cachedClassNotesAccount.v2"
+    private let legacyProfileDefaultsKey = "cachedProfile.v1"
 
-    public init(client: ClassMateAPIClient = ClassMateAPIClient(), keychain: any SecretStore = KeychainStore()) {
+    public init(
+        client: ClassNotesAuthClient = ClassNotesAuthClient(),
+        keychain: any SecretStore = KeychainStore()
+    ) {
         self.client = client
         self.keychain = keychain
         if let data = UserDefaults.standard.data(forKey: profileDefaultsKey),
-           let cached = try? JSONDecoder().decode(ClassMateUser.self, from: data) {
-            user = cached
+           let cached = try? JSONDecoder().decode(ClassNotesAccount.self, from: data) {
+            account = cached
         }
     }
 
     public var token: String? { keychain.get(.authToken) }
 
-    /// Called at launch: if we hold a token, confirm it against `/auth/me`.
-    /// A cached profile means we can show the UI immediately and refresh async.
+    /// Called at launch: if we hold a token, confirm it against
+    /// `/classnotes/auth/me`. A cached account means the UI can come up
+    /// immediately and refresh behind it.
     public func restore() async {
         guard let token = keychain.get(.authToken) else {
             state = .signedOut
             return
         }
-        if user != nil { state = .authenticated } // optimistic from cache
+        if account != nil { state = .authenticated } // optimistic from cache
         do {
             let fresh = try await client.me(token: token)
-            user = fresh
+            account = fresh
             cache(fresh)
             state = .authenticated
         } catch APIError.notAuthenticated {
+            // The token is for an account that is gone, or predates a password
+            // change. Either way it will never work again.
             signOutLocally()
         } catch {
-            // Network hiccup: keep the cached session usable offline.
-            state = user != nil ? .authenticated : .signedOut
+            // A network hiccup is NOT a signed-out state: the notebooks are on
+            // disk and the editor works offline, so a cached session stays
+            // usable and simply revalidates on the next launch. Without a cached
+            // account there is nothing to show, so fall back to signed out.
+            state = account == nil ? .signedOut : .authenticated
         }
     }
 
-    public func signIn(identifier: String, password: String) async -> Bool {
+    public func signIn(email: String, password: String) async -> Bool {
         lastError = nil
-        let id = identifier.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !id.isEmpty, !password.isEmpty else {
-            lastError = "Enter your email/username and password."
+        let address = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !address.isEmpty, !password.isEmpty else {
+            lastError = "Enter your email and password."
             return false
         }
         do {
-            let token = try await client.login(identifier: id, password: password)
-            keychain.set(token, for: .authToken)
-            let profile = try await client.me(token: token)
-            user = profile
-            cache(profile)
-            state = .authenticated
+            let session = try await client.login(email: address, password: password)
+            adopt(session)
             return true
         } catch APIError.invalidCredentials {
-            lastError = "Incorrect email/username or password."
+            lastError = "Incorrect email or password."
             return false
         } catch APIError.network {
-            lastError = "Couldn't reach ClassMate. Check your connection."
+            lastError = "Couldn't reach ClassNotes. Check your connection."
+            return false
+        } catch APIError.server(let message, _) {
+            lastError = message
             return false
         } catch {
             lastError = "Something went wrong signing in."
@@ -86,20 +106,23 @@ public final class AuthService {
     public func register(email: String, name: String, password: String) async -> Bool {
         lastError = nil
         do {
-            let token = try await client.register(
-                email: email.trimmingCharacters(in: .whitespaces).lowercased(),
-                name: name.trimmingCharacters(in: .whitespaces),
+            let session = try await client.register(
+                email: email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
                 password: password,
-                username: nil
+                name: name.trimmingCharacters(in: .whitespacesAndNewlines)
             )
-            keychain.set(token, for: .authToken)
-            let profile = try? await client.me(token: token)
-            user = profile
-            if let profile { cache(profile) }
-            state = .authenticated
+            adopt(session)
             return true
+        } catch APIError.server(let message, _) {
+            // The server's own words: the address is taken, or the password is
+            // too short. Both tell the user exactly what to change.
+            lastError = message
+            return false
+        } catch APIError.network {
+            lastError = "Couldn't reach ClassNotes. Check your connection."
+            return false
         } catch APIError.badResponse(let status) where status == 409 {
-            lastError = "That email is already registered. Try signing in."
+            lastError = "That email already has a ClassNotes account. Try signing in."
             return false
         } catch {
             lastError = "Couldn't create your account. Try again."
@@ -107,17 +130,87 @@ public final class AuthService {
         }
     }
 
-    /// Sends a password-reset link via ClassMate's backend over the chosen
-    /// channel (`"email"` or `"sms"`). Returns the server's `{sent, message}`.
-    public func requestPasswordReset(
-        identifier: String,
-        channel: String = "email"
-    ) async -> ClassMateAPIClient.ResetResult {
-        let id = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !id.isEmpty else {
-            return .init(sent: false, message: "Enter your email or username.")
+    /// Renames the account. Succeeds locally only if the server took it, so the
+    /// profile screen can't show a name the next launch would contradict.
+    public func updateName(_ name: String) async -> Bool {
+        lastError = nil
+        guard let token = keychain.get(.authToken) else { return false }
+        do {
+            let updated = try await client.updateName(
+                name.trimmingCharacters(in: .whitespacesAndNewlines), token: token
+            )
+            account = updated
+            cache(updated)
+            return true
+        } catch APIError.server(let message, _) {
+            lastError = message
+            return false
+        } catch {
+            lastError = "Couldn't save your name. Try again."
+            return false
         }
-        return (try? await client.forgotPassword(identifier: id, channel: channel))
+    }
+
+    /// Changes the password and KEEPS this device signed in. The server revokes
+    /// every token issued before the change — including the one in the Keychain
+    /// right now — and returns a replacement, so storing it is not an
+    /// optimisation but the difference between staying signed in and being
+    /// kicked out on the next request.
+    public func changePassword(current: String, new: String) async -> Bool {
+        lastError = nil
+        guard let token = keychain.get(.authToken) else { return false }
+        do {
+            let replacement = try await client.changePassword(
+                current: current, new: new, token: token
+            )
+            keychain.set(replacement, for: .authToken)
+            return true
+        } catch APIError.invalidCredentials {
+            lastError = "That is not your current password."
+            return false
+        } catch APIError.server(let message, _) {
+            lastError = message
+            return false
+        } catch {
+            lastError = "Couldn't change your password. Try again."
+            return false
+        }
+    }
+
+    /// Deletes the account on the server, then signs out locally.
+    ///
+    /// Required by App Store guideline 5.1.1(v) — an app that creates accounts
+    /// has to be able to delete them from inside the app. The server drops every
+    /// notebook the account owned; the local documents are deliberately left
+    /// alone, because they are the user's own files and destroying them is not
+    /// what "delete my account" asked for.
+    public func deleteAccount(password: String) async -> Bool {
+        lastError = nil
+        guard let token = keychain.get(.authToken) else { return false }
+        do {
+            try await client.deleteAccount(password: password, token: token)
+            signOutLocally()
+            return true
+        } catch APIError.invalidCredentials {
+            lastError = "Incorrect password."
+            return false
+        } catch APIError.network {
+            lastError = "Couldn't reach ClassNotes. Check your connection."
+            return false
+        } catch {
+            lastError = "Couldn't delete your account. Try again."
+            return false
+        }
+    }
+
+    /// Asks for a password-reset link. The server answers identically whether or
+    /// not the address has an account, so this never reports "no such account".
+    public func requestPasswordReset(email: String) async -> PasswordResetResult {
+        let address = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !address.isEmpty else {
+            return .init(sent: false, message: "Enter your email.")
+        }
+        return (try? await client.forgotPassword(email: address))
             ?? .init(sent: false, message: "Something went wrong. Try again.")
     }
 
@@ -125,14 +218,22 @@ public final class AuthService {
         signOutLocally()
     }
 
+    private func adopt(_ session: ClassNotesAuthClient.Session) {
+        keychain.set(session.token, for: .authToken)
+        account = session.account
+        cache(session.account)
+        state = .authenticated
+    }
+
     private func signOutLocally() {
         keychain.remove(.authToken)
         UserDefaults.standard.removeObject(forKey: profileDefaultsKey)
-        user = nil
+        UserDefaults.standard.removeObject(forKey: legacyProfileDefaultsKey)
+        account = nil
         state = .signedOut
     }
 
-    private func cache(_ profile: ClassMateUser) {
+    private func cache(_ profile: ClassNotesAccount) {
         if let data = try? JSONEncoder().encode(profile) {
             UserDefaults.standard.set(data, forKey: profileDefaultsKey)
         }

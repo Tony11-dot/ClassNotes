@@ -119,8 +119,8 @@ public struct AboutScreen: View {
                     block("Privacy first",
                           """
                           Your notebooks stay on your device. No third-party \
-                          trackers, no ad networks. NOVA's AI runs through \
-                          ClassMate's secure servers using your signed-in account.
+                          trackers, no ad networks. NOVA's AI runs through our \
+                          secure servers using your ClassNotes account.
                           """)
                     block("Contact",
                           "Built by the ClassMate team.\nQuestions: \(ClassMateLinks.supportEmail)")

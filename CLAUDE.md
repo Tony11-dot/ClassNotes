@@ -51,14 +51,30 @@ Universal app, Swift 6 (strict concurrency), SwiftUI-first, Liquid Glass design 
 
 ## Architecture invariants (added features)
 
-- Sign-in reuses ClassMate's REAL backend accounts. `ClassMateAPIClient` +
-  `AuthService` hit `POST /auth/login` (`{identifier,password}`→`{token}`),
-  `GET /auth/me`, base URL `pacific-enchantment-production-7a80.up.railway.app`
-  (override via `CM_API_BASE_URL` env or `CMApiBaseURL` Info.plist key). The app
-  gates the library behind `AuthService.state == .authenticated`.
+- Accounts are ClassNotes' OWN. `ClassNotesAuthClient` + `AuthService` hit
+  `/classnotes/auth/*` (`register`, `login`, `me`, `PATCH me`, `change-password`,
+  `DELETE me`, `forgot-password`), base URL
+  `pacific-enchantment-production-7a80.up.railway.app` (override via
+  `CM_API_BASE_URL` env or `CMApiBaseURL` Info.plist key). The app gates the
+  library behind `AuthService.state == .authenticated`.
+  Sign-in used to be ClassMate's school accounts, purely because that backend
+  already authenticated the library sync — which meant somebody who only wanted a
+  notebook had to be enrolled in a school platform to open one. Replacing it cost
+  nothing downstream because every `/classnotes/*` endpoint scopes off the
+  token's subject and nothing else: the backend's `JwtStrategy` resolves a token
+  carrying `kind: 'classnotes'` to a `ClassNotesAccount` and hydrates `id`/`sub`/
+  `userId` with its id, so the library mirror, page renders, synced settings and
+  NOVA all kept working untouched. `ClassMateAPIClient` is now the DATA client
+  only — it holds no sign-in calls at all, and `ClassMateAPI` names the shared
+  server, not a shared account space.
+  Consequence worth knowing: rows the server already held are keyed by ClassMate
+  user ids, so a new ClassNotes account starts with an empty server mirror. No
+  notes are lost — they live in the on-device `.cmnote` packages and
+  `SyncService.pushAll` re-pushes them at launch — but the ClassMate app's
+  ClassNotes tab will not show books owned by the new account.
 - Secrets go through `SecretStore` — `KeychainStore` in the app, `InMemorySecretStore`
   in tests (SPM test hosts can't use the Keychain). The two secrets are the
-  ClassMate session token and the user's Groq API key. Never embed keys in source.
+  ClassNotes session token and the user's Groq API key. Never embed keys in source.
 - AI is `AIProvider` behind `NovaConversation`, and `NovaProviderRouter` decides
   who answers. DEFAULT is `NovaBackendProvider` — ClassMate's own
   `POST /classnotes/ai`, authenticated with the session the library already needs,
@@ -341,12 +357,27 @@ ML feature — distinct from the shipped handwriting→text) stays a premium stu
   Batch delete/shelve save ONCE (`NotebookRepository.delete(_:[Notebook])`,
   `setShelf(_:for:)`) and push each id, so a mass delete clears the ClassNotes
   tab too.
-- `SignUpScreen` creates a REAL ClassMate account through `POST /auth/register`,
-  not a ClassNotes-only one. Everything the app does — the library mirror, page
-  renders, NOVA via `/classnotes/ai` — is authenticated with a ClassMate session;
-  a parallel account space would mean rebuilding all of it or silently losing the
-  notes made under it. Sign in with Apple and Google are NOT built: they need the
-  App ID capability and a Google client ID respectively.
+- `SignUpScreen` creates a ClassNotes account through
+  `POST /classnotes/auth/register` — email, password, name, and nothing else is
+  asked for. Sign in with Apple and Google are NOT built: they need the App ID
+  capability and a Google client ID respectively.
+- A ClassNotes session may touch exactly ONE controller on the backend, and that
+  is enforced by an OMISSION. The account carries the single pseudo-role
+  `CLASSNOTES`, which is deliberately kept OUT of `ALL_APP_ROLES`; `RolesGuard`
+  default-denies any authenticated route whose `@Roles` tag doesn't match, so the
+  session cannot reach a school endpoint unless somebody "tidies up" by adding
+  `CLASSNOTES` to that list. `classnotes-token-isolation.spec.ts` fails if they
+  do — including a meta-test asserting `DEV_AUTH_BYPASS` is unset, because the
+  test env sets it and `RolesGuard` returns true on its first line when it is,
+  which made every assertion in that file vacuously pass.
+- Deleting an account is REAL and in-app (`AuthService.deleteAccount`), required
+  by App Store guideline 5.1.1(v). It drops every notebook the account owned on
+  the server and deliberately leaves the local documents alone — they are the
+  user's own files, and destroying them is not what "delete my account" asked
+  for. A password-reset link opens a page served by the API itself at
+  `GET /classnotes/auth/reset`, NOT ClassMate's `/reset-password`: the two flows
+  read different token tables, so that link would have loaded and then refused
+  every token it was given.
 
 ## Architecture invariants (settings + snapshot round)
 

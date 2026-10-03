@@ -3,20 +3,24 @@ import NotesDesignSystem
 import NotesServices
 import SwiftUI
 
-/// Sign-in against ClassMate's real accounts — mirrors ClassMate's login card:
-/// wordmark, "Welcome back", email-or-username + password, primary "Sign in".
+/// Signing in to ClassNotes.
+///
+/// The account is a ClassNotes account (`/classnotes/auth/login`) — the app's
+/// own, created in `SignUpScreen`. It used to be a ClassMate school account,
+/// which is why this screen used to ask for an "email or username": ClassMate
+/// has both. ClassNotes has one identifier, the email, so that is all it asks.
 public struct LoginScreen: View {
     @Environment(AppServices.self) private var services
     @Environment(\.theme) private var theme
 
-    @State private var identifier = ""
+    @State private var email = ""
     @State private var password = ""
     @State private var busy = false
     @State private var showForgot = false
     @State private var showSignUp = false
     @FocusState private var focus: Field?
 
-    private enum Field { case identifier, password }
+    private enum Field { case email, password }
 
     public init() {}
 
@@ -26,9 +30,8 @@ public struct LoginScreen: View {
             GeometryReader { geo in
                 ScrollView {
                     // Card centered vertically: a min-height container equal to
-                    // the viewport keeps the card in the middle (like ClassMate's
-                    // Center + SingleChildScrollView), still scrollable when the
-                    // keyboard shrinks the space.
+                    // the viewport keeps the card in the middle, still
+                    // scrollable when the keyboard shrinks the space.
                     card
                         .frame(maxWidth: 400)
                         .frame(maxWidth: .infinity, minHeight: geo.size.height)
@@ -38,7 +41,7 @@ public struct LoginScreen: View {
             }
         }
         .fullScreenCover(isPresented: $showForgot) {
-            ForgotPasswordScreen(prefill: identifier)
+            ForgotPasswordScreen(prefill: email)
         }
         .fullScreenCover(isPresented: $showSignUp) { SignUpScreen() }
     }
@@ -51,20 +54,21 @@ public struct LoginScreen: View {
                 Text("Welcome back")
                     .font(.dsTitle2.weight(.bold))
                     .foregroundStyle(theme.ink.color)
-                Text("Sign in to your ClassMate account.")
+                Text("Sign in to your ClassNotes account.")
                     .font(.dsSubheadline)
                     .foregroundStyle(theme.inkSecondary.color)
             }
 
             field(
-                text: $identifier,
-                placeholder: "Email or username",
+                text: $email,
+                placeholder: "Email",
                 systemImage: "at",
-                field: .identifier
+                field: .email
             )
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
             .keyboardType(.emailAddress)
+            .textContentType(.emailAddress)
             .submitLabel(.next)
             .onSubmit { focus = .password }
 
@@ -75,6 +79,7 @@ public struct LoginScreen: View {
                 field: .password,
                 secure: true
             )
+            .textContentType(.password)
             .submitLabel(.go)
             .onSubmit(signIn)
 
@@ -108,9 +113,6 @@ public struct LoginScreen: View {
             .buttonStyle(.glassProminent)
             .disabled(busy)
 
-            // A student who has never had a ClassMate account has no way in
-            // otherwise — the app is gated behind sign-in, so "no account" was a
-            // dead end rather than a first run.
             HStack(spacing: 4) {
                 Text("New here?")
                     .foregroundStyle(theme.inkSecondary.color)
@@ -174,39 +176,31 @@ public struct LoginScreen: View {
         busy = true
         Task {
             defer { busy = false }
-            _ = await services.auth.signIn(identifier: identifier, password: password)
+            _ = await services.auth.signIn(email: email, password: password)
         }
     }
 }
 
-/// "Forgot password?" — a full screen (NOT a bottom sheet), mirroring
-/// ClassMate's `ForgotPasswordScreen`: a top-aligned column with an Email/SMS
-/// channel picker, an identifier field, a send button, the server's message,
-/// and the "link expires in 1 hour" note. Sends through ClassMate's backend
-/// (`POST /auth/forgot-password`, channel email|sms), same accounts.
+/// "Forgot password?" — a full screen (NOT a bottom sheet), top-aligned: an
+/// email field, a send button, the server's message, and the expiry note.
+///
+/// Email only. The ClassMate version offered an SMS channel because a school
+/// account has a verified phone number on file; a ClassNotes account is an email
+/// and a password, so there is nowhere to text.
 struct ForgotPasswordScreen: View {
     @Environment(AppServices.self) private var services
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
 
-    enum ResetMode: String, CaseIterable { case email, sms }
-
     let prefill: String
-    @State private var identifier: String
-    @State private var mode: ResetMode = .email
+    @State private var email: String
     @State private var busy = false
     @State private var message: String?
     @State private var success = false
 
     init(prefill: String) {
         self.prefill = prefill
-        self._identifier = State(initialValue: prefill)
-    }
-
-    private var headerCopy: String {
-        mode == .email
-            ? "Enter your email or username and we'll email you a reset link."
-            : "Enter your email or username and we'll text a reset link to the phone on your account."
+        self._email = State(initialValue: prefill)
     }
 
     var body: some View {
@@ -216,27 +210,19 @@ struct ForgotPasswordScreen: View {
                     Text("Forgot password")
                         .font(.dsTitle.weight(.heavy))
                         .foregroundStyle(theme.ink.color)
-                    Text(headerCopy)
+                    Text("Enter your email and we'll send you a reset link.")
                         .font(.dsBody)
                         .foregroundStyle(theme.inkSecondary.color)
                         .lineSpacing(3)
                         .padding(.top, 8)
 
-                    // Email / SMS channel picker.
-                    Picker("Channel", selection: $mode) {
-                        Label("Email", systemImage: "envelope").tag(ResetMode.email)
-                        Label("Text", systemImage: "message").tag(ResetMode.sms)
-                    }
-                    .pickerStyle(.segmented)
-                    .onChange(of: mode) { _, _ in message = nil }
-                    .padding(.top, 24)
-
                     HStack(spacing: 10) {
                         Image(systemName: "at").foregroundStyle(theme.inkSecondary.color).frame(width: 20)
-                        TextField("Email or username", text: $identifier)
+                        TextField("Email", text: $email)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .keyboardType(.emailAddress)
+                            .textContentType(.emailAddress)
                             .foregroundStyle(theme.ink.color)
                             .submitLabel(.send)
                             .onSubmit(submit)
@@ -246,22 +232,21 @@ struct ForgotPasswordScreen: View {
                                 in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
                         .strokeBorder(theme.separator.color.opacity(0.6), lineWidth: 0.5))
-                    .padding(.top, 20)
+                    .padding(.top, 24)
 
                     Button(action: submit) {
                         HStack(spacing: 8) {
                             if busy {
                                 BrandLoader(size: 18, tint: theme.contrastingInk(on: theme.accent).color)
                             } else {
-                                Image(systemName: mode == .email ? "paperplane.fill" : "message.fill")
-                                Text(mode == .email ? "Email me a reset link" : "Text me a reset link")
-                                    .font(.dsHeadline)
+                                Image(systemName: "paperplane.fill")
+                                Text("Email me a reset link").font(.dsHeadline)
                             }
                         }
                         .frame(maxWidth: .infinity, minHeight: 48)
                     }
                     .buttonStyle(.glassProminent)
-                    .disabled(busy || identifier.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(busy || email.trimmingCharacters(in: .whitespaces).isEmpty)
                     .padding(.top, 20)
 
                     if let message {
@@ -304,14 +289,15 @@ struct ForgotPasswordScreen: View {
         guard !busy else { return }
         busy = true
         Task {
-            let result = await services.auth.requestPasswordReset(
-                identifier: identifier, channel: mode.rawValue
-            )
+            let result = await services.auth.requestPasswordReset(email: email)
             busy = false
             success = result.sent
+            // The server deliberately answers the same way for an address with no
+            // account, so this must not be reworded into a confirmation that one
+            // exists.
             message = result.message ?? (result.sent
-                ? "If an account matches, a reset link is on its way."
-                : "We couldn't send a reset link. Check the details and try again.")
+                ? "If that email has a ClassNotes account, a reset link is on its way."
+                : "We couldn't send a reset link. Check the address and try again.")
         }
     }
 }

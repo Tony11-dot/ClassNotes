@@ -1,7 +1,7 @@
 import Foundation
 import Security
 
-/// The secrets the app holds: the ClassMate session token and the Groq API key.
+/// The secrets the app holds: the ClassNotes session token and the Groq API key.
 public enum SecretKey: String, Sendable {
     case authToken = "com.classmate.notes.authToken"
     case groqAPIKey = "com.classmate.notes.groqAPIKey"

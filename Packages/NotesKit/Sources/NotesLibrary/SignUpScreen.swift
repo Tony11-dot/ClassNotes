@@ -3,15 +3,16 @@ import NotesDesignSystem
 import NotesServices
 import SwiftUI
 
-/// Making a new account from inside ClassNotes.
+/// Making a new ClassNotes account.
 ///
-/// The account it creates is a REAL ClassMate account, not a ClassNotes-only
-/// one. That is deliberate: everything the app already does — the library
-/// mirror, page renders, NOVA answering through `/classnotes/ai` — is
-/// authenticated with a ClassMate session, and a parallel account space would
-/// mean either building all of that a second time or quietly losing the notes
-/// made under it. Signing up here and signing in on ClassMate lands you in the
-/// same place, with the same notebooks in the ClassNotes tab.
+/// The account is ClassNotes' own (`/classnotes/auth/register`): an email, a
+/// password and a name, and nothing else is asked for. It used to create a REAL
+/// ClassMate SCHOOL account, because that backend was the only thing
+/// authenticating the library sync — so opening a notebook app meant enrolling
+/// in a school platform, and this screen had to explain an account the user had
+/// never heard of. The session a ClassNotes account gets is accepted by every
+/// endpoint the app already used (the library mirror, page renders, NOVA through
+/// `/classnotes/ai`), so none of that had to be rebuilt to cut the tie.
 public struct SignUpScreen: View {
     @Environment(AppServices.self) private var services
     @Environment(\.theme) private var theme
@@ -62,7 +63,7 @@ public struct SignUpScreen: View {
                 Text("Create your account")
                     .font(.dsTitle2.weight(.bold))
                     .foregroundStyle(theme.ink.color)
-                Text("One account for ClassNotes and ClassMate.")
+                Text("Your notebooks, synced to your account.")
                     .font(.dsSubheadline)
                     .foregroundStyle(theme.inkSecondary.color)
                     .multilineTextAlignment(.center)
