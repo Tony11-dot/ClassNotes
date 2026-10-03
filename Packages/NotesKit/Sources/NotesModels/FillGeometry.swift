@@ -432,6 +432,18 @@ public enum FillGeometry {
             bitsPerComponent: 8, bytesPerRow: width, space: space,
             bitmapInfo: CGImageAlphaInfo.none.rawValue
         ) else { return Mask(width: width, height: height) }
+        // A bitmap context's user space runs UP from the bottom-left, while row
+        // 0 of the buffer — and therefore `Mask[x, y]` — is the TOP. Drawing
+        // page coordinates straight in rasterizes the polygon upside down, and
+        // every reader of this mask then works in mirrored space: `punchHole`
+        // takes its centre from the page, so erasing the top of a fill cut a
+        // bite out of the bottom, and the outline and holes traced back out came
+        // back flipped. It stayed invisible because the fixtures that exercised
+        // it — a square, a dab in the dead centre — are symmetric about exactly
+        // the axis being mirrored. Flipping here puts the mask in the same
+        // top-down space `FillTool.inkMask` already produces.
+        context.translateBy(x: 0, y: CGFloat(height))
+        context.scaleBy(x: 1, y: -1)
         context.setFillColor(gray: 1, alpha: 1)
         context.beginPath()
         for ring in rings {

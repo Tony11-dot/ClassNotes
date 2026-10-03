@@ -380,6 +380,43 @@ struct FillHoleTests {
         #expect(painted(CGPoint(x: 30, y: 70), outline: again.outline, holes: again.holes))
     }
 
+    @Test("An erase lands where the eraser was, not mirrored to the other end")
+    func eraseIsNotVerticallyMirrored() throws {
+        // Every other fixture in this suite is symmetric about the horizontal
+        // axis — a square, a dab in the dead centre — which is exactly the axis
+        // that was being mirrored, so none of them could see it. A TALL region
+        // erased near its TOP can.
+        let tall = [
+            CGPoint(x: 0, y: 0), CGPoint(x: 60, y: 0),
+            CGPoint(x: 60, y: 300), CGPoint(x: 0, y: 300), CGPoint(x: 0, y: 0)
+        ]
+        let bitten = try #require(FillGeometry.erasedRegion(
+            outline: tall, holes: [], erasedPoints: [CGPoint(x: 30, y: 30)], radius: 14, scale: 1
+        ))
+        // The bite is where the eraser went…
+        #expect(!painted(CGPoint(x: 30, y: 30), outline: bitten.outline, holes: bitten.holes))
+        // …and NOT at the mirror of it, 30 points up from the bottom.
+        #expect(painted(CGPoint(x: 30, y: 270), outline: bitten.outline, holes: bitten.holes))
+    }
+
+    @Test("A hole keeps its own position through an erase elsewhere")
+    func holeKeepsItsPlace() throws {
+        let tall = [
+            CGPoint(x: 0, y: 0), CGPoint(x: 120, y: 0),
+            CGPoint(x: 120, y: 300), CGPoint(x: 0, y: 300), CGPoint(x: 0, y: 0)
+        ]
+        // A hole well off centre, so a flip would move it somewhere obvious.
+        let hole = [
+            CGPoint(x: 40, y: 40), CGPoint(x: 80, y: 40),
+            CGPoint(x: 80, y: 80), CGPoint(x: 40, y: 80)
+        ]
+        let after = try #require(FillGeometry.erasedRegion(
+            outline: tall, holes: [hole], erasedPoints: [CGPoint(x: 5, y: 295)], radius: 8, scale: 1
+        ))
+        #expect(!painted(CGPoint(x: 60, y: 60), outline: after.outline, holes: after.holes))
+        #expect(painted(CGPoint(x: 60, y: 240), outline: after.outline, holes: after.holes))
+    }
+
     @Test("Holes survive a round trip through the manifest, and old fills decode without any")
     func holesRoundTrip() throws {
         let element = PageElement(
