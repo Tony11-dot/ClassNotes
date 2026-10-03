@@ -34,6 +34,7 @@ public struct PaywallView: View {
                     featureList
                     productButtons
                     restoreButton
+                    purchaseTerms
                 }
                 .padding(20)
             }
@@ -160,6 +161,28 @@ public struct PaywallView: View {
             }
         }
     }
+
+    /// What App Store Review (3.1.2) and auto-renewal laws require beside the
+    /// buy buttons: that the subscription renews, how to cancel, and links to
+    /// the Terms and Privacy Policy.
+    private var purchaseTerms: some View {
+        VStack(spacing: 8) {
+            Text("The monthly subscription renews automatically at the price shown unless you cancel at least 24 hours before the end of the current period. Your Apple Account is charged on confirmation and at each renewal. Cancel anytime in Settings › your name › Subscriptions. The lifetime purchase is a one-time payment and does not renew.")
+                .font(.dsCaption)
+                .foregroundStyle(theme.inkSecondary.color)
+                .multilineTextAlignment(.center)
+            HStack(spacing: 16) {
+                Link("Terms of Use", destination: Self.termsURL)
+                Link("Privacy Policy", destination: Self.privacyURL)
+            }
+            .font(.dsCaption.weight(.semibold))
+            .foregroundStyle(theme.accent.color)
+        }
+        .padding(.top, 4)
+    }
+
+    private static let termsURL = URL(string: "https://tony11-dot.github.io/classmate-legal/terms.html")!
+    private static let privacyURL = URL(string: "https://tony11-dot.github.io/classmate-legal/privacy.html")!
 
     private func purchase(_ product: Product) {
         purchaseInFlight = true
