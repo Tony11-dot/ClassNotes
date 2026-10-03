@@ -164,6 +164,31 @@ public struct EditorScreen: View {
         .onChange(of: selectedElementID) { _, newValue in
             if newValue != pendingPasteElementID { pendingPasteElementID = nil }
         }
+        // Leaving the lasso PUTS DOWN whatever it was holding.
+        //
+        // The selection UI is only drawn while `tool == .lasso`, so switching
+        // tools made it vanish — but `lassoSelection` itself stayed set, and it
+        // carries two things that then go quietly wrong. Its `strokeIndices` are
+        // positions in the page's drawing, captured when the loop closed; erase
+        // a stroke before them with any other tool, come back to the lasso, and
+        // the old selection reappears pointing at different ink, so Delete,
+        // Move, Duplicate and Resize act on the wrong strokes. And a live
+        // selection sets `tracker.lassoHoldPageID`, which exists to stop live
+        // beautification reindexing a page mid-selection — left set, it disables
+        // beautification on that page for the rest of the session, with nothing
+        // on screen to suggest why.
+        .onChange(of: toolState.tool) { _, tool in
+            if tool != .lasso { lassoSelection = nil }
+        }
+        // Undo and Redo replace a page's drawing outright, and the rail's
+        // buttons sit outside the page so they are live while a selection is
+        // open. The marching ants would keep sitting there afterwards holding
+        // indices into a drawing that no longer exists — so Delete would take
+        // ink the user never circled. Putting the selection down is the honest
+        // answer: the ants disappear the moment the page changes under them.
+        .onChange(of: tracker.historyRevision) { _, _ in
+            lassoSelection = nil
+        }
     }
 
     private var editorSurface: some View {

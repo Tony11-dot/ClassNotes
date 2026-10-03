@@ -65,14 +65,22 @@ public final class ActiveCanvasTracker {
         return activeUndoManager?.canRedo ?? false
     }
 
+    /// Bumped ONLY by an actual undo or redo — not by every step pushed onto a
+    /// stack, which `undoRevision` already counts for the rail's buttons.
+    /// Anything holding positions into a page's drawing has to let go when the
+    /// drawing is replaced wholesale, and that is exactly what undo does.
+    public private(set) var historyRevision = 0
+
     public func undo() {
         activeUndoManager?.undo()
         undoRevision &+= 1
+        historyRevision &+= 1
     }
 
     public func redo() {
         activeUndoManager?.redo()
         undoRevision &+= 1
+        historyRevision &+= 1
     }
 
     /// Something changed on an undo stack — re-read `canUndo` / `canRedo`.
