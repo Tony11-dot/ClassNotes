@@ -307,7 +307,10 @@ Universal app, Swift 6 (strict concurrency), SwiftUI-first, Liquid Glass design 
   runs at launch BEFORE `pushAll` (a push first would send the stale local title
   over the rename), applies them via `NotebookRepository.applyRemoteChanges`, then
   acks so the server can purge its tombstones. Local deletion happens by EXPLICIT
-  id only — "absent from the server" must never delete anything.
+  id only — "absent from the server" must never delete anything — and an
+  explicit remote delete moves the notebook to the TRASH (`deletedAt`), never
+  off the disk: a mistake on the server must cost nothing a 30-day trash can't
+  give back.
 
 ## Milestones
 
@@ -678,3 +681,82 @@ ML feature — distinct from the shipped handwriting→text) stays a premium stu
 - Scribble-erase takes a stroke only when it crosses it AND covers at least
   `ScribbleDetector.minimumCoverage` of it (`erases`). Crossing alone took
   underlines and neighbouring lines the scrub merely grazed.
+
+## Architecture invariants (quality round: data safety)
+
+The programme, registers and measured numbers live in `docs/quality/`
+(README.md, registers.md, measurements.md). Format, storage, auth, privacy or
+pricing changes go through its change-control list first.
+
+- A manifest is NEVER overwritten by a guess. Every write renames the current
+  file to `manifest.backup.json` first (`writeManifest`), then lands the new one
+  atomically. A manifest that won't decode is MOVED to
+  `manifest.unreadable-<stamp>.json` (kept for good) and replaced by the fuller
+  of a SALVAGE decode (`.manifestSalvage`: every page and element that still
+  reads, via `LossyArray`) and the backup; only if neither reads is the page list
+  rebuilt from blobs. Rebuilding from blobs and writing over the original was
+  the old path, and it turned one unknown field into the loss of every image,
+  text box, fill, bookmark and page setting. Enums a newer build may extend
+  decode TOLERANTLY (`decodeTolerantly`), and a manifest stamped newer than this
+  build is copied to `manifest.v<N>.json` before this build first rewrites it.
+- The package describes itself (`info.json`, `NotebookInfo`), mirrored after
+  every row change, and launch RECONCILES the library with the disk
+  (`reconcileWithDisk`) before anything syncs or purges: every package with no
+  row comes back (by its description, or as "Recovered notebook"). It never
+  deletes. A SwiftData store that won't open is MOVED aside
+  (`ModelContainerFactory.makeRecovering`) and the library rebuilt from
+  packages; the in-memory store is the last resort and says so
+  (`LibraryNotice`). A library that silently came up empty is the failure this
+  exists to make impossible.
+- Deferred work never reads a SwiftData row LATER. `mirrorInfoSoon` snapshots
+  `NotebookInfo` synchronously and defers only the write: a row read after a
+  purge, or after its container is gone, is a trap, not an error.
+- Page delete is SOFT, inside the package: trash entry first (`trash.json`), then
+  the manifest, then the blob renamed to `<id>.drawing.deleted`. Any prefix of
+  that order is recoverable, and the orphan scan skips trashed ids so a blob
+  that hadn't moved isn't re-adopted as a phantom. Undo (`undoRecentDeletion`)
+  and Recently Deleted (`DeletedPagesSheet`) restore at the old index; expired
+  entries purge when the notebook opens. Every manifest load reconciles live
+  pages against the trash (`reviveLivePagesInTrash`) — a backup restored just
+  after a delete lists the page as live while its ink sits in the trash — and a
+  purge removes the page from the BACKUP too (`forgetInBackup`), or damage could
+  resurrect a page whose ink is gone. Both were found by the torture test.
+- Adopted orphan pages are APPENDED. Re-sorting the notebook by creation date
+  undid every page move the user had made.
+- The editor never blanks on a failed write. Every mutation goes through
+  `commit`, which keeps the current manifest when the store throws; element
+  edits that can't be saved are HELD (`unsavedElements`) and flushed before the
+  next operation; ink that can't be written stays staged and retries. Either
+  failure shows `SaveProblem` in plain words ("everything on screen is still
+  here"), with disk-full recognised however deeply the error is wrapped.
+- Autosave is BOUNDED: 600 ms debounce, but never more than 2 s behind
+  continuous writing (`maximumSaveLag`). The background flush runs under a
+  background-task assertion, and `flushPendingSave` returns the in-flight save
+  when nothing newer is unsaved — cancelling it left that write unprotected.
+- Page renders for LISTS (page manager, iPhone viewer) are lazy, sized to the
+  cell, made off the main thread and held in a cost-limited cache
+  (`PageRenderCache`, `PageRenderLayers`). Rendering every page at full size up
+  front is how large notebooks ran out of memory.
+- PDF and image import run OFF the document actor (`@concurrent`), one page at a
+  time inside an autorelease pool, then ONE manifest write that re-reads the
+  manifest fresh. Cancellation or failure removes every file the import wrote.
+  Inside the actor, every ink save waited for the whole import.
+- Closing the editor pushes only the pages whose fingerprint changed
+  (`PageSyncLedger`, per account, in Caches — derived, so a lost ledger costs
+  one full push).
+- Search matching is BYTE search (`memmem`) over text folded on both sides, and
+  snippets are cut when SHOWN (`Hit.snippet` is lazy). `String.contains` breaks
+  graphemes at every step and was measured at ~40× the cost for the same
+  answer. Folded indexes are cached in the store by file size and modification
+  time. The near-top ranking bonus is counted in CHARACTERS, not bytes.
+- `NeverLoseNotesTortureTests` is the storage layer's contract: seeded, replayable
+  runs of every document operation mixed with crashes, cut-off writes and damaged
+  manifests, with invariants checked after EVERY step. A storage change that
+  breaks it is wrong until proven otherwise; grow it when the format grows.
+- Performance work is MEASURED (`PerformanceBenchmarkTests` prints `BENCH`
+  lines; `Perf` signposts under `app.classnotes` cover open, load, save, render,
+  search, import and sync). Numbers go in `docs/quality/measurements.md`, with
+  device-only metrics marked unmeasured, never estimated.
+- No AI model is pinned in `Info.plist` (`AIModelConfigurationTests`): a model
+  string in config outlives the model.
+

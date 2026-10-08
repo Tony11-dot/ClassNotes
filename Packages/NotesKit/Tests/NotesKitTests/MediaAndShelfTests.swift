@@ -106,7 +106,7 @@ struct RemoteChangeTests {
         #expect(notebook.coverColorHex == "#2266DD")
     }
 
-    @Test("A delete in ClassMate removes the local notebook")
+    @Test("A delete in ClassMate moves the local notebook to the trash, never off the disk")
     func appliesDelete() async throws {
         let (repo, context, container) = makeRepository()
         _ = container
@@ -121,8 +121,11 @@ struct RemoteChangeTests {
         )
 
         #expect(applied == [doomed.id.uuidString])
-        let remaining = try context.fetch(FetchDescriptor<Notebook>())
-        #expect(remaining.map(\.title) == ["Keep me"])
+        let all = try context.fetch(FetchDescriptor<Notebook>())
+        #expect(all.filter { !$0.isTrashed }.map(\.title) == ["Keep me"])
+        // A server-side mistake must be survivable: the notebook is in the trash
+        // for the usual grace period, ink and all.
+        #expect(all.first { $0.id == doomed.id }?.isTrashed == true)
     }
 
     @Test("Nothing is deleted without an explicit id — an empty pull is a no-op")

@@ -25,6 +25,7 @@ public extension NotebookRepository {
             notebook.deletedAt = now
         }
         try context.save()
+        mirrorInfoSoon(notebooks)
         for notebook in notebooks {
             sync?.deleteNotebook(id: notebook.id)
         }
@@ -41,6 +42,7 @@ public extension NotebookRepository {
             notebook.deletedAt = nil
         }
         try context.save()
+        mirrorInfoSoon(notebooks)
         for notebook in notebooks {
             sync?.pushNotebook(snapshot(notebook))
         }
@@ -103,6 +105,7 @@ public extension NotebookRepository {
             notebook.isFavorite = isFavorite
         }
         try context.save()
+        mirrorInfoSoon(notebooks)
     }
 
     func toggleFavorite(_ notebook: Notebook) throws {

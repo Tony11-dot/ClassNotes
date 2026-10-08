@@ -125,6 +125,7 @@ public final class NotebookRepository {
         )
         context.insert(notebook)
         try context.save()
+        await mirrorInfo([notebook])
         sync?.pushNotebook(snapshot(notebook))
         return notebook
     }
@@ -233,6 +234,7 @@ public final class NotebookRepository {
         notebook.title = trimmed
         notebook.updatedAt = .now
         try context.save()
+        mirrorInfoSoon([notebook])
         sync?.pushNotebook(snapshot(notebook))
     }
 
@@ -244,6 +246,7 @@ public final class NotebookRepository {
     public func setViewOnly(_ isViewOnly: Bool, for notebook: Notebook) throws {
         notebook.isViewOnly = isViewOnly
         try context.save()
+        mirrorInfoSoon([notebook])
     }
 
     // MARK: - Destructive delete (used by remote changes and the trash)
@@ -285,6 +288,7 @@ public final class NotebookRepository {
             notebook.updatedAt = .now
         }
         try context.save()
+        mirrorInfoSoon(notebooks)
         for notebook in notebooks {
             sync?.pushNotebook(snapshot(notebook))
         }
@@ -293,6 +297,7 @@ public final class NotebookRepository {
     public func touch(_ notebook: Notebook) {
         notebook.updatedAt = .now
         try? context.save()
+        mirrorInfoSoon([notebook])
         sync?.pushNotebook(snapshot(notebook))
     }
 
@@ -322,6 +327,7 @@ public final class NotebookRepository {
         for notebook in unfiled { notebook.shelfID = nil }
         context.delete(shelf)
         try context.save()
+        mirrorInfoSoon(unfiled)
         // Delete the shelf, then re-push the notebooks it un-filed so their
         // `shelfId` clears on the backend too.
         sync?.deleteShelf(id: shelfID)
@@ -335,14 +341,20 @@ public final class NotebookRepository {
     /// anything missed is retried next launch).
     ///
     /// Deletions are by EXPLICIT id — a notebook the server has never heard of is
-    /// left completely alone. Nothing here pushes back: these values came FROM the
-    /// server, and echoing them would just race the acknowledgement.
+    /// left completely alone — and they go to the TRASH, exactly like a delete
+    /// made on this iPad. This used to destroy the package outright, so a bug on
+    /// the server, a mixed-up account or a mis-tap in the web tab took the ink
+    /// with it for good. In the trash it is restorable for
+    /// `TrashPolicy.retention`, and restoring pushes it back to the server.
+    /// Nothing here pushes back: these values came FROM the server, and echoing
+    /// them would just race the acknowledgement.
     @discardableResult
     public func applyRemoteChanges(_ changes: LibraryChanges) async -> [String] {
         let all = (try? context.fetch(FetchDescriptor<Notebook>())) ?? []
         var byID: [UUID: Notebook] = [:]
         for notebook in all { byID[notebook.id] = notebook }
         var applied: [String] = []
+        var touched: [Notebook] = []
 
         for raw in changes.deletedIds {
             guard let id = UUID(uuidString: raw) else { continue }
@@ -352,14 +364,9 @@ public final class NotebookRepository {
                 applied.append(raw)
                 continue
             }
-            do {
-                try await store.deleteDocument(id: id)
-                context.delete(notebook)
-                applied.append(raw)
-            } catch {
-                // Leave it unacknowledged; the next launch tries again.
-                continue
-            }
+            if notebook.deletedAt == nil { notebook.deletedAt = .now }
+            touched.append(notebook)
+            applied.append(raw)
         }
 
         for edit in changes.edited {
@@ -373,10 +380,12 @@ public final class NotebookRepository {
             if !edit.coverColorHex.isEmpty { notebook.coverColorHex = edit.coverColorHex }
             // A missing shelfId means unfiled — that's a real change, not "unknown".
             notebook.shelfID = edit.shelfId.flatMap(UUID.init(uuidString:))
+            touched.append(notebook)
             applied.append(edit.id)
         }
 
         if !applied.isEmpty { try? context.save() }
+        await mirrorInfo(touched)
         return applied
     }
 
@@ -405,6 +414,7 @@ public final class NotebookRepository {
         var byID: [UUID: Notebook] = [:]
         for notebook in all { byID[notebook.id] = notebook }
         var didChange = false
+        var touched: [Notebook] = []
         for entry in remote.notebooks {
             guard let id = UUID(uuidString: entry.id) else { continue }
             if let existing = byID[id] {
@@ -414,6 +424,7 @@ public final class NotebookRepository {
                 if !entry.coverColorHex.isEmpty { existing.coverColorHex = entry.coverColorHex }
                 existing.shelfID = entry.shelfId.flatMap(UUID.init(uuidString:))
                 existing.updatedAt = entry.updatedAt
+                touched.append(existing)
                 didChange = true
                 continue
             }
@@ -435,15 +446,18 @@ public final class NotebookRepository {
             notebook.isRemoteOnly = !existsLocally
             context.insert(notebook)
             byID[id] = notebook
+            if existsLocally { touched.append(notebook) }
             didChange = true
         }
         if didChange { try? context.save() }
+        await mirrorInfo(touched)
     }
 
     public func assign(_ notebook: Notebook, toShelf shelfID: UUID?) {
         notebook.shelfID = shelfID
         notebook.updatedAt = .now
         try? context.save()
+        mirrorInfoSoon([notebook])
         sync?.pushNotebook(snapshot(notebook))
     }
 }

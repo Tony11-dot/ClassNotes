@@ -13,9 +13,11 @@ struct ClassNotesApp: App {
     init() {
         CMFonts.registerIfNeeded()
         CMType.applyNavigationBarAppearance()
-        let container = ModelContainerFactory.make()
+        // Never an empty library: an unopenable database is moved aside and the
+        // library rebuilt from the notebooks on disk (see `makeRecovering`).
+        let (container, recovery) = ModelContainerFactory.makeRecovering()
         self.container = container
-        let services = AppServices(modelContainer: container)
+        let services = AppServices(modelContainer: container, storeRecovery: recovery)
         self._services = State(initialValue: services)
         services.start()
     }

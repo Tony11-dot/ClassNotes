@@ -255,7 +255,12 @@ public struct EditorScreen: View {
         .overlay(alignment: .trailing) { novaPanel }
         .overlay(alignment: .top) { noticeBanner }
         .overlay(alignment: .top) { liveBeautifyIndicator }
+        .overlay(alignment: .top) { saveProblemBanner }
+        .overlay(alignment: .top) { importProgressPill }
         .overlay(alignment: .bottom) { zoomIndicator }
+        .overlay(alignment: .bottom) { deletedPagesToast }
+        .animation(.spring(duration: 0.3), value: currentSaveProblem)
+        .animation(.spring(duration: 0.3), value: model.recentlyDeletedPages)
         .overlay { beautifyingOverlay }
         .animation(.spring(duration: 0.3), value: showPages)
         .animation(.spring(duration: 0.3), value: showNova)
@@ -278,10 +283,12 @@ public struct EditorScreen: View {
                 case .askNova: openNova()
                 }
             }
+            let opening = Perf.begin("Notebook open")
             model = NotebookEditorModel(notebookID: notebook.id, store: services.documentStore)
             // A notebook that should have a cover page gets one here if it was
             // made before covers were pages — once, then never again.
             await model.load(coverStyle: notebook.usesCoverPage ? notebook.pageStyle : nil)
+            Perf.end("Notebook open", opening)
             // Land on the page that was asked for, if it's still there. Checked
             // AFTER loading: the id came from an index or a bookmark written
             // earlier, and the page it names may since have been deleted.
@@ -327,9 +334,7 @@ public struct EditorScreen: View {
         .sheet(isPresented: $showScanner) {
             DocumentScannerView { images in
                 Task {
-                    if await model.importImages(images) != nil {
-                        editorNotice = "Scan added — annotate it with any tool."
-                    }
+                    editorNotice = Self.importNotice(await model.importImages(images), source: "scan")
                 }
             }
         }
@@ -590,24 +595,41 @@ extension EditorScreen {
 
     func handleImportedFile(_ result: Result<URL, Error>) {
         guard case .success(let url) = result else { return }
-        let accessing = url.startAccessingSecurityScopedResource()
-        defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-        guard let data = try? Data(contentsOf: url) else { return }
-        // A PDF becomes annotatable page backgrounds (draw on it with every tool);
-        // anything else drops in as an openable file chip.
-        if url.pathExtension.lowercased() == "pdf" {
-            Task {
-                if await model.importPDF(data) != nil {
-                    editorNotice = "PDF imported — draw on it with any tool."
-                } else {
-                    editorNotice = "Couldn't read that PDF."
-                }
+        Task {
+            // Read off the main thread: a long PDF is tens of megabytes, and
+            // reading it here froze the editor before the import even began.
+            let data = await Task.detached(priority: .userInitiated) { () -> Data? in
+                let accessing = url.startAccessingSecurityScopedResource()
+                defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+                return try? Data(contentsOf: url)
+            }.value
+            guard let data else {
+                editorNotice = "Couldn't open that file. Nothing in this notebook was changed."
+                return
             }
-        } else {
-            Task {
+            // A PDF becomes annotatable page backgrounds (draw on it with every
+            // tool); anything else drops in as an openable file chip.
+            if url.pathExtension.lowercased() == "pdf" {
+                editorNotice = Self.importNotice(await model.importPDF(data), source: "PDF")
+            } else {
                 await model.insertFile(data, displayName: url.lastPathComponent, fileExtension: url.pathExtension)
             }
         }
+    }
+
+    /// What to say after an import: what happened, whether anything is lost,
+    /// and what to do about it.
+    static func importNotice(_ outcome: ImportOutcome?, source: String) -> String {
+        guard let outcome else {
+            return "Couldn't import that \(source). Nothing in this notebook was changed. "
+                + "If it opens elsewhere, try exporting it again."
+        }
+        let name = source.prefix(1).uppercased() + source.dropFirst()
+        if outcome.skipped > 0 {
+            let pages = outcome.skipped == 1 ? "1 page" : "\(outcome.skipped) pages"
+            return "\(name) imported, but \(pages) couldn't be read and \(outcome.skipped == 1 ? "was" : "were") left out."
+        }
+        return "\(name) imported — draw on it with any tool."
     }
 
     func recognizeHandwriting() async {
@@ -710,31 +732,65 @@ extension EditorScreen {
         return renderer.uiImage ?? UIImage()
     }
 
-    /// Render every page to a PNG and push it up — with the page's playable and
-    /// openable attachments — so the ClassMate ClassNotes tab shows real content.
-    /// Best-effort; SyncService no-ops when signed out.
+    /// Push the pages that CHANGED — rendered, with their playable and openable
+    /// attachments — so the ClassMate ClassNotes tab shows real content.
+    ///
+    /// Every page used to be re-rendered (on the main thread) and re-uploaded on
+    /// every close: seconds of a frozen library for a long notebook, after one
+    /// stroke. Now each page position is fingerprinted — its ink file, its
+    /// record (elements, paper, size), the theme it renders in — and only
+    /// positions that differ from what the server last accepted
+    /// (`PageSyncLedger`) are rendered, one at a time with the main thread
+    /// handed back between them. Best-effort, and nothing at all when signed out.
     @MainActor
     func syncPageContent() {
-        let pages = model.pages
-        guard !pages.isEmpty else { return }
+        guard let accountID = services.auth.account?.id, services.auth.token != nil else { return }
+        let notebookID = notebook.id
+        let store = services.documentStore
         Task { @MainActor in
+            // Everything on disk first, so each fingerprint names a real file.
+            await tracker.flushAllPendingSavesAndWait()
+            let pages = model.pages
+            guard !pages.isEmpty else { return }
+            let span = Perf.begin("Page sync")
+            defer { Perf.end("Page sync", span) }
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = .sortedKeys
+            let renderKey = "\(theme.id)|\(paperTone)|\(notebook.title)|\(notebook.coverColorHex)|\(notebook.coverDesignRaw)"
+            var fingerprints: [String] = []
+            for page in pages {
+                let ink = await store.inkFingerprint(notebook: notebookID, page: page.id)
+                var hasher = Hasher()
+                hasher.combine((try? encoder.encode(page)) ?? Data())
+                hasher.combine(renderKey)
+                fingerprints.append("\(page.id.uuidString)|\(ink)|\(hasher.finalize())")
+            }
+            let ledger = PageSyncLedger.load(notebook: notebookID, accountID: accountID)
+            guard ledger.needsPush(fingerprints) else { return }
             var images: [NotebookPageImage] = []
-            for (index, page) in pages.enumerated() {
+            for index in ledger.changedIndices(fingerprints) {
+                let page = pages[index]
                 let ink = await inkForRender(page)
                 // JPEG, not PNG: a handwritten page's render is several times
                 // smaller as a JPEG, and the smaller the body the less likely
-                // the upload is still in flight when iOS suspends the app
-                // right after the editor closes — the same reasoning
-                // `SyncService.coverDataURL` already applies to covers.
-                guard let data = renderPageImage(page, scale: 1.5, drawing: ink)
-                    .jpegData(compressionQuality: 0.85) else { continue }
-                images.append(NotebookPageImage(
-                    pageIndex: index,
-                    dataUrl: "data:image/jpeg;base64,\(data.base64EncodedString())",
-                    attachments: attachments(for: page)
-                ))
+                // the upload is still in flight when iOS suspends the app.
+                if let data = renderPageImage(page, scale: 1.5, drawing: ink)
+                    .jpegData(compressionQuality: 0.85) {
+                    images.append(NotebookPageImage(
+                        pageIndex: index,
+                        dataUrl: "data:image/jpeg;base64,\(data.base64EncodedString())",
+                        attachments: attachments(for: page)
+                    ))
+                }
+                // Hand the main thread back between pages: the library is on
+                // screen and scrolling while this runs.
+                await Task.yield()
             }
-            services.sync.pushPageImages(notebookID: notebook.id, images: images)
+            if await services.sync.pushPageImages(
+                notebookID: notebookID, images: images, pageCount: pages.count
+            ) {
+                ledger.accepting(fingerprints).save(notebook: notebookID)
+            }
         }
     }
 

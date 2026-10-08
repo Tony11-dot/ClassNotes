@@ -36,6 +36,24 @@ public struct NotebookManifest: Codable, Sendable, Equatable {
         self.pages = pages
     }
 
+    private enum CodingKeys: String, CodingKey {
+        case version, pages
+    }
+
+    /// Strict by default. Under `.manifestSalvage` a page that won't decode is
+    /// skipped (its ink blob is still on disk, and the store's orphan scan
+    /// brings it back as a page) instead of failing the whole document.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if decoder.isSalvaging {
+            version = (try? container.decode(Int.self, forKey: .version)) ?? NotebookManifest.currentVersion
+            pages = (try? container.decode(LossyArray<PageRecord>.self, forKey: .pages))?.elements ?? []
+        } else {
+            version = try container.decode(Int.self, forKey: .version)
+            pages = try container.decode([PageRecord].self, forKey: .pages)
+        }
+    }
+
     /// The cover page, if this notebook has one.
     public var coverPage: PageRecord? { pages.first { $0.isCover } }
     public var hasCoverPage: Bool { coverPage != nil }
@@ -135,7 +153,13 @@ public struct PageRecord: Codable, Sendable, Equatable, Identifiable {
         id = try container.decode(UUID.self, forKey: .id)
         template = try container.decode(PageTemplate.self, forKey: .template)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
-        elements = try container.decodeIfPresent([PageElement].self, forKey: .elements) ?? []
+        if decoder.isSalvaging {
+            elements = (try? container.decodeIfPresent(
+                LossyArray<PageElement>.self, forKey: .elements
+            ))?.elements ?? []
+        } else {
+            elements = try container.decodeIfPresent([PageElement].self, forKey: .elements) ?? []
+        }
         margin = try container.decodeIfPresent(PageMargin.self, forKey: .margin) ?? .default
         paperColorHex = try container.decodeIfPresent(String.self, forKey: .paperColorHex)
         backgroundPayloadFilename = try container.decodeIfPresent(

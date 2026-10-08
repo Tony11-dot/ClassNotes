@@ -37,6 +37,20 @@ struct RootView: View {
                 .map { $0 ? .dark : .light }
         )
         .animation(.easeInOut(duration: 0.3), value: launchFinished)
+        // Said once, after the launch animation: notebooks put back in the
+        // library, or a library rebuilt from the notebooks on disk.
+        .alert(
+            services.libraryNotice?.title ?? "",
+            isPresented: Binding(
+                get: { launchFinished && services.libraryNotice != nil },
+                set: { if !$0 { services.libraryNotice = nil } }
+            ),
+            presenting: services.libraryNotice
+        ) { _ in
+            Button("OK") { services.libraryNotice = nil }
+        } message: { notice in
+            Text(notice.message)
+        }
     }
 
     @ViewBuilder

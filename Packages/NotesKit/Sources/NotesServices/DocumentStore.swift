@@ -25,9 +25,9 @@ import UIKit
 public actor DocumentStore {
     public static let fileExtension = "cmnote"
 
-    private let rootURL: URL
-    private let encoder: JSONEncoder
-    private let decoder = JSONDecoder()
+    let rootURL: URL
+    let encoder: JSONEncoder
+    let decoder = JSONDecoder()
     /// Page ids explicitly deleted this session, so a save already in flight
     /// when the deletion happens can never write that ink back — see
     /// `savePageData`'s doc comment for the exact race this closes. Unlike
@@ -37,11 +37,13 @@ public actor DocumentStore {
     /// for the life of this store. In-memory only — the race it guards
     /// against can only happen with an in-flight save from THIS run, and a
     /// fresh launch starts with no pending saves to race against.
-    private var deletedPageIDs: Set<UUID> = []
+    var deletedPageIDs: Set<UUID> = []
     /// Orders every page write and holds ink that hasn't reached disk yet — see
     /// `PageInkJournal`. Nonisolated so a canvas can stamp and stage its
     /// snapshot synchronously, in the same turn it reads the drawing.
     public nonisolated let journal = PageInkJournal()
+    /// Decoded `search.json`s, keyed by the file version they were read from.
+    var searchIndexCache: [UUID: (key: String, index: NoteSearch.PreparedIndex)] = [:]
 
     public init(rootURL: URL? = nil) {
         if let rootURL {
@@ -74,16 +76,27 @@ public actor DocumentStore {
         rootURL.appendingPathComponent("\(id.uuidString).\(Self.fileExtension)", isDirectory: true)
     }
 
-    private func manifestURL(for id: UUID) -> URL {
+    func manifestURL(for id: UUID) -> URL {
         documentURL(for: id).appendingPathComponent("manifest.json")
     }
 
-    private func pagesDirectory(for id: UUID) -> URL {
+    /// The manifest as it was before the most recent write — see `writeManifest`.
+    func manifestBackupURL(for id: UUID) -> URL {
+        documentURL(for: id).appendingPathComponent("manifest.backup.json")
+    }
+
+    func pagesDirectory(for id: UUID) -> URL {
         documentURL(for: id).appendingPathComponent("pages", isDirectory: true)
     }
 
-    private func pageURL(notebook: UUID, page: UUID) -> URL {
+    func pageURL(notebook: UUID, page: UUID) -> URL {
         pagesDirectory(for: notebook).appendingPathComponent("\(page.uuidString).drawing")
+    }
+
+    /// Where a deleted page's ink waits in the package's trash. The orphan scan
+    /// only adopts `.drawing`, so this is never mistaken for a live page.
+    func trashedPageURL(notebook: UUID, page: UUID) -> URL {
+        pageURL(notebook: notebook, page: page).appendingPathExtension("deleted")
     }
 
     /// Where image / file / audio payloads for page elements live.
@@ -168,38 +181,76 @@ public actor DocumentStore {
         }
     }
 
+    /// A manifest OR its backup counts: a crash between the two halves of a
+    /// manifest write leaves only the backup, and that is still a document.
     public func documentExists(id: UUID) -> Bool {
-        FileManager.default.fileExists(atPath: manifestURL(for: id).path)
+        let fm = FileManager.default
+        return fm.fileExists(atPath: manifestURL(for: id).path)
+            || fm.fileExists(atPath: manifestBackupURL(for: id).path)
     }
 
     // MARK: - Manifest
 
-    /// Loads the manifest, self-healing from whatever survives on disk.
+    /// Loads the manifest, self-healing from whatever survives on disk — and
+    /// never at the cost of the bytes that were there.
+    ///
+    /// In order: the manifest itself; if it won't decode, it is moved aside
+    /// (`manifest.unreadable-<time>.json`, kept for good) and the best of a
+    /// SALVAGE decode of it (every page and element that still reads) and the
+    /// last-known-good backup is used; only if neither reads is the page list
+    /// rebuilt from the ink blobs. Rebuilding straight from the blobs and writing
+    /// the result over the original was the old behaviour, and it turned one
+    /// unreadable field into the loss of every image, text box, fill, bookmark,
+    /// cover and page setting the notebook held.
     public func manifest(for id: UUID) throws -> NotebookManifest {
+        let span = Perf.begin("Manifest load")
+        defer { Perf.end("Manifest load", span) }
         let url = manifestURL(for: id)
         var manifest: NotebookManifest?
-        if let data = try? Data(contentsOf: url),
-           let decoded = try? decoder.decode(NotebookManifest.self, from: data) {
-            manifest = decoded
+        var recoveredFromDamage = false
+        if let data = try? Data(contentsOf: url) {
+            if let decoded = try? decoder.decode(NotebookManifest.self, from: data) {
+                manifest = decoded
+                preserveIfNewer(decoded, original: data, notebook: id)
+            } else {
+                quarantineManifest(notebook: id)
+                manifest = bestRecovery(salvaging: data, notebook: id)
+                recoveredFromDamage = true
+            }
+        } else if let backup = decodedBackup(notebook: id) {
+            // The write was cut off between keeping the old file and landing the
+            // new one: the backup IS the latest complete state.
+            manifest = backup
+            recoveredFromDamage = true
+        }
+        if recoveredFromDamage {
+            Perf.event("Manifest recovered")
         }
 
-        let orphans = orphanPageIDs(for: id, knownPages: manifest?.pages ?? [])
+        let trashed = Set(pageTrash(for: id).entries.map(\.id))
+        let orphans = orphanPageIDs(
+            for: id, knownPages: manifest?.pages ?? [], excluding: trashed
+        )
         // A manifest rebuilt from the blobs on disk can't know whether the
         // notebook had a cover page, so it's stamped pre-v7 and `ensureCoverPage`
         // decides — better than silently claiming "this notebook has no cover".
         var recovered = manifest ?? NotebookManifest(version: 6, pages: [])
         if !orphans.isEmpty {
-            recovered.pages += orphans.map { orphan in
+            // Adopted pages go at the END, oldest first. The pages the manifest
+            // already lists keep the order the user gave them: sorting the whole
+            // notebook by creation date (as this once did) undid every page
+            // move the user had ever made, the first time a stray blob turned up.
+            recovered.pages += orphans.sorted { $0.createdAt < $1.createdAt }.map { orphan in
                 PageRecord(id: orphan.id, template: .blank, createdAt: orphan.createdAt)
             }
-            recovered.pages.sort { $0.createdAt < $1.createdAt }
         }
         if recovered.pages.isEmpty {
             recovered.pages = [PageRecord(template: .blank)]
         }
+        reviveLivePagesInTrash(recovered.pages.map(\.id), notebook: id)
 
         // Persist the healed manifest so recovery happens once, not per read.
-        if manifest == nil || !orphans.isEmpty {
+        if manifest == nil || !orphans.isEmpty || recoveredFromDamage {
             try FileManager.default.createDirectory(
                 at: pagesDirectory(for: id),
                 withIntermediateDirectories: true
@@ -223,9 +274,21 @@ public actor DocumentStore {
     }
 
     /// Atomic manifest write — `internal` so the import extension can use it.
+    ///
+    /// The file being replaced is kept as `manifest.backup.json` first (a
+    /// `rename`, which replaces the old backup atomically and copies nothing).
+    /// What is replaced is always a manifest this store wrote or already
+    /// validated — `manifest(for:)` moves an unreadable one out of the way
+    /// before anything writes — so the backup is always a last-known-good copy.
+    /// A crash between the rename and the write leaves the backup alone, and
+    /// that is exactly the state before the interrupted write.
     func writeManifest(_ manifest: NotebookManifest, for id: UUID) throws {
         let data = try encoder.encode(manifest)
-        try data.write(to: manifestURL(for: id), options: .atomic)
+        let url = manifestURL(for: id)
+        if FileManager.default.fileExists(atPath: url.path) {
+            _ = Darwin.rename(url.path, manifestBackupURL(for: id).path)
+        }
+        try data.write(to: url, options: .atomic)
     }
 
     private struct Orphan {
@@ -233,8 +296,10 @@ public actor DocumentStore {
         let createdAt: Date
     }
 
-    private func orphanPageIDs(for id: UUID, knownPages: [PageRecord]) -> [Orphan] {
-        let known = Set(knownPages.map(\.id))
+    private func orphanPageIDs(
+        for id: UUID, knownPages: [PageRecord], excluding trashed: Set<UUID> = []
+    ) -> [Orphan] {
+        let known = Set(knownPages.map(\.id)).union(trashed)
         let contents = (try? FileManager.default.contentsOfDirectory(
             at: pagesDirectory(for: id),
             includingPropertiesForKeys: [.creationDateKey]
@@ -257,7 +322,9 @@ public actor DocumentStore {
     /// before it.
     public func pageData(notebook: UUID, page: UUID) -> Data? {
         if let staged = journal.pending(page: page) { return staged }
-        return try? Data(contentsOf: pageURL(notebook: notebook, page: page))
+        return Perf.measure("Page read") {
+            try? Data(contentsOf: pageURL(notebook: notebook, page: page))
+        }
     }
 
     /// Moves a page blob that no longer decodes out of the way, keeping it.
@@ -271,38 +338,32 @@ public actor DocumentStore {
     /// likely to be recoverable.
     public func quarantinePageData(notebook: UUID, page: UUID) {
         let source = pageURL(notebook: notebook, page: page)
-        let target = source.appendingPathExtension("unreadable")
         let fm = FileManager.default
         guard fm.fileExists(atPath: source.path) else { return }
+        // The first copy keeps the plain name; any later one gets a time stamp.
+        // Nothing unreadable is ever deleted — the bytes might still be
+        // recoverable by a later build, or by hand.
+        var target = source.appendingPathExtension("unreadable")
         if fm.fileExists(atPath: target.path) {
-            try? fm.removeItem(at: source)
-        } else {
-            try? fm.moveItem(at: source, to: target)
+            target = source.appendingPathExtension("unreadable-\(Self.fileStamp())")
         }
+        try? fm.moveItem(at: source, to: target)
     }
 
-    /// A no-op once `page` has been explicitly deleted — checked against
-    /// `deletedPageIDs`, not against manifest membership: a page can
+    /// Once `page` has been explicitly deleted, the write goes to the page's
+    /// place in the package trash instead of among the live pages. Checked
+    /// against `deletedPageIDs`, not against manifest membership: a page can
     /// legitimately have ink on disk before its manifest entry exists (a crash
     /// between the two, which `orphanPageIDs` exists to recover from), and
-    /// rejecting THAT write would silently lose ink the durability contract at
-    /// the top of this file promises never to lose.
+    /// rejecting THAT write would silently lose ink.
     ///
-    /// A canvas's own coordinator has no way to know its page was deleted out
-    /// from under it: SwiftUI tears down a `PKCanvasView` the instant its page
-    /// leaves `model.pages`, and that teardown (`dismantleUIView`) always
-    /// flushes whatever save was still pending — that's the ONE guarantee
-    /// nothing gets lost when a page scrolls out of the lazy stack. But
-    /// "always flush on teardown" and "a page just got deleted" are the same
-    /// event from the canvas's side, and flushing then simply rewrites the
-    /// `.drawing` blob `deletePage` just removed. The next manifest read
-    /// (`orphanPageIDs`) finds that file back on disk with no manifest entry
-    /// for it and — because that recovery exists to survive a genuinely
-    /// corrupt manifest — re-adopts it as a brand new BLANK page. That is
-    /// "delete ironically produces more pages" and "delete changes the page's
-    /// layout" from the same cause: a delete that looked like it worked, then
-    /// a stale save resurrecting the file, then self-healing mistaking the
-    /// resurrection for a page that always belonged.
+    /// A canvas's coordinator has no way to know its page was deleted out from
+    /// under it: SwiftUI tears down a `PKCanvasView` the instant its page leaves
+    /// `model.pages`, and that teardown (`dismantleUIView`) always flushes
+    /// whatever save was still pending. Written back as a live `.drawing`, the
+    /// orphan scan would re-adopt it as a brand new BLANK page — "delete
+    /// produces more pages". Written into the trash, it is the newest ink the
+    /// page had, which is what an Undo should bring back.
     ///
     /// `stamp` orders writes (see `PageInkJournal`): a write stamped older than
     /// one already on disk is dropped, so a slow save can never put back ink a
@@ -311,14 +372,23 @@ public actor DocumentStore {
     public func savePageData(
         _ data: Data, notebook: UUID, page: UUID, stamp: PageInkJournal.Stamp? = nil
     ) throws {
-        guard !deletedPageIDs.contains(page) else { return }
         let stamp = stamp ?? journal.stamp()
         guard journal.admits(stamp, page: page) else { return }
+        // A deleted page's last save — the canvas flushes as it is torn down —
+        // goes to the page's place in the trash, never back among the live
+        // pages: an Undo then restores the page with every stroke it had.
+        let target = deletedPageIDs.contains(page)
+            ? trashedPageURL(notebook: notebook, page: page)
+            : pageURL(notebook: notebook, page: page)
         try FileManager.default.createDirectory(
             at: pagesDirectory(for: notebook),
             withIntermediateDirectories: true
         )
-        try data.write(to: pageURL(notebook: notebook, page: page), options: .atomic)
+        // On failure the staged copy stays readable and the next save retries;
+        // the caller hears about it (the editor shows it).
+        try Perf.measure("Page save") {
+            try data.write(to: target, options: .atomic)
+        }
         journal.settle(page: page, stamp: stamp)
     }
 
@@ -340,39 +410,6 @@ public actor DocumentStore {
 
     public func coverImageData(for id: UUID) -> Data? {
         try? Data(contentsOf: coverImageURL(for: id))
-    }
-
-    // MARK: - Search index
-
-    /// The searchable text for this notebook's pages, cached beside the ink.
-    ///
-    /// Derived data: a missing or unreadable index is an EMPTY index, never an
-    /// error and never a repair. The worst a lost `search.json` can do is make a
-    /// notebook match on its title until it's read again.
-    public nonisolated func searchIndexURL(for id: UUID) -> URL {
-        documentURL(for: id).appendingPathComponent("search.json")
-    }
-
-    public func searchIndex(for id: UUID) -> SearchIndex {
-        guard let data = try? Data(contentsOf: searchIndexURL(for: id)),
-              let index = try? SearchIndexCoding.decoder.decode(SearchIndex.self, from: data)
-        else { return SearchIndex() }
-        return index
-    }
-
-    public func saveSearchIndex(_ index: SearchIndex, for id: UUID) throws {
-        try FileManager.default.createDirectory(
-            at: documentURL(for: id), withIntermediateDirectories: true
-        )
-        let data = try SearchIndexCoding.encoder.encode(index)
-        try data.write(to: searchIndexURL(for: id), options: .atomic)
-    }
-
-    /// When a page's ink was last written, so the indexer can skip pages that
-    /// haven't changed since it last read them.
-    public func pageModifiedAt(notebook: UUID, page: UUID) -> Date? {
-        try? pageURL(notebook: notebook, page: page)
-            .resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
     }
 
     // MARK: - Media payloads + page elements
@@ -507,7 +544,7 @@ public actor DocumentStore {
 
     /// Every media file a page actually uses: its own background (an imported
     /// PDF/scan page), plus each element's payload (image/file/audio).
-    private func mediaFilenames(of page: PageRecord) -> Set<String> {
+    func mediaFilenames(of page: PageRecord) -> Set<String> {
         var names = Set<String>()
         if let background = page.backgroundPayloadFilename { names.insert(background) }
         for element in page.elements {
@@ -516,34 +553,49 @@ public actor DocumentStore {
         return names
     }
 
-    /// Deletes a page — its manifest entry, its ink blob, AND any media it
-    /// alone owned. A notebook always keeps ≥1 page — deleting the last one
-    /// leaves a fresh blank page.
+    /// Deletes a page — into the package's TRASH, not off the disk.
     ///
-    /// The media sweep used to not exist at all: removing a page only ever
-    /// dropped its manifest entry and its `.drawing` blob, so a deleted
-    /// page's photos, scans, files and voice notes sat in `media/` forever —
-    /// gone from every list, permanently unreachable, but never actually off
-    /// disk. A duplicate keeps the SAME filenames as its source
-    /// (`duplicatePage`), so a filename is only safe to remove once no
-    /// surviving page references it — checked against `current.pages` AFTER
-    /// the deletion, not before.
+    /// The record goes to `trash.json` with its position, the ink blob is
+    /// renamed out of the live pages, and media is left exactly where it is:
+    /// `restorePage` undoes all of it, and `purgeExpiredPages` (or emptying the
+    /// trash) is the only step that removes anything. A notebook always keeps
+    /// ≥1 page — deleting the last one leaves a fresh blank page.
+    ///
+    /// Order matters for a crash part-way through: the trash entry lands first,
+    /// then the manifest without the page, then the blob is moved. Any prefix of
+    /// that leaves the page either still live or recoverable from the trash —
+    /// the orphan scan skips trashed ids, so a blob that hadn't moved yet is not
+    /// re-adopted as a phantom blank page.
     @discardableResult
     public func deletePage(notebook: UUID, page: UUID) throws -> NotebookManifest {
         var current = try manifest(for: notebook)
-        guard let removed = current.pages.first(where: { $0.id == page }) else { return current }
+        guard let index = current.pages.firstIndex(where: { $0.id == page }) else { return current }
+        let removed = current.pages[index]
+
+        var trash = pageTrash(for: notebook)
+        trash.entries.removeAll { $0.id == page }
+        trash.entries.append(PageTrash.Entry(page: removed, index: index, deletedAt: .now))
+        try writePageTrash(trash, for: notebook)
+
         deletedPageIDs.insert(page)
-        journal.forget(page: page)
-        current.pages.removeAll { $0.id == page }
+        current.pages.remove(at: index)
         if current.pages.isEmpty {
             current.pages = [PageRecord(template: .blank)]
         }
-        try? FileManager.default.removeItem(at: pageURL(notebook: notebook, page: page))
-        let stillNeeded = current.pages.reduce(into: Set<String>()) { $0.formUnion(mediaFilenames(of: $1)) }
-        for filename in mediaFilenames(of: removed) where !stillNeeded.contains(filename) {
-            try? FileManager.default.removeItem(at: mediaURL(notebook: notebook, filename: filename))
-        }
         try writeManifest(current, for: notebook)
+
+        // Ink not on disk yet goes with the page, so an Undo brings back every
+        // stroke; otherwise the file itself is moved.
+        let live = pageURL(notebook: notebook, page: page)
+        let trashed = trashedPageURL(notebook: notebook, page: page)
+        if let staged = journal.pending(page: page) {
+            try? staged.write(to: trashed, options: .atomic)
+            try? FileManager.default.removeItem(at: live)
+        } else if FileManager.default.fileExists(atPath: live.path) {
+            try? FileManager.default.removeItem(at: trashed)
+            try? FileManager.default.moveItem(at: live, to: trashed)
+        }
+        journal.forget(page: page)
         return current
     }
 
@@ -580,5 +632,12 @@ public actor DocumentStore {
         }
         try writeManifest(current, for: notebook)
         return current
+    }
+
+    /// A filename-safe time stamp, unique enough for files that are never
+    /// overwritten.
+    nonisolated static func fileStamp(_ date: Date = .now) -> String {
+        let millis = Int64(date.timeIntervalSince1970 * 1000)
+        return "\(millis)-\(UUID().uuidString.prefix(8))"
     }
 }

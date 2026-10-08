@@ -58,6 +58,7 @@ extension EditorScreen {
         }
         .overlay(alignment: .topTrailing) { exitFocusButton }
         .overlay(alignment: .top) { noticeBanner }
+        .overlay(alignment: .top) { saveProblemBanner }
         .ignoresSafeArea(edges: .bottom)
     }
 

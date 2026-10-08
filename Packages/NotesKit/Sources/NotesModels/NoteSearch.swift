@@ -84,14 +84,30 @@ public enum NoteSearch {
     public struct Hit: Sendable, Equatable, Identifiable {
         public var id: UUID { pageID }
         public let pageID: UUID
-        public let snippet: String
         /// Higher is better. Ranking is by score, then by page order.
         public let score: Int
+        private let source: HitSnippetSource
+
+        /// Cut when it's SHOWN, not when the page matched: a common word
+        /// matches hundreds of pages, a result row shows four, and building
+        /// every snippet up front was a third of what such a search cost.
+        public var snippet: String {
+            switch source {
+            case .fixed(let snippet): snippet
+            case .page(let text, let terms): NoteSearch.snippet(of: text, around: terms)
+            }
+        }
 
         public init(pageID: UUID, snippet: String, score: Int) {
             self.pageID = pageID
-            self.snippet = snippet
             self.score = score
+            self.source = .fixed(snippet)
+        }
+
+        init(pageID: UUID, text: String, terms: [String], score: Int) {
+            self.pageID = pageID
+            self.score = score
+            self.source = .page(text: text, terms: terms)
         }
     }
 
@@ -128,24 +144,73 @@ public enum NoteSearch {
     /// match sits near the top — a word in the first line of a page is usually
     /// what that page is about, and a word buried on line forty usually isn't.
     public static func search(_ query: String, in index: SearchIndex) -> [Hit] {
+        search(query, in: PreparedIndex(index))
+    }
+
+    /// An index with every page's text folded, kept by a searcher that holds
+    /// indexes in memory between keystrokes so each page is folded once.
+    public struct PreparedIndex: Sendable {
+        public let index: SearchIndex
+        let folded: [String]
+
+        public init(_ index: SearchIndex) {
+            self.index = index
+            self.folded = index.pages.map {
+                var folded = NoteSearch.fold($0.text)
+                folded.makeContiguousUTF8()
+                return folded
+            }
+        }
+    }
+
+    /// Characters from the top of a page within which a match earns the
+    /// "this is what the page is about" bonus.
+    static let nearTop = 80
+
+    public static func search(_ query: String, in prepared: PreparedIndex) -> [Hit] {
         let terms = terms(in: query)
         guard !terms.isEmpty else { return [] }
         var hits: [Hit] = []
-        for page in index.pages {
-            let folded = fold(page.text)
-            guard terms.allSatisfy({ folded.contains($0) }) else { continue }
-            var score = 0
-            var earliest = folded.count
-            for term in terms {
-                score += occurrences(of: term, in: folded)
-                if let range = folded.range(of: term) {
-                    earliest = min(earliest, folded.distance(from: folded.startIndex, to: range.lowerBound))
-                }
+        for (page, folded) in zip(prepared.index.pages, prepared.folded) {
+            // Byte search over text that is already folded on both sides.
+            // `String.contains` compares Character by Character — grapheme
+            // breaking on every step — and was measured at ~40x the cost of
+            // this for the same answer, which made it nearly all of a search.
+            let firsts = terms.map { byteOffset(of: $0, in: folded) }
+            guard firsts.allSatisfy({ $0 != nil }) else { continue }
+            var score = terms.reduce(0) { $0 + occurrences(of: $1, in: folded) }
+            if let earliest = firsts.compactMap({ $0 }).min(), isNearTop(earliest, in: folded) {
+                score += 2
             }
-            if earliest < 80 { score += 2 }
-            hits.append(Hit(pageID: page.id, snippet: snippet(of: page.text, around: terms), score: score))
+            hits.append(Hit(pageID: page.id, text: page.text, terms: terms, score: score))
         }
         return hits.sorted { $0.score > $1.score }
+    }
+
+    /// Where `needle` first occurs in `haystack` at or after byte `start`.
+    static func byteOffset(of needle: String, in haystack: String, from start: Int = 0) -> Int? {
+        var haystack = haystack
+        var needle = needle
+        return haystack.withUTF8 { hay in
+            needle.withUTF8 { pin in
+                guard let hayBase = hay.baseAddress, let pinBase = pin.baseAddress,
+                      !pin.isEmpty, hay.count - start >= pin.count
+                else { return nil }
+                guard let found = memmem(hayBase + start, hay.count - start, pinBase, pin.count)
+                else { return nil }
+                return hayBase.distance(to: found.assumingMemoryBound(to: UInt8.self))
+            }
+        }
+    }
+
+    /// Whether a match at `byteOffset` is within the first `nearTop`
+    /// CHARACTERS — not bytes, which would hold a page in a non-Latin script
+    /// to a fraction of the distance.
+    private static func isNearTop(_ byteOffset: Int, in folded: String) -> Bool {
+        if byteOffset < nearTop { return true }
+        guard let limit = folded.index(folded.startIndex, offsetBy: nearTop, limitedBy: folded.endIndex)
+        else { return true }
+        return folded.utf8.index(folded.utf8.startIndex, offsetBy: byteOffset) < limit
     }
 
     /// The text around the first term that appears, trimmed to one readable line.
@@ -184,13 +249,21 @@ public enum NoteSearch {
     }
 
     private static func occurrences(of term: String, in folded: String) -> Int {
-        guard !term.isEmpty else { return 0 }
+        let length = term.utf8.count
+        guard length > 0 else { return 0 }
         var count = 0
-        var searchStart = folded.startIndex
-        while let range = folded.range(of: term, range: searchStart..<folded.endIndex) {
+        var start = 0
+        while let found = byteOffset(of: term, in: folded, from: start) {
             count += 1
-            searchStart = range.upperBound
+            start = found + length
         }
         return count
     }
+}
+
+/// Where a hit's snippet comes from: given outright, or cut from the page's
+/// text on demand.
+private enum HitSnippetSource: Sendable, Equatable {
+    case fixed(String)
+    case page(text: String, terms: [String])
 }

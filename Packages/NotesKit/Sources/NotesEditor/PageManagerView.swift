@@ -1,7 +1,6 @@
 import ClassMateTheme
 import NotesDesignSystem
 import NotesModels
-import PencilKit
 import SwiftUI
 
 /// The page manager: a dockable side panel listing every page as a numbered
@@ -10,7 +9,6 @@ import SwiftUI
 /// picks several out for a batch action. Toggled by the rail's "Pages" button.
 struct PageManagerView: View {
     @Environment(\.theme) private var theme
-    @Environment(\.displayScale) private var displayScale
 
     let model: NotebookEditorModel
     /// The notebook's cover artwork, so the cover page's thumbnail looks like the
@@ -29,14 +27,8 @@ struct PageManagerView: View {
     /// showing checkmarks instead of jumping on tap, for the batch bar below.
     @State private var selectedPageIDs: Set<UUID>?
 
-    /// Each page's real content, rendered once when the manager opens — the
-    /// thumbnail used to be `PagePaperView` alone (the blank template), which
-    /// is exactly the same picture for every page of the same style. A page
-    /// picker where every thumbnail looks identical isn't a picker; this is
-    /// the same ink+elements composite the iPhone viewer and the PDF export
-    /// already use, just rendered small.
-    @State private var inkImages: [UUID: UIImage] = [:]
-    @State private var backgrounds: [UUID: UIImage] = [:]
+    /// The notebook's Recently Deleted pages, shown in their own sheet.
+    @State private var showTrash = false
 
     private var shownPages: [(index: Int, page: PageRecord)] {
         let all = Array(model.pages.enumerated()).map { (index: $0.offset, page: $0.element) }
@@ -78,7 +70,12 @@ struct PageManagerView: View {
             Rectangle().frame(width: 0.5).foregroundStyle(theme.separator.color)
         }
         .shadow(color: .black.opacity(0.18), radius: 20, x: 6)
-        .task { await loadThumbnails() }
+        .sheet(isPresented: $showTrash) {
+            DeletedPagesSheet(model: model) { id in
+                showTrash = false
+                onSelect(id)
+            }
+        }
     }
 
     private var header: some View {
@@ -106,6 +103,14 @@ struct PageManagerView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(bookmarksOnly ? "Show all pages" : "Show bookmarked pages only")
+                Button { showTrash = true } label: {
+                    Image(systemName: "trash")
+                        .foregroundStyle(theme.ink.color)
+                        .frame(width: 34, height: 34)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Recently deleted pages")
                 Button { isVisible = false } label: {
                     Image(systemName: "sidebar.left")
                         .foregroundStyle(theme.ink.color)
@@ -168,26 +173,27 @@ struct PageManagerView: View {
         PagePaperView(page: page, cover: cover)
     }
 
-    /// The full composite — paper, background, ink, elements — the same stack
-    /// `PageCompositeView` renders for export, at thumbnail size.
+    /// The page's real content — paper, background, ink, elements — rendered
+    /// for this cell when it appears, at thumbnail size, and let go when it
+    /// scrolls away. A thumbnail of the blank template alone would be the same
+    /// picture for every page; rendering every page at full size up front (what
+    /// this did) froze the panel and, past a few hundred pages, ran the app out
+    /// of memory.
     @ViewBuilder
     private func content(_ page: PageRecord, size: CGSize) -> some View {
+        let store = model.store
+        let notebookID = model.notebookID
+        let pageID = page.id
         paper(page)
-        if let background = backgrounds[page.id] {
-            Image(uiImage: background).resizable().scaledToFit()
-        }
-        PageContentView(
-            elements: page.elements, displaySize: size, logicalSize: page.logicalSize,
-            mediaURL: { model.store.mediaURL(notebook: model.notebookID, filename: $0) },
-            layer: .belowInk
-        )
-        if let ink = inkImages[page.id] {
-            Image(uiImage: ink).resizable().scaledToFit()
-        }
-        PageContentView(
-            elements: page.elements, displaySize: size, logicalSize: page.logicalSize,
-            mediaURL: { model.store.mediaURL(notebook: model.notebookID, filename: $0) },
-            layer: .aboveInk
+        PageRenderLayers(
+            page: page,
+            displaySize: size,
+            darkPaper: page.paperIsDark(theme: theme),
+            inkData: { await store.pageData(notebook: notebookID, page: pageID) },
+            backgroundURL: page.backgroundPayloadFilename.map {
+                store.mediaURL(notebook: notebookID, filename: $0)
+            },
+            mediaURL: { store.mediaURL(notebook: notebookID, filename: $0) }
         )
     }
 
@@ -297,22 +303,4 @@ struct PageManagerView: View {
         .accessibilityLabel("Add page")
     }
 
-    /// Renders every page's ink + background once, up front — the manager is
-    /// created fresh each time it's shown (`if showPages` in `EditorScreen`),
-    /// so this naturally re-runs on every open and never goes stale while a
-    /// notebook is being edited underneath it.
-    private func loadThumbnails() async {
-        for page in model.pages {
-            if let filename = page.backgroundPayloadFilename,
-               let data = await model.store.mediaData(notebook: model.notebookID, filename: filename),
-               let image = UIImage(data: data) {
-                backgrounds[page.id] = image
-            }
-            guard let data = await model.store.pageData(notebook: model.notebookID, page: page.id),
-                  let drawing = try? PKDrawing(data: data)
-            else { continue }
-            let bounds = CGRect(origin: .zero, size: page.logicalSize)
-            inkImages[page.id] = drawing.image(from: bounds, scale: displayScale)
-        }
-    }
 }

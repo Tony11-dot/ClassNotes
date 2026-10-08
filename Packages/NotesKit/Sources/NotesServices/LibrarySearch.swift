@@ -50,13 +50,15 @@ public extension SearchIndexer {
     /// `indexAll`, which the library runs in the background; until a notebook has
     /// been read, it still matches on its title.
     func search(_ query: String, across targets: [SearchTarget]) async -> [NotebookSearchResult] {
+        let span = Perf.begin("Search")
+        defer { Perf.end("Search", span) }
         let terms = NoteSearch.terms(in: query)
         guard !terms.isEmpty else { return [] }
 
         var results: [NotebookSearchResult] = []
         for target in targets {
             let matchesTitle = NoteSearch.matches(terms, in: target.title)
-            let index = await store.searchIndex(for: target.id)
+            let index = await store.preparedSearchIndex(for: target.id)
             let hits = NoteSearch.search(query, in: index)
             guard matchesTitle || !hits.isEmpty else { continue }
             results.append(NotebookSearchResult(

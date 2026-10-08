@@ -35,9 +35,23 @@ public final class AppServices {
     /// Reads handwriting into text so notebooks can be searched by what's
     /// written in them, not only by what they're called.
     public let searchIndexer: SearchIndexer
+    /// What opening the library database took, when it took more than opening
+    /// it — see `ModelContainerFactory.makeRecovering`.
+    public let storeRecovery: ModelContainerFactory.Recovery?
+    /// Something the user should hear about once: notebooks put back in the
+    /// library, or a library that had to be rebuilt. `nil` once dismissed.
+    public var libraryNotice: LibraryNotice?
+    /// The launch reconciliation, so everything that reads or syncs the library
+    /// can wait for it.
+    @ObservationIgnored private var reconciliation: Task<Void, Never>?
 
-    public init(modelContainer: ModelContainer, documentsRootURL: URL? = nil) {
+    public init(
+        modelContainer: ModelContainer,
+        documentsRootURL: URL? = nil,
+        storeRecovery: ModelContainerFactory.Recovery? = nil
+    ) {
         self.modelContainer = modelContainer
+        self.storeRecovery = storeRecovery
         let context = modelContainer.mainContext
         let store = DocumentStore(rootURL: documentsRootURL)
         let entitlements = EntitlementService()
@@ -96,11 +110,16 @@ public final class AppServices {
         settings.onChange = { [sync] snapshot in
             sync.pushSettings(snapshot)
         }
+        // Every package on disk is in the library BEFORE anything pulls, pushes
+        // or purges it. Sign-in doesn't wait — the UI needs it at once.
+        let reconciliation = Task { await reconcileLibrary() }
+        self.reconciliation = reconciliation
         Task {
             await auth.restore()
             await entitlements.refreshEntitlements()
             await entitlements.loadProducts()
             await syncSettings()
+            await reconciliation.value
             // PULL first — both halves, via `refreshRemoteLibrary`: notebooks
             // deleted/renamed/re-shelved elsewhere, and notebooks that exist on
             // the account but were created on another device. Pushing first
@@ -113,7 +132,17 @@ public final class AppServices {
             let snapshot = repository.fullSnapshot()
             sync.pushAll(notebooks: snapshot.notebooks, shelves: snapshot.shelves)
         }
-        Task { await runMaintenance() }
+        Task {
+            await reconciliation.value
+            await runMaintenance()
+        }
+    }
+
+    /// Puts any notebook package that has no row back in the library, and tells
+    /// the user when that — or rebuilding the database itself — happened.
+    private func reconcileLibrary() async {
+        let result = await repository.reconcileWithDisk()
+        libraryNotice = LibraryNotice(storeRecovery: storeRecovery, reconciliation: result)
     }
 
     /// When this last actually reached the network, so a foreground trigger
@@ -194,6 +223,52 @@ public final class AppServices {
             }
         } else if DeviceSettings.newer(mine, remote) == mine {
             sync.pushSettings(mine)
+        }
+    }
+}
+
+/// A one-time message about the library itself, written to answer the three
+/// questions every error should: what happened, is my work safe, what now.
+public struct LibraryNotice: Sendable, Equatable, Identifiable {
+    public var title: String
+    public var message: String
+    public var id: String { title + message }
+
+    public init(title: String, message: String) {
+        self.title = title
+        self.message = message
+    }
+
+    /// `nil` when there is nothing to say.
+    init?(storeRecovery: ModelContainerFactory.Recovery?, reconciliation: LibraryReconciliation) {
+        let found = reconciliation.recovered
+        let notebooks = found == 1 ? "1 notebook" : "\(found) notebooks"
+        switch storeRecovery {
+        case .movedAside:
+            self.init(
+                title: "Your library was rebuilt",
+                message: "ClassNotes couldn't open its library list, so it rebuilt it from the "
+                    + "notebooks on this iPad (\(notebooks) found). Your notes are safe. "
+                    + "Some settings, custom themes or NOVA chats may have been reset; the old "
+                    + "copy was kept on this device."
+            )
+        case .inMemoryOnly:
+            self.init(
+                title: "Library changes won't be kept",
+                message: "ClassNotes couldn't open its library list. Your notebooks are safe "
+                    + "and you can keep writing, but renames, shelves and new settings made "
+                    + "now won't be kept after you close the app. Restart ClassNotes to try again."
+            )
+        case nil:
+            guard found > 0 else { return nil }
+            self.init(
+                title: found == 1 ? "A notebook was put back" : "Notebooks were put back",
+                message: "ClassNotes found \(notebooks) on this iPad that "
+                    + (found == 1 ? "wasn't" : "weren't")
+                    + " showing in your library and put "
+                    + (found == 1 ? "it" : "them")
+                    + " back. Nothing was lost."
+            )
         }
     }
 }

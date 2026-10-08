@@ -2,6 +2,12 @@ Writing you can trust.
 
 - Everything you write stays written: page saves now land strictly in order, so a quick exit or a fast reopen can never lose your last strokes.
 - What you erase stays erased, even if you double-tap the Pencil to switch tools mid-erase.
+- Deleted a page by mistake? Tap Undo, or bring it back from Recently Deleted in the page manager for 30 days.
+- If a save ever fails (for example, your iPad is full), ClassNotes tells you plainly, keeps your work on screen and keeps retrying.
+- Your library rebuilds itself from your notebooks if its database is ever damaged, so notebooks never go missing.
+- A damaged notebook file is set aside and restored from its last good copy, keeping your images, text, bookmarks and page settings.
+- Notebooks deleted from the ClassMate tab now go to the Trash on your iPad instead of disappearing.
+- Large notebooks open, scroll and import PDFs smoothly, and you can keep writing while a PDF imports.
+- Search inside your notes is much faster.
 - The lasso holds exactly what you circled. Drag it and the content moves under your finger; circle again to reselect, tap the page to let go.
 - Scribble-to-erase only removes what you actually scrubbed out, never the line beside it.
-- A damaged page is set aside safely instead of being overwritten.

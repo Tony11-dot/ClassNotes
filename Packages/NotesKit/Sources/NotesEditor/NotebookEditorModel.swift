@@ -18,6 +18,16 @@ public final class NotebookEditorModel {
     public internal(set) var manifest: NotebookManifest?
     /// The page most recently drawn on / tapped — the target for insertions.
     public var focusedPageID: UUID?
+    /// A write that didn't reach disk and is being retried — shown by the editor.
+    /// See `NotebookEditorModelSafety.swift`.
+    public internal(set) var saveProblem: SaveProblem?
+    /// The pages the last delete took, for the editor's Undo toast.
+    public internal(set) var recentlyDeletedPages: [UUID] = []
+    /// How far a running PDF / photo import has got, for the editor's pill.
+    public internal(set) var importProgress: ImportProgress?
+    /// Element lists the editor shows but the disk doesn't have yet.
+    var unsavedElements: [UUID: [PageElement]] = [:]
+    var retryTask: Task<Void, Never>?
 
     let notebookID: UUID
     let store: DocumentStore
@@ -40,13 +50,16 @@ public final class NotebookEditorModel {
             manifest = try? await store.manifest(for: notebookID)
         }
         if focusedPageID == nil { focusedPageID = manifest?.pages.first?.id }
+        // Pages deleted more than the grace period ago go for good — here, when
+        // the notebook is opened, so it never costs anything at launch.
+        _ = try? await store.purgeExpiredPages(notebook: notebookID)
     }
 
     /// The cover page, when this notebook has one.
     public var coverPage: PageRecord? { manifest?.coverPage }
 
     public func addPage(template: PageTemplate) async {
-        manifest = try? await store.addPage(to: notebookID, template: template)
+        await commit { [store, notebookID] in try await store.addPage(to: notebookID, template: template) }
     }
 
     public func page(_ id: UUID?) -> PageRecord? {
@@ -72,13 +85,15 @@ public final class NotebookEditorModel {
         lineSpacingSteps: Int? = nil,
         pageSize: PageSize? = nil, orientation: PageOrientation? = nil
     ) async {
-        manifest = try? await store.updatePage(
-            notebook: notebookID, page: pageID, template: template, margin: margin,
-            paperColorHex: paperColorHex, clearPaperColor: clearPaperColor,
-            lineColorHex: lineColorHex, clearLineColor: clearLineColor,
-            lineSpacingSteps: lineSpacingSteps,
-            pageSize: pageSize, orientation: orientation
-        )
+        await commit { [store, notebookID] in
+            try await store.updatePage(
+                notebook: notebookID, page: pageID, template: template, margin: margin,
+                paperColorHex: paperColorHex, clearPaperColor: clearPaperColor,
+                lineColorHex: lineColorHex, clearLineColor: clearLineColor,
+                lineSpacingSteps: lineSpacingSteps,
+                pageSize: pageSize, orientation: orientation
+            )
+        }
     }
 
     /// Applies a whole style to one page — what the page-settings sheet edits.
@@ -99,24 +114,28 @@ public final class NotebookEditorModel {
 
     /// Copies one page's paper, rules and geometry onto every page.
     public func applyStyleToAllPages(from pageID: UUID) async {
-        manifest = try? await store.applyStyle(of: pageID, toAllPagesOf: notebookID)
+        await commit { [store, notebookID] in try await store.applyStyle(of: pageID, toAllPagesOf: notebookID) }
     }
 
+    /// Deletes a page into the notebook's trash; `undoRecentDeletion` brings it
+    /// back, and so does the page manager's Recently Deleted list.
     public func deletePage(_ pageID: UUID) async {
-        manifest = try? await store.deletePage(notebook: notebookID, page: pageID)
-        if focusedPageID == pageID { focusedPageID = manifest?.pages.first?.id }
+        await deletePages([pageID])
     }
 
     /// Deletes several pages at once — the page manager's Select tool. Each
-    /// page goes through the SAME single-page delete (manifest entry, ink
-    /// blob, orphaned media), one at a time, so two selected pages that share
-    /// a background image don't have it pulled out from under the other:
-    /// a filename is only ever removed once nothing LEFT references it,
-    /// re-checked fresh against whatever remains after every step.
+    /// goes through the same single-page delete, in page order, so undoing
+    /// them in reverse puts every one back exactly where it was.
     public func deletePages(_ pageIDs: Set<UUID>) async {
-        for id in pageIDs {
-            manifest = try? await store.deletePage(notebook: notebookID, page: id)
+        let ordered = pages.map(\.id).filter { pageIDs.contains($0) }
+        var deleted: [UUID] = []
+        for id in ordered {
+            let done = await commit { [store, notebookID] in
+                try await store.deletePage(notebook: notebookID, page: id)
+            }
+            if done { deleted.append(id) }
         }
+        recentlyDeletedPages = deleted
         if let focusedPageID, pageIDs.contains(focusedPageID) {
             self.focusedPageID = manifest?.pages.first?.id
         }
@@ -126,9 +145,11 @@ public final class NotebookEditorModel {
     /// NOT bookmarked — the flag marks a place, and a copy isn't that place.
     public func toggleBookmark(_ pageID: UUID, name: String? = nil) async {
         guard let page = page(pageID) else { return }
-        manifest = try? await store.setBookmark(
-            notebook: notebookID, page: pageID, isBookmarked: !page.isBookmarked, name: name
-        )
+        await commit { [store, notebookID] in
+            try await store.setBookmark(
+                notebook: notebookID, page: pageID, isBookmarked: !page.isBookmarked, name: name
+            )
+        }
     }
 
     /// The flagged pages in page order, for the bookmark jump menu.
@@ -144,11 +165,11 @@ public final class NotebookEditorModel {
     }
 
     public func duplicatePage(_ pageID: UUID) async {
-        manifest = try? await store.duplicatePage(notebook: notebookID, page: pageID)
+        await commit { [store, notebookID] in try await store.duplicatePage(notebook: notebookID, page: pageID) }
     }
 
     public func movePage(from: Int, to: Int) async {
-        manifest = try? await store.movePage(notebook: notebookID, from: from, to: to)
+        await commit { [store, notebookID] in try await store.movePage(notebook: notebookID, from: from, to: to) }
     }
 
     /// Inserts a page at `index`, inheriting `source`'s whole style (or the first
@@ -158,11 +179,15 @@ public final class NotebookEditorModel {
         let style = page(source)?.style
             ?? manifest?.pages.first?.style
             ?? PageStyle(template: .blank)
-        guard let result = try? await store.insertPage(
-            notebook: notebookID, at: index, style: style
-        ) else { return nil }
-        manifest = result.manifest
-        return result.page.id
+        guard await flushUnsavedElements() else { return nil }
+        do {
+            let result = try await store.insertPage(notebook: notebookID, at: index, style: style)
+            manifest = result.manifest
+            return result.page.id
+        } catch {
+            report(error)
+            return nil
+        }
     }
 
     /// Over-scroll past the last page → append a page inheriting the last one.
@@ -213,7 +238,7 @@ public final class NotebookEditorModel {
         elements.append(contentsOf: plan.inserts)
         current.pages[index].elements = elements
         manifest = current
-        _ = try? await store.setElements(elements, notebook: notebookID, page: pageID)
+        await saveElements(elements, notebook: notebookID, page: pageID)
         return BeautifyElements(before: before, after: elements)
     }
 
@@ -224,7 +249,7 @@ public final class NotebookEditorModel {
               let index = current.pages.firstIndex(where: { $0.id == pageID }) else { return }
         current.pages[index].elements = elements
         manifest = current
-        _ = try? await store.setElements(elements, notebook: notebookID, page: pageID)
+        await saveElements(elements, notebook: notebookID, page: pageID)
     }
 
     /// Drops beautified text onto the page at `origin` (the ink's top-left), so
@@ -261,7 +286,7 @@ public final class NotebookEditorModel {
               let index = current.pages.firstIndex(where: { $0.id == pageID }) else { return }
         current.pages[index].elements.append(element)
         manifest = current
-        _ = try? await store.setElements(current.pages[index].elements, notebook: notebookID, page: pageID)
+        await saveElements(current.pages[index].elements, notebook: notebookID, page: pageID)
     }
 
     public func updateElement(_ element: PageElement, on pageID: UUID) async {
@@ -270,7 +295,7 @@ public final class NotebookEditorModel {
               let elementIndex = current.pages[pageIndex].elements.firstIndex(where: { $0.id == element.id }) else { return }
         current.pages[pageIndex].elements[elementIndex] = element
         manifest = current
-        _ = try? await store.setElements(current.pages[pageIndex].elements, notebook: notebookID, page: pageID)
+        await saveElements(current.pages[pageIndex].elements, notebook: notebookID, page: pageID)
     }
 
     /// Adds a flooded region. Fills go in FIRST in the element list so anything
@@ -293,7 +318,7 @@ public final class NotebookEditorModel {
         )
         current.pages[index].elements.insert(element, at: 0)
         manifest = current
-        _ = try? await store.setElements(
+        await saveElements(
             current.pages[index].elements, notebook: notebookID, page: pageID
         )
     }
@@ -317,7 +342,7 @@ public final class NotebookEditorModel {
         }
         current.pages[pageIndex].elements.append(copy)
         manifest = current
-        _ = try? await store.setElements(
+        await saveElements(
             current.pages[pageIndex].elements, notebook: notebookID, page: pageID
         )
     }
@@ -342,7 +367,7 @@ public final class NotebookEditorModel {
         }
         current.pages[pageIndex].elements[elementIndex] = element
         manifest = current
-        _ = try? await store.setElements(
+        await saveElements(
             current.pages[pageIndex].elements, notebook: notebookID, page: pageID
         )
     }
@@ -367,7 +392,7 @@ public final class NotebookEditorModel {
         element.holes = element.holes.map { ring in ring.map { PagePoint($0.cgPoint.applying(transform)) } }
         current.pages[pageIndex].elements[elementIndex] = element
         manifest = current
-        _ = try? await store.setElements(
+        await saveElements(
             current.pages[pageIndex].elements, notebook: notebookID, page: pageID
         )
     }
@@ -377,7 +402,7 @@ public final class NotebookEditorModel {
               let pageIndex = current.pages.firstIndex(where: { $0.id == pageID }) else { return }
         current.pages[pageIndex].elements.removeAll { $0.id == elementID }
         manifest = current
-        _ = try? await store.setElements(current.pages[pageIndex].elements, notebook: notebookID, page: pageID)
+        await saveElements(current.pages[pageIndex].elements, notebook: notebookID, page: pageID)
     }
 
     // MARK: - OCR (handwriting → text)

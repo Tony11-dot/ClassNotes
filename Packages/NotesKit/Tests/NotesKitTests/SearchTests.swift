@@ -307,3 +307,43 @@ struct LibrarySearchRankingTests {
         #expect(strong.rank > weak.rank)
     }
 }
+
+@Suite("Search matching is byte-fast and still means the same thing")
+struct SearchMatchingTests {
+
+    private func index(_ texts: [String]) -> (SearchIndex, [UUID]) {
+        var index = SearchIndex(language: "en-US")
+        let ids = texts.map { _ in UUID() }
+        for (id, text) in zip(ids, texts) { index.set(text, for: id) }
+        return (index, ids)
+    }
+
+    @Test("The near-the-top bonus counts characters, so a Greek page isn't held to half the distance")
+    func nearTopCountsCharacters() {
+        // 60 Greek letters (two bytes each) then the term: 60 characters in,
+        // 120 bytes in. Both pages mention it once; both earn the bonus.
+        let greek = String(repeating: "α", count: 60) + " mitochondria"
+        let latin = String(repeating: "a", count: 60) + " mitochondria"
+        let (index, _) = index([greek, latin])
+        let hits = NoteSearch.search("mitochondria", in: index)
+        #expect(hits.map(\.score) == [3, 3])
+    }
+
+    @Test("Accents and case are folded on both sides, and repeats are counted without overlap")
+    func foldsAndCounts() {
+        let (index, ids) = index(["Café CAFÉ cafe", "aaaa", "nothing here"])
+        let cafe = NoteSearch.search("cafe", in: index)
+        #expect(cafe.map(\.pageID) == [ids[0]])
+        #expect(cafe.first?.score == 3 + 2)
+        #expect(NoteSearch.search("aa", in: index).first?.score == 2 + 2, "aaaa holds two, not three")
+        #expect(NoteSearch.search("cafe nothing", in: index).isEmpty, "every term must be on the page")
+    }
+
+    @Test("A snippet is still cut around the match when it's finally shown")
+    func lazySnippet() {
+        let (index, _) = index(["Intro text. " + String(repeating: "filler ", count: 30) + "the Krebs cycle runs here"])
+        let snippet = NoteSearch.search("krebs", in: index).first?.snippet ?? ""
+        #expect(snippet.contains("Krebs cycle"))
+        #expect(snippet.hasPrefix("…"))
+    }
+}

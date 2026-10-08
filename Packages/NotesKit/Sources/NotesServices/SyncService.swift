@@ -179,12 +179,29 @@ public final class SyncService {
     /// Upload rendered page images (PNG data URLs) so the ClassMate ClassNotes
     /// tab shows real content. The editor renders these on the main actor and
     /// hands them here; best-effort, fire-and-forget.
-    public func pushPageImages(notebookID: UUID, images: [NotebookPageImage]) {
-        guard let token = auth.token, !images.isEmpty else { return }
-        let client = client
-        protected("SyncPageImages") {
-            let body = NotebookPagesBody(pages: images, pageCount: images.count)
-            try? await client.putNotebookPages(id: notebookID.uuidString, body: body, token: token)
+    /// Uploads page renders and reports whether the server accepted them, so
+    /// the caller can record what the mirror now holds (`PageSyncLedger`).
+    /// `pageCount` is the notebook's whole length: the server prunes anything
+    /// past it, which is how a deleted page leaves the mirror. Runs under a
+    /// background-task assertion — the editor just closed, and the app is often
+    /// backgrounded straight after.
+    @discardableResult
+    public func pushPageImages(
+        notebookID: UUID, images: [NotebookPageImage], pageCount: Int
+    ) async -> Bool {
+        guard let token = auth.token else { return false }
+        #if canImport(UIKit)
+        let identifier = UIApplication.shared.beginBackgroundTask(withName: "SyncPageImages")
+        defer {
+            if identifier != .invalid { UIApplication.shared.endBackgroundTask(identifier) }
+        }
+        #endif
+        let body = NotebookPagesBody(pages: images, pageCount: pageCount)
+        do {
+            try await client.putNotebookPages(id: notebookID.uuidString, body: body, token: token)
+            return true
+        } catch {
+            return false
         }
     }
 

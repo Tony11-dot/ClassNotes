@@ -63,7 +63,7 @@ struct PageManagementTests {
         #expect(afterLast.pages.count == 1)
     }
 
-    @Test("Delete sweeps a page's own media, but never a filename another page still uses")
+    @Test("Purging a deleted page sweeps its own media, but never a filename another page still uses")
     func deleteSweepsOrphanedMedia() async throws {
         let (store, root) = makeStore()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -95,6 +95,11 @@ struct PageManagementTests {
         )
 
         _ = try await store.deletePage(notebook: id, page: firstPage)
+        // Deleting only moves the page to the trash — its media must survive so
+        // an Undo brings the page back whole.
+        #expect(await store.mediaData(notebook: id, filename: orphaned) != nil)
+
+        try await store.purgePages([firstPage], notebook: id)
 
         let remainingOrphan = await store.mediaData(notebook: id, filename: orphaned)
         let remainingShared = await store.mediaData(notebook: id, filename: shared)

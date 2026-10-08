@@ -386,3 +386,24 @@ struct LaunchSceneSizingTests {
         #expect(LaunchScene.fitted(aspectRatio: 2, into: .zero) == .zero)
     }
 }
+
+@Suite("The app's configuration doesn't pin a model")
+struct AIModelConfigurationTests {
+
+    @Test("Info.plist leaves the model to AIConfig, so a retired model can't outlive a release")
+    func plistDoesNotPinTheModel() throws {
+        // Packages/NotesKit/Tests/NotesKitTests/<this file> → the repository root.
+        let plist = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Config/Info.plist")
+        let data = try Data(contentsOf: plist)
+        let values = try #require(
+            try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
+        )
+        let pinned = values["SUPPORT_AI_MODEL"] as? String
+        #expect(pinned == nil || pinned == AIConfig.defaultModel)
+        #expect(values["SUPPORT_AI_BASE_URL"] != nil, "found the real app plist")
+    }
+}

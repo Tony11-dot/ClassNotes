@@ -85,7 +85,7 @@ extension NotebookEditorModel {
         edit(&elements)
         current.pages[pageIndex].elements = elements
         manifest = current
-        _ = try? await store.setElements(elements, notebook: notebookID, page: pageID)
+        await saveElements(elements, notebook: notebookID, page: pageID)
     }
 
     /// Shifting an element means shifting its frame AND any path it carries:

@@ -2,11 +2,13 @@ import ClassMateTheme
 import NotesDesignSystem
 import NotesModels
 import NotesServices
-import PencilKit
 import SwiftUI
 
 /// Read-only page viewer (iPhone). Renders ink via `PKDrawing.image(from:scale:)`
 /// composited over the page template — no `PKCanvasView`, no editing surface.
+/// Each page renders when it scrolls into view and lets go when it leaves
+/// (`PageRenderLayers`): rendering the whole notebook up front, at full size,
+/// is what made a long notebook freeze this screen and then run out of memory.
 ///
 /// Everything on a page still *works* here: pinch any page to zoom into it, play
 /// voice notes, open attached files, follow links, and lift a strip of tape to
@@ -22,9 +24,9 @@ public struct NotebookViewerScreen: View {
     private let openingPage: UUID?
 
     @State private var manifest: NotebookManifest?
-    @State private var inkImages: [UUID: UIImage] = [:]
-    @State private var backgrounds: [UUID: UIImage] = [:]
     @State private var zoomedPage: PageRecord?
+    /// A page rendered for the share sheet, made only when Share is chosen.
+    @State private var sharedPage: SharedPageImage?
 
     public init(notebook: Notebook, openingPage: UUID? = nil) {
         self.notebook = notebook
@@ -65,14 +67,31 @@ public struct NotebookViewerScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
         .fullScreenCover(item: $zoomedPage) { page in
-            ZoomablePageView(
-                page: page,
-                cover: coverPaper,
-                ink: inkImages[page.id],
-                background: backgrounds[page.id],
-                mediaURL: { services.documentStore.mediaURL(notebook: notebook.id, filename: $0) }
-            )
+            ZoomablePageView(page: page, cover: coverPaper) { size, pixelWidth in
+                layers(page, size: size, pixelWidth: pixelWidth)
+            }
         }
+        .sheet(item: $sharedPage) { shared in
+            ShareSheet(items: [shared.image])
+        }
+    }
+
+    /// Everything above the paper, loaded for as long as it's on screen.
+    private func layers(_ page: PageRecord, size: CGSize, pixelWidth: CGFloat? = nil) -> PageRenderLayers {
+        let store = services.documentStore
+        let notebookID = notebook.id
+        let pageID = page.id
+        return PageRenderLayers(
+            page: page,
+            displaySize: size,
+            darkPaper: page.paperIsDark(theme: theme),
+            inkData: { await store.pageData(notebook: notebookID, page: pageID) },
+            backgroundURL: page.backgroundPayloadFilename.map {
+                store.mediaURL(notebook: notebookID, filename: $0)
+            },
+            mediaURL: { store.mediaURL(notebook: notebookID, filename: $0) },
+            inkPixelWidth: pixelWidth
+        )
     }
 
     /// The cover is page one of the document but it isn't "page 1" — it's the
@@ -92,28 +111,7 @@ public struct NotebookViewerScreen: View {
         GeometryReader { geo in
             ZStack {
                 PagePaperView(page: page, cover: coverPaper)
-                if let background = backgrounds[page.id] {
-                    Image(uiImage: background).resizable().scaledToFit()
-                }
-                // Below/above split matches the editor: ink paints over
-                // images/files/text, tape stays above ink.
-                PageContentView(
-                    elements: page.elements,
-                    displaySize: geo.size,
-                    logicalSize: page.logicalSize,
-                    mediaURL: { services.documentStore.mediaURL(notebook: notebook.id, filename: $0) },
-                    layer: .belowInk
-                )
-                if let image = inkImages[page.id] {
-                    Image(uiImage: image).resizable().scaledToFit()
-                }
-                PageContentView(
-                    elements: page.elements,
-                    displaySize: geo.size,
-                    logicalSize: page.logicalSize,
-                    mediaURL: { services.documentStore.mediaURL(notebook: notebook.id, filename: $0) },
-                    layer: .aboveInk
-                )
+                layers(page, size: geo.size)
             }
         }
         .aspectRatio(PageTemplateView.aspectRatio(of: page.style), contentMode: .fit)
@@ -141,13 +139,12 @@ public struct NotebookViewerScreen: View {
             Button { zoomedPage = page } label: {
                 Label("Zoom in", systemImage: "plus.magnifyingglass")
             }
-            ShareLink(
-                item: exportImage(page),
-                preview: SharePreview(
-                    "\(notebook.title) — \(label)",
-                    image: exportImage(page)
-                )
-            ) {
+            // Rendered when chosen, not as part of every page's menu: a
+            // ShareLink needs its picture up front, which rendered a full page
+            // on the main thread for each page the list laid out.
+            Button {
+                Task { await share(page) }
+            } label: {
                 Label("Share page", systemImage: "square.and.arrow.up")
             }
         }
@@ -160,28 +157,28 @@ public struct NotebookViewerScreen: View {
             return
         }
         manifest = loaded
-        for page in loaded.pages {
-            if let filename = page.backgroundPayloadFilename,
-               let data = await services.documentStore.mediaData(
-                   notebook: notebook.id, filename: filename
-               ),
-               let image = UIImage(data: data) {
-                backgrounds[page.id] = image
-            }
-            guard let data = await services.documentStore.pageData(
-                notebook: notebook.id,
-                page: page.id
-            ), let drawing = try? PKDrawing(data: data) else { continue }
-            let bounds = CGRect(origin: .zero, size: page.logicalSize)
-            inkImages[page.id] = drawing.image(from: bounds, scale: displayScale)
-        }
     }
 
-    /// Full composite (paper + template + ink) for sharing.
-    private func exportImage(_ page: PageRecord) -> Image {
+    /// Full composite (paper + template + ink) for sharing, rendered when Share
+    /// is chosen.
+    private func share(_ page: PageRecord) async {
+        let store = services.documentStore
+        let background: UIImage? = if let filename = page.backgroundPayloadFilename {
+            await store.mediaData(notebook: notebook.id, filename: filename).flatMap(UIImage.init(data:))
+        } else {
+            nil
+        }
+        var ink: UIImage?
+        if let data = await store.pageData(notebook: notebook.id, page: page.id) {
+            ink = await PageRenderCache.shared.ink(
+                data, pageSize: page.logicalSize,
+                pixelWidth: page.logicalSize.width * displayScale,
+                darkPaper: page.paperIsDark(theme: theme)
+            )
+        }
         let composite = ZStack {
             PagePaperView(page: page, cover: coverPaper)
-            if let background = backgrounds[page.id] {
+            if let background {
                 Image(uiImage: background).resizable().scaledToFit()
             }
             PageContentView(
@@ -191,8 +188,8 @@ public struct NotebookViewerScreen: View {
                 mediaURL: { services.documentStore.mediaURL(notebook: notebook.id, filename: $0) },
                 layer: .belowInk
             )
-            if let image = inkImages[page.id] {
-                Image(uiImage: image).resizable().scaledToFit()
+            if let ink {
+                Image(uiImage: ink).resizable().scaledToFit()
             }
             PageContentView(
                 elements: page.elements,
@@ -208,24 +205,29 @@ public struct NotebookViewerScreen: View {
 
         let renderer = ImageRenderer(content: composite)
         renderer.scale = displayScale
-        if let uiImage = renderer.uiImage {
-            return Image(uiImage: uiImage)
+        if let image = renderer.uiImage {
+            sharedPage = SharedPageImage(image: image)
         }
-        return Image(systemName: "doc")
     }
+}
+
+private struct SharedPageImage: Identifiable {
+    let id = UUID()
+    let image: UIImage
 }
 
 /// One page, full screen, pinch and drag to zoom — for reading small handwriting
 /// on a phone. Voice notes, files, links and tape stay live at every zoom level.
-private struct ZoomablePageView: View {
+private struct ZoomablePageView<Layers: View>: View {
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.displayScale) private var displayScale
 
     let page: PageRecord
     let cover: CoverPaper?
-    let ink: UIImage?
-    let background: UIImage?
-    let mediaURL: (String) -> URL
+    /// The page's content at a display size, with its ink rendered this many
+    /// pixels wide — sharper than the list's render, so pinching reads.
+    let layers: (CGSize, CGFloat) -> Layers
 
     @State private var zoom: CGFloat = 1
     @State private var committedZoom: CGFloat = 1
@@ -238,25 +240,11 @@ private struct ZoomablePageView: View {
             GeometryReader { geo in
                 ZStack {
                     PagePaperView(page: page, cover: cover)
-                    if let background {
-                        Image(uiImage: background).resizable().scaledToFit()
-                    }
-                    PageContentView(
-                        elements: page.elements,
-                        displaySize: displaySize(in: geo.size),
-                        logicalSize: page.logicalSize,
-                        mediaURL: mediaURL,
-                        layer: .belowInk
-                    )
-                    if let ink {
-                        Image(uiImage: ink).resizable().scaledToFit()
-                    }
-                    PageContentView(
-                        elements: page.elements,
-                        displaySize: displaySize(in: geo.size),
-                        logicalSize: page.logicalSize,
-                        mediaURL: mediaURL,
-                        layer: .aboveInk
+                    // Three times the shown width (capped): enough detail for
+                    // the pinch, without a full-page bitmap per zoom step.
+                    layers(
+                        displaySize(in: geo.size),
+                        min(displaySize(in: geo.size).width * displayScale * 3, 4096)
                     )
                 }
                 .frame(width: displaySize(in: geo.size).width, height: displaySize(in: geo.size).height)

@@ -252,13 +252,53 @@ public final class ActiveCanvasTracker {
     /// gone with no error at all, which is exactly what "I wrote something and
     /// it was just gone" looks like from the outside. `EditorScreen` calls
     /// this on every `scenePhase` change away from `.active`.
+    ///
+    /// The writes run under a background-task assertion: a flush that starts as
+    /// the app is backgrounded is still an async hop to the store, and a process
+    /// suspended before that hop lands would lose exactly the ink the flush
+    /// existed to keep.
     public func flushAllPendingSaves() {
-        for entry in canvases.values {
+        let writes = canvases.values.compactMap { entry -> Task<Void, Never>? in
             guard let canvas = entry.view as? PageCanvasView,
                   let coordinator = canvas.delegate as? CanvasPageView.Coordinator
-            else { continue }
-            coordinator.flushPendingSave()
+            else { return nil }
+            return coordinator.flushPendingSave()
         }
+        guard !writes.isEmpty else { return }
+        let assertion = UIApplication.shared.beginBackgroundTask(withName: "Save pages")
+        Task { @MainActor in
+            for write in writes { await write.value }
+            if assertion != .invalid { UIApplication.shared.endBackgroundTask(assertion) }
+        }
+    }
+
+    /// `flushAllPendingSaves`, then waits until every write has landed.
+    public func flushAllPendingSavesAndWait() async {
+        let writes = canvases.values.compactMap { entry -> Task<Void, Never>? in
+            guard let canvas = entry.view as? PageCanvasView,
+                  let coordinator = canvas.delegate as? CanvasPageView.Coordinator
+            else { return nil }
+            return coordinator.flushPendingSave()
+        }
+        for write in writes { await write.value }
+    }
+
+    // MARK: - Save health
+
+    /// Pages whose latest ink didn't reach disk, and why. The ink itself is
+    /// safe meanwhile — staged in the store's journal, readable by any reload —
+    /// and each page keeps retrying; the editor shows `saveProblem` until it
+    /// lands.
+    private(set) var failedSaves: [UUID: SaveProblem] = [:]
+
+    public var saveProblem: SaveProblem? { failedSaves.values.first }
+
+    func saveSucceeded(_ pageID: UUID) {
+        if failedSaves[pageID] != nil { failedSaves[pageID] = nil }
+    }
+
+    func saveFailed(_ pageID: UUID, _ error: Error) {
+        failedSaves[pageID] = SaveProblem(error)
     }
 }
 
@@ -641,6 +681,15 @@ struct CanvasPageView: UIViewRepresentable {
         /// rail is how a real erase was mistaken for unexplained loss and the
         /// erased ink put straight back.
         var touchIsErasing = false
+        /// The page holds ink the disk doesn't have yet. Set by every change
+        /// and rewrite, cleared when a save takes its snapshot, and set again if
+        /// that save fails — so a flush (scrolling the page away, leaving, going
+        /// to the background) only encodes a page that actually needs it, instead
+        /// of re-serialising every page it tears down on the main thread.
+        var hasUnsavedInk = false
+        /// When the oldest change not yet on disk was made — see `maximumSaveLag`.
+        var firstUnsavedChangeAt: ContinuousClock.Instant?
+        var saveRetryTask: Task<Void, Never>?
         private var inkPassTask: Task<Void, Never>?
         /// The page as of the last committed history step. Every step is the pair
         /// (this, what the page became) — which is why Redo works as well as Undo.
@@ -769,9 +818,11 @@ struct CanvasPageView: UIViewRepresentable {
 
         func loadDrawing() {
             Task {
+                let span = Perf.begin("Page load")
+                defer { Perf.end("Page load", span) }
                 var stored = PKDrawing()
                 if let data = await store.pageData(notebook: notebookID, page: pageID) {
-                    if let drawing = try? PKDrawing(data: data) {
+                    if let drawing = Perf.measure("Page decode", { try? PKDrawing(data: data) }) {
                         stored = drawing
                     } else {
                         // Showing it blank is unavoidable; letting the next stroke
@@ -1165,6 +1216,7 @@ struct CanvasPageView: UIViewRepresentable {
         /// in place" from "actually lost" — only a caller that knows which
         /// specific content is expected to persist unchanged can.
         func replace(_ drawing: PKDrawing, on canvas: PKCanvasView, allowsFewerStrokes: Bool = false) {
+            hasUnsavedInk = true
             isRewriting = true
             rewriteGeneration &+= 1
             canvas.drawing = drawing
@@ -1331,14 +1383,31 @@ struct CanvasPageView: UIViewRepresentable {
 
         // MARK: Saving
 
+        /// How long the hand has to rest before the page is written.
+        static let saveDebounce: Duration = .milliseconds(600)
+        /// The most the disk may fall behind while the hand keeps moving.
+        ///
+        /// The debounce restarts with every change, so a student writing without
+        /// a 600 ms pause — a fast lecture, a page of shading — postponed the save
+        /// for as long as they kept going, and a crash then took all of it. Once
+        /// the oldest unsaved change is this old, the next change saves at once
+        /// instead of waiting for a pause (the encode itself runs off the main
+        /// thread, so this costs the hand nothing).
+        static let maximumSaveLag: Duration = .seconds(2)
+
         /// Debounced page save. The drawing is serialized INSIDE the task, once the
-        /// hand has been still for 600 ms — doing it per change meant every stroke
-        /// paid `dataRepresentation()` for the whole page on the main thread, so
-        /// writing got slower the more there was on the page.
+        /// hand has been still for `saveDebounce` — doing it per change meant every
+        /// stroke paid `dataRepresentation()` for the whole page on the main thread,
+        /// so writing got slower the more there was on the page.
         func scheduleSave() {
             saveTask?.cancel()
+            hasUnsavedInk = true
+            let now = ContinuousClock.now
+            let oldest = firstUnsavedChangeAt ?? now
+            firstUnsavedChangeAt = oldest
+            let delay = now - oldest >= Self.maximumSaveLag ? Duration.zero : Self.saveDebounce
             saveTask = Task { [weak self] in
-                try? await Task.sleep(for: .milliseconds(600))
+                if delay > .zero { try? await Task.sleep(for: delay) }
                 guard !Task.isCancelled, let self, self.loaded, let canvas = self.canvas else { return }
                 let healed = self.healGuardedShape(canvas.drawing)
                 // The guard is one-shot: once this save cycle has looked (and, if
@@ -1350,42 +1419,84 @@ struct CanvasPageView: UIViewRepresentable {
                     self.replace(healed, on: canvas)
                 }
                 // Serializing a full page is real CPU work — geometry encoding
-                // that can run tens of ms on a busy page — and doing it here,
-                // on the main actor, held up the run loop for however long it
-                // took. This fires 600ms after the hand goes still, which is
-                // exactly the ordinary pause between words: the ink pass
-                // resuming main-thread work right as the hand comes back down
-                // is a documented way for UIKit to coalesce or drop the
-                // Pencil's own touch batches, indistinguishable from the page
-                // side from a letter silently missing a stretch of itself —
-                // and unlike a whole stroke disappearing, there's no count
-                // drop for the loss guard above to catch. Hopping off-actor
-                // for the encode itself doesn't change when the save lands.
+                // that can run tens of ms on a busy page — and doing it on the
+                // main actor held up the run loop for however long it took, right
+                // as the hand comes back down after a pause: a documented way for
+                // UIKit to coalesce or drop the Pencil's own touch batches. Hopping
+                // off-actor for the encode doesn't change when the save lands.
                 //
                 // Stamped HERE, at the snapshot: a flush taken after this point
                 // is newer and must win even if this write arrives after it.
                 let stamp = self.store.journal.stamp()
-                let data = await Task.detached(priority: .utility) { healed.dataRepresentation() }.value
+                self.hasUnsavedInk = false
+                self.firstUnsavedChangeAt = nil
+                let data = await Task.detached(priority: .utility) {
+                    Perf.measure("Page encode") { healed.dataRepresentation() }
+                }.value
                 self.store.journal.stage(data, page: self.pageID, stamp: stamp)
-                try? await self.store.savePageData(
-                    data, notebook: self.notebookID, page: self.pageID, stamp: stamp
-                )
+                await self.write(data, stamp: stamp)
             }
         }
 
         /// Writes the page NOW. Stamped and staged synchronously, so a page that
         /// reloads before the write lands still reads this ink, and an older
-        /// save still in flight can't land on top of it.
-        func flushPendingSave() {
+        /// save still in flight can't land on top of it. Returns the write, so a
+        /// caller that must outlive it (going to the background) can wait. With
+        /// nothing new to write, that is the debounced save still landing, if
+        /// any — it took its snapshot already, so it can't be cancelled, but it
+        /// still has to be waited for.
+        @discardableResult
+        func flushPendingSave() -> Task<Void, Never>? {
+            guard loaded, let canvas = self.canvas else { return nil }
+            guard hasUnsavedInk else { return saveTask }
             saveTask?.cancel()
-            guard loaded, let canvas = self.canvas else { return }
             let drawing = healGuardedShape(canvas.drawing)
             guardedShapeStroke = nil
             let stamp = store.journal.stamp()
-            let data = drawing.dataRepresentation()
+            hasUnsavedInk = false
+            firstUnsavedChangeAt = nil
+            let data = Perf.measure("Page encode") { drawing.dataRepresentation() }
             store.journal.stage(data, page: pageID, stamp: stamp)
-            Task { [store, notebookID, pageID] in
-                try? await store.savePageData(data, notebook: notebookID, page: pageID, stamp: stamp)
+            return Task { [weak self, store, notebookID, pageID, tracker] in
+                if let self {
+                    await self.write(data, stamp: stamp)
+                } else {
+                    // The page was torn down; the write still has to land.
+                    do {
+                        try await store.savePageData(data, notebook: notebookID, page: pageID, stamp: stamp)
+                        tracker.saveSucceeded(pageID)
+                    } catch {
+                        tracker.saveFailed(pageID, error)
+                    }
+                }
+            }
+        }
+
+        /// The one place this page's ink goes to disk. A failure is reported and
+        /// retried; the bytes stay staged in the journal meanwhile, so nothing
+        /// that reads the page can see an older copy.
+        private func write(_ data: Data, stamp: PageInkJournal.Stamp) async {
+            do {
+                try await store.savePageData(data, notebook: notebookID, page: pageID, stamp: stamp)
+                tracker.saveSucceeded(pageID)
+                saveRetryTask?.cancel()
+                saveRetryTask = nil
+            } catch {
+                tracker.saveFailed(pageID, error)
+                hasUnsavedInk = true
+                scheduleSaveRetry()
+            }
+        }
+
+        /// Tries again every few seconds until the page is on disk — freeing up
+        /// space is all the user should have to do.
+        private func scheduleSaveRetry() {
+            guard saveRetryTask == nil else { return }
+            saveRetryTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(5))
+                guard let self, !Task.isCancelled else { return }
+                self.saveRetryTask = nil
+                if self.hasUnsavedInk { self.scheduleSave() }
             }
         }
 

@@ -9,8 +9,9 @@
 	<string>https://pacific-enchantment-production-7a80.up.railway.app/ai</string>
 	<key>SUPPORT_AI_MODE</key>
 	<string>proxy</string>
-	<key>SUPPORT_AI_MODEL</key>
-	<string>llama-3.3-70b-versatile</string>
+	<!-- No SUPPORT_AI_MODEL here: the model is AIConfig.defaultModel, kept in
+	     step with ClassMate's server. A model pinned in the plist outlives the
+	     model — this one pinned llama-3.3-70b-versatile after Groq retired it. -->
 	<!-- App uses only standard HTTPS/TLS + Keychain (exempt encryption), so it
 	     is exempt from export compliance. Declaring it here skips the App Store
 	     Connect prompt on every upload. -->

@@ -20,7 +20,7 @@ extension NotebookEditorModel {
 
     public func insertImage(_ data: Data, fileExtension: String, renderAboveInk: Bool = false) async {
         guard let pageID = existingTargetPageID,
-              let filename = try? await store.saveMedia(data, notebook: notebookID, fileExtension: fileExtension) else { return }
+              let filename = await storeMedia(data, notebook: notebookID, fileExtension: fileExtension) else { return }
         let pageSize = page(pageID)?.logicalSize ?? PageGeometry.size
         let size = Self.fittedImageSize(data, in: pageSize)
         let (x, y) = center(width: size.width, height: size.height, on: pageID)
@@ -41,7 +41,7 @@ extension NotebookEditorModel {
         _ data: Data, fileExtension: String, frame: CGRect, on pageID: UUID, renderAboveInk: Bool = false
     ) async {
         guard manifest?.pages.contains(where: { $0.id == pageID }) == true,
-              let filename = try? await store.saveMedia(data, notebook: notebookID, fileExtension: fileExtension)
+              let filename = await storeMedia(data, notebook: notebookID, fileExtension: fileExtension)
         else { return }
         await append(PageElement(
             kind: .image, x: frame.minX, y: frame.minY, width: frame.width, height: frame.height,
@@ -49,38 +49,55 @@ extension NotebookEditorModel {
         ), to: pageID)
     }
 
-    /// Imports a PDF: appends one annotatable page per PDF page (each with the
-    /// rendered page as its background). Returns the first imported page id.
+    /// Imports a PDF: adds one annotatable page per PDF page (each with the
+    /// rendered page as its background) after the focused page. Progress is
+    /// published as `importProgress` while it runs; the user can keep writing.
     @discardableResult
-    public func importPDF(_ data: Data) async -> UUID? {
-        let insertAt = focusedPageID.flatMap { id in
-            manifest?.pages.firstIndex(where: { $0.id == id }).map { $0 + 1 }
+    public func importPDF(_ data: Data) async -> ImportOutcome? {
+        await runImport { [store, notebookID] insertAt, progress in
+            try await store.importPDF(data: data, notebook: notebookID, at: insertAt, progress: progress)
         }
-        guard let result = try? await store.importPDF(data: data, notebook: notebookID, at: insertAt) else {
-            return nil
-        }
-        manifest = result.manifest
-        if let id = result.firstPageID { focusedPageID = id }
-        return result.firstPageID
     }
 
     /// Imports photos / scanned pages as annotatable page backgrounds.
     @discardableResult
-    public func importImages(_ images: [Data]) async -> UUID? {
+    public func importImages(_ images: [Data]) async -> ImportOutcome? {
+        await runImport { [store, notebookID] insertAt, progress in
+            try await store.importImages(images, notebook: notebookID, at: insertAt, progress: progress)
+        }
+    }
+
+    private func runImport(
+        _ operation: (Int?, @escaping @Sendable (Int, Int) -> Void) async throws -> DocumentStore.ImportResult
+    ) async -> ImportOutcome? {
+        // The import rewrites the manifest from disk: held edits go first.
+        guard await flushUnsavedElements() else { return nil }
         let insertAt = focusedPageID.flatMap { id in
             manifest?.pages.firstIndex(where: { $0.id == id }).map { $0 + 1 }
         }
-        guard let result = try? await store.importImages(
-            images, notebook: notebookID, at: insertAt
-        ) else { return nil }
-        manifest = result.manifest
-        if let id = result.firstPageID { focusedPageID = id }
-        return result.firstPageID
+        importProgress = ImportProgress(done: 0, total: 0)
+        defer { importProgress = nil }
+        do {
+            let result = try await operation(insertAt) { done, total in
+                Task { @MainActor [weak self] in
+                    guard self?.importProgress != nil else { return }
+                    self?.importProgress = ImportProgress(done: done, total: total)
+                }
+            }
+            manifest = result.manifest
+            if let id = result.firstPageID { focusedPageID = id }
+            return ImportOutcome(firstPageID: result.firstPageID, skipped: result.skipped)
+        } catch {
+            // An unreadable file is the caller's message to give; a write that
+            // failed (a full disk) is a save problem like any other.
+            if !(error is DocumentStore.ImportError) { report(error) }
+            return nil
+        }
     }
 
     public func insertFile(_ data: Data, displayName: String, fileExtension: String) async {
         guard let pageID = existingTargetPageID,
-              let filename = try? await store.saveMedia(data, notebook: notebookID, fileExtension: fileExtension) else { return }
+              let filename = await storeMedia(data, notebook: notebookID, fileExtension: fileExtension) else { return }
         let (x, y) = center(width: 260, height: 68, on: pageID)
         await append(PageElement(
             kind: .file, x: x, y: y, width: 260, height: 68,
@@ -102,7 +119,7 @@ extension NotebookEditorModel {
     public func insertVoice(fileURL: URL, duration: TimeInterval) async {
         guard let pageID = existingTargetPageID,
               let data = try? Data(contentsOf: fileURL),
-              let filename = try? await store.saveMedia(data, notebook: notebookID, fileExtension: "m4a") else { return }
+              let filename = await storeMedia(data, notebook: notebookID, fileExtension: "m4a") else { return }
         let (x, y) = center(width: 240, height: 52, on: pageID)
         await append(PageElement(
             kind: .audio, x: x, y: y, width: 240, height: 52,
@@ -252,7 +269,7 @@ extension NotebookEditorModel {
         else { return }
         current.pages[pageIndex].elements[index].isHidden.toggle()
         manifest = current
-        _ = try? await store.setElements(
+        await saveElements(
             current.pages[pageIndex].elements, notebook: notebookID, page: pageID
         )
     }
@@ -267,7 +284,7 @@ extension NotebookEditorModel {
             where current.pages[pageIndex].elements[index].kind == .tape {
                 current.pages[pageIndex].elements[index].isHidden = hidden
             }
-            _ = try? await store.setElements(
+            await saveElements(
                 current.pages[pageIndex].elements, notebook: notebookID, page: target
             )
         }
