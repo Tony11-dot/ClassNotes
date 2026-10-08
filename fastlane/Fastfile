@@ -148,4 +148,58 @@ platform :ios do
     UI.success "✅ Uploaded to TestFlight!"
   end
 
+
+  # ── App Store (from the `ship` skill template, wired to this project's key) ──
+  def ship_version
+    get_version_number(xcodeproj: APP_PROJECT, target: SCHEME)
+  end
+
+  def app_store(submit:)
+    key = asc_api_key
+    shots = File.expand_path("screenshots", __dir__)
+    # deliver creates this folder itself, so "exists" isn't "has screenshots";
+    # an empty one would make the next run wipe the live set.
+    has_shots = Dir[File.join(shots, "**/*.png")].any?
+    metadata = File.expand_path("metadata", __dir__)
+    upload_to_app_store(
+      api_key: key, app_identifier: BUNDLE_ID, app_version: ship_version,
+      metadata_path: metadata, skip_metadata: !Dir.exist?(metadata),
+      screenshots_path: shots, skip_screenshots: !has_shots, overwrite_screenshots: has_shots,
+      skip_binary_upload: true,
+      build_number: latest_testflight_build_number(api_key: key, app_identifier: BUNDLE_ID, version: ship_version).to_s,
+      # No app_review_information on purpose: deliver sets "sign-in required" to
+      # false whenever no demo credentials are passed, and ClassNotes needs one.
+      # The review contact and demo account already on App Store Connect stand.
+      submission_information: {
+        add_id_info_uses_idfa: false, export_compliance_uses_encryption: false,
+        content_rights_contains_third_party_content: false
+      },
+      submit_for_review: submit,
+      reject_if_possible: submit,
+      automatic_release: ENV["SHIP_AUTO_RELEASE"] != "0",
+      force: true, run_precheck_before_submit: false, precheck_include_in_app_purchases: false
+    )
+  end
+
+  desc "Print what exists on App Store Connect (read-only)."
+  lane :check do
+    asc_api_key
+    require "spaceship"
+    bundle = Spaceship::ConnectAPI::BundleId.find(BUNDLE_ID)
+    record = Spaceship::ConnectAPI::App.find(BUNDLE_ID)
+    version = record&.get_edit_app_store_version || record&.get_live_app_store_version
+    UI.message("SHIP_CHECK bundle_id=#{BUNDLE_ID} version=#{ship_version}")
+    UI.message("SHIP_CHECK bundle_registered=#{!bundle.nil?}")
+    UI.message("SHIP_CHECK app_record=#{record ? "#{record.id} (#{record.name})" : "missing"}")
+    UI.message("SHIP_CHECK store_version=#{version ? "#{version.version_string} #{version.app_store_state}" : "none"}")
+    UI.message("SHIP_CHECK live_version=#{record&.get_live_app_store_version&.version_string || "none"}")
+    UI.message("SHIP_CHECK metadata=#{Dir.exist?(File.expand_path("metadata", __dir__))} screenshots=#{Dir[File.expand_path("screenshots/**/*.png", __dir__)].size}")
+  end
+
+  desc "Push listing text/screenshots to the App Store version, no submission."
+  lane(:listing) { app_store(submit: false) }
+
+  desc "Attach the latest TestFlight build to the App Store version and submit for review."
+  lane(:submit) { app_store(submit: true) }
+
 end

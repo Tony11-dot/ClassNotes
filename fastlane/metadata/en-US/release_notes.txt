@@ -1,0 +1,7 @@
+Writing you can trust.
+
+- Everything you write stays written: page saves now land strictly in order, so a quick exit or a fast reopen can never lose your last strokes.
+- What you erase stays erased, even if you double-tap the Pencil to switch tools mid-erase.
+- The lasso holds exactly what you circled. Drag it and the content moves under your finger; circle again to reselect, tap the page to let go.
+- Scribble-to-erase only removes what you actually scrubbed out, never the line beside it.
+- A damaged page is set aside safely instead of being overwritten.

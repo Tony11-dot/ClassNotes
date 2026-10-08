@@ -47,6 +47,30 @@ Print the latest build number TestFlight has for ClassNotes — the post-ship ve
 
 Re-upload the last-built IPA to TestFlight (skip build).
 
+### ios check
+
+```sh
+[bundle exec] fastlane ios check
+```
+
+Print what exists on App Store Connect (read-only).
+
+### ios listing
+
+```sh
+[bundle exec] fastlane ios listing
+```
+
+Push listing text/screenshots to the App Store version, no submission.
+
+### ios submit
+
+```sh
+[bundle exec] fastlane ios submit
+```
+
+Attach the latest TestFlight build to the App Store version and submit for review.
+
 ----
 
 This README.md is auto-generated and will be re-generated every time [_fastlane_](https://fastlane.tools) is run.
