@@ -38,6 +38,10 @@ public actor DocumentStore {
     /// against can only happen with an in-flight save from THIS run, and a
     /// fresh launch starts with no pending saves to race against.
     private var deletedPageIDs: Set<UUID> = []
+    /// Orders every page write and holds ink that hasn't reached disk yet — see
+    /// `PageInkJournal`. Nonisolated so a canvas can stamp and stage its
+    /// snapshot synchronously, in the same turn it reads the drawing.
+    public nonisolated let journal = PageInkJournal()
 
     public init(rootURL: URL? = nil) {
         if let rootURL {
@@ -247,8 +251,34 @@ public actor DocumentStore {
     // MARK: - Page ink
 
     /// `nil` means the page has never been drawn on — a valid empty page.
+    ///
+    /// Ink staged by a save that hasn't reached disk yet wins over the file: a
+    /// page reopened in that gap must show what the user last saw, not the copy
+    /// before it.
     public func pageData(notebook: UUID, page: UUID) -> Data? {
-        try? Data(contentsOf: pageURL(notebook: notebook, page: page))
+        if let staged = journal.pending(page: page) { return staged }
+        return try? Data(contentsOf: pageURL(notebook: notebook, page: page))
+    }
+
+    /// Moves a page blob that no longer decodes out of the way, keeping it.
+    ///
+    /// The canvas shows an unreadable page as blank, and the next stroke saves
+    /// over the file — so without this, one corrupt write turned into the
+    /// permanent loss of everything that page held. The bytes are kept beside
+    /// the pages as `<id>.drawing.unreadable` (the orphan scan only adopts
+    /// `.drawing`, so this never comes back as a phantom page). An existing
+    /// quarantined copy is not overwritten: the first bad file is the one most
+    /// likely to be recoverable.
+    public func quarantinePageData(notebook: UUID, page: UUID) {
+        let source = pageURL(notebook: notebook, page: page)
+        let target = source.appendingPathExtension("unreadable")
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: source.path) else { return }
+        if fm.fileExists(atPath: target.path) {
+            try? fm.removeItem(at: source)
+        } else {
+            try? fm.moveItem(at: source, to: target)
+        }
     }
 
     /// A no-op once `page` has been explicitly deleted — checked against
@@ -273,13 +303,23 @@ public actor DocumentStore {
     /// layout" from the same cause: a delete that looked like it worked, then
     /// a stale save resurrecting the file, then self-healing mistaking the
     /// resurrection for a page that always belonged.
-    public func savePageData(_ data: Data, notebook: UUID, page: UUID) throws {
+    ///
+    /// `stamp` orders writes (see `PageInkJournal`): a write stamped older than
+    /// one already on disk is dropped, so a slow save can never put back ink a
+    /// newer save had erased. Callers that read the drawing earlier must stamp
+    /// it THEN; a write without one is stamped on arrival, as the newest.
+    public func savePageData(
+        _ data: Data, notebook: UUID, page: UUID, stamp: PageInkJournal.Stamp? = nil
+    ) throws {
         guard !deletedPageIDs.contains(page) else { return }
+        let stamp = stamp ?? journal.stamp()
+        guard journal.admits(stamp, page: page) else { return }
         try FileManager.default.createDirectory(
             at: pagesDirectory(for: notebook),
             withIntermediateDirectories: true
         )
         try data.write(to: pageURL(notebook: notebook, page: page), options: .atomic)
+        journal.settle(page: page, stamp: stamp)
     }
 
     // MARK: - Cover render
@@ -493,6 +533,7 @@ public actor DocumentStore {
         var current = try manifest(for: notebook)
         guard let removed = current.pages.first(where: { $0.id == page }) else { return current }
         deletedPageIDs.insert(page)
+        journal.forget(page: page)
         current.pages.removeAll { $0.id == page }
         if current.pages.isEmpty {
             current.pages = [PageRecord(template: .blank)]
@@ -531,7 +572,7 @@ public actor DocumentStore {
         copy.elements = source.elements
         current.pages.insert(copy, at: index + 1)
         // Copy the ink blob if the source has one.
-        if let data = try? Data(contentsOf: pageURL(notebook: notebook, page: page)) {
+        if let data = pageData(notebook: notebook, page: page) {
             try? FileManager.default.createDirectory(
                 at: pagesDirectory(for: notebook), withIntermediateDirectories: true
             )

@@ -140,13 +140,13 @@ extension EditorScreen {
         let reach = LassoSelection.boundingBox(of: loop) ?? .null
 
         if let drawing = tracker.drawing(for: page.id) {
-            for (index, stroke) in drawing.strokes.enumerated() {
+            for stroke in drawing.strokes {
                 guard stroke.renderBounds.intersects(reach) else { continue }
                 let samples = stroke.path
                     .interpolatedPoints(by: .distance(6))
                     .map { $0.location.applying(stroke.transform) }
                 guard !samples.isEmpty, LassoSelection.catches(loop, samples) else { continue }
-                caught.strokeIndices.append(index)
+                caught.strokes.append(StrokeKey(stroke))
                 boxes.append(stroke.renderBounds)
             }
         }
@@ -169,10 +169,10 @@ extension EditorScreen {
         let elementsBefore = model.page(selection.pageID)?.elements ?? []
         var drawingBefore: PKDrawing?
         var drawingAfter: PKDrawing?
-        if !selection.caught.strokeIndices.isEmpty,
+        if !selection.caught.strokes.isEmpty,
            let drawing = tracker.drawing(for: selection.pageID) {
             drawingBefore = drawing
-            let dropped = Set(selection.caught.strokeIndices)
+            let dropped = Set(selection.caught.strokeIndices(in: drawing))
             let survivors = drawing.strokes.enumerated()
                 .filter { !dropped.contains($0.offset) }
                 .map(\.element)
@@ -203,13 +203,12 @@ extension EditorScreen {
         let elementsBefore = model.page(selection.pageID)?.elements ?? []
         var drawingBefore: PKDrawing?
         var drawingAfter: PKDrawing?
-        var newStrokeIndices: [Int] = []
+        var newStrokes: [StrokeKey] = []
         var newBoxes: [CGRect] = []
-        if !selection.caught.strokeIndices.isEmpty,
+        if !selection.caught.strokes.isEmpty,
            let drawing = tracker.drawing(for: selection.pageID) {
             drawingBefore = drawing
-            let copies = selection.caught.strokeIndices.compactMap { index -> PKStroke? in
-                guard drawing.strokes.indices.contains(index) else { return nil }
+            let copies = selection.caught.strokeIndices(in: drawing).map { index -> PKStroke in
                 var stroke = drawing.strokes[index]
                 stroke.transform = stroke.transform.concatenating(
                     CGAffineTransform(translationX: offset.width, y: offset.height)
@@ -218,7 +217,7 @@ extension EditorScreen {
             }
             let after = PKDrawing(strokes: drawing.strokes + copies)
             drawingAfter = after
-            newStrokeIndices = Array(drawing.strokes.count..<after.strokes.count)
+            newStrokes = copies.map(StrokeKey.init)
             newBoxes = copies.map(\.renderBounds)
             tracker.setDrawing(after, for: selection.pageID)
         }
@@ -240,7 +239,7 @@ extension EditorScreen {
         // affordance Paste already gets, instead of leaving the user staring
         // at an identical-looking page with no sign anything new is there.
         var newCatch = LassoCatch()
-        newCatch.strokeIndices = newStrokeIndices
+        newCatch.strokes = newStrokes
         newCatch.elementIDs = newElementIDs
         newCatch.bounds = LassoSelection.bounds(of: newBoxes) ?? .null
         // If nothing could actually be copied, put the selection down rather
@@ -434,8 +433,8 @@ extension EditorScreen {
         format.opaque = false
 
         let caughtElements = page.elements.filter { selection.caught.elementIDs.contains($0.id) }
-        let strokes = selection.caught.strokeIndices
         let drawing = tracker.drawing(for: selection.pageID)
+        let strokes = drawing.map { selection.caught.strokeIndices(in: $0) } ?? []
 
         return UIGraphicsImageRenderer(size: bounds.size, format: format).image { context in
             context.cgContext.translateBy(x: -bounds.minX, y: -bounds.minY)
@@ -444,9 +443,7 @@ extension EditorScreen {
                 draw(element, in: context.cgContext, page: page)
             }
             if let drawing, !strokes.isEmpty {
-                let caught = PKDrawing(strokes: strokes.compactMap { index in
-                    drawing.strokes.indices.contains(index) ? drawing.strokes[index] : nil
-                })
+                let caught = PKDrawing(strokes: strokes.map { drawing.strokes[$0] })
                 // `image(from:scale:)` returns the crop already positioned at the
                 // origin, so it is drawn back at the region's own place in the
                 // page — the translation above then puts it where it belongs.
@@ -558,16 +555,18 @@ extension EditorScreen {
         let elementsBefore = model.page(selection.pageID)?.elements ?? []
         var drawingBefore: PKDrawing?
         var drawingAfter: PKDrawing?
-        if !selection.caught.strokeIndices.isEmpty,
+        var movedKeys: [StrokeKey] = []
+        if !selection.caught.strokes.isEmpty,
            let drawing = tracker.drawing(for: selection.pageID) {
             drawingBefore = drawing
-            let moving = Set(selection.caught.strokeIndices)
+            let moving = Set(selection.caught.strokeIndices(in: drawing))
             let strokes = drawing.strokes.enumerated().map { index, stroke -> PKStroke in
                 guard moving.contains(index) else { return stroke }
                 var moved = stroke
                 moved.transform = stroke.transform.concatenating(
                     CGAffineTransform(translationX: offset.width, y: offset.height)
                 )
+                movedKeys.append(StrokeKey(moved))
                 return moved
             }
             let after = PKDrawing(strokes: strokes)
@@ -580,6 +579,9 @@ extension EditorScreen {
             pageID: selection.pageID, drawingBefore: drawingBefore, drawingAfter: drawingAfter,
             elementsBefore: elementsBefore, elementsAfter: elementsAfter, named: "Move Selection"
         )
+        // Moving changed each stroke's placement, which is part of its key —
+        // the selection follows the ink it is holding.
+        if !selection.caught.strokes.isEmpty { lassoSelection?.caught.strokes = movedKeys }
         lassoSelection?.caught.bounds = selection.caught.bounds
             .offsetBy(dx: offset.width, dy: offset.height)
     }
@@ -600,14 +602,16 @@ extension EditorScreen {
         let elementsBefore = model.page(selection.pageID)?.elements ?? []
         var drawingBefore: PKDrawing?
         var drawingAfter: PKDrawing?
-        if !selection.caught.strokeIndices.isEmpty,
+        var resizedKeys: [StrokeKey] = []
+        if !selection.caught.strokes.isEmpty,
            let drawing = tracker.drawing(for: selection.pageID) {
             drawingBefore = drawing
-            let resizing = Set(selection.caught.strokeIndices)
+            let resizing = Set(selection.caught.strokeIndices(in: drawing))
             let strokes = drawing.strokes.enumerated().map { index, stroke -> PKStroke in
                 guard resizing.contains(index) else { return stroke }
                 var scaled = stroke
                 scaled.transform = stroke.transform.concatenating(transform)
+                resizedKeys.append(StrokeKey(scaled))
                 return scaled
             }
             let after = PKDrawing(strokes: strokes)
@@ -622,6 +626,7 @@ extension EditorScreen {
             pageID: selection.pageID, drawingBefore: drawingBefore, drawingAfter: drawingAfter,
             elementsBefore: elementsBefore, elementsAfter: elementsAfter, named: "Resize Selection"
         )
+        if !selection.caught.strokes.isEmpty { lassoSelection?.caught.strokes = resizedKeys }
         lassoSelection?.caught.bounds = newBounds
     }
 }

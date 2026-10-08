@@ -4,16 +4,64 @@ import NotesModels
 import PencilKit
 import SwiftUI
 
+/// Which stroke a lasso is holding, by what it IS rather than where it sits.
+///
+/// A selection used to hold indices into the page's `PKDrawing`, captured when
+/// the loop closed. Anything that changed the drawing's order before the user
+/// pressed a button — live beautification typesetting a line, a stroke landing
+/// from a page that was still loading, an undo — left those indices pointing at
+/// whatever happened to sit there now, and Move or Delete acted on ink nobody
+/// circled. `PKStroke` has no id, so the key is built from what does not change
+/// while a stroke merely exists: when its path was made, how many points it
+/// has, and where it is placed (`transform` — which a move or resize changes,
+/// so the selection re-keys after each one). A key that matches nothing is a
+/// stroke that's gone; it is skipped, never substituted.
+struct StrokeKey: Hashable {
+    let created: Date
+    let pointCount: Int
+    let placement: [CGFloat]
+
+    init(_ stroke: PKStroke) {
+        created = stroke.path.creationDate
+        pointCount = stroke.path.count
+        let t = stroke.transform
+        placement = [t.a, t.b, t.c, t.d, t.tx, t.ty]
+    }
+
+    /// Where each key's stroke sits in `strokes` right now, ascending. Keys with
+    /// no stroke left are dropped; identical keys (a stroke duplicated in place)
+    /// claim distinct strokes rather than the same one twice.
+    static func indices(of keys: [StrokeKey], in strokes: [PKStroke]) -> [Int] {
+        var wanted: [StrokeKey: Int] = [:]
+        for key in keys { wanted[key, default: 0] += 1 }
+        var found: [Int] = []
+        for (index, stroke) in strokes.enumerated() where !wanted.isEmpty {
+            let key = StrokeKey(stroke)
+            guard let remaining = wanted[key] else { continue }
+            found.append(index)
+            wanted[key] = remaining > 1 ? remaining - 1 : nil
+        }
+        return found
+    }
+}
+
 /// What one lasso caught: the ink strokes and the page elements inside the loop.
 struct LassoCatch: Equatable {
-    var strokeIndices: [Int] = []
+    /// The strokes caught, by identity — see `StrokeKey`. Resolve them against
+    /// the live drawing with `strokeIndices(in:)` at the moment of acting.
+    var strokes: [StrokeKey] = []
     var elementIDs: [UUID] = []
     /// The loop that caught them, in page-logical points.
     var loop: [CGPoint] = []
     /// The bounding box of everything caught, in page-logical points.
     var bounds: CGRect = .null
 
-    var isEmpty: Bool { strokeIndices.isEmpty && elementIDs.isEmpty }
+    var isEmpty: Bool { strokes.isEmpty && elementIDs.isEmpty }
+
+    /// Where the caught strokes are in `drawing` now.
+    func strokeIndices(in drawing: PKDrawing) -> [Int] {
+        StrokeKey.indices(of: strokes, in: drawing.strokes)
+    }
 }
 
 /// Circle something to select it: a dashed loop follows the pencil, and what it
@@ -29,6 +77,8 @@ struct LassoOverlay: View {
     /// Runs the hit test against the live page and hands back what was caught.
     let resolve: ([CGPoint]) -> LassoCatch
     let onSelected: (LassoCatch) -> Void
+    /// A tap, or a loop that caught nothing: whatever was held is put down.
+    var onDismiss: () -> Void = {}
 
     @State private var trail: [CGPoint] = []
 
@@ -49,6 +99,10 @@ struct LassoOverlay: View {
             )
         }
         .contentShape(Rectangle())
+        // Sits UNDER a live selection, so circling something else simply
+        // selects that instead — no need to press Done first — and tapping
+        // empty paper puts the selection down.
+        .onTapGesture { onDismiss() }
         .gesture(
             DragGesture(minimumDistance: 2)
                 .onChanged { value in append(value.location) }
@@ -84,7 +138,10 @@ struct LassoOverlay: View {
         guard let loop = LassoSelection.closed(logical) else { return }
         var caught = resolve(loop)
         caught.loop = loop
-        guard !caught.isEmpty else { return }
+        guard !caught.isEmpty else {
+            onDismiss()
+            return
+        }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         onSelected(caught)
     }
@@ -111,8 +168,14 @@ struct LassoSelectionView: View {
     /// `PageElementsLayer`'s own resize handle already uses.
     let onResize: (CGRect) -> Void
     let onDismiss: () -> Void
+    /// A picture of what the selection holds, rendered once when a drag starts,
+    /// so the content travels under the finger instead of an empty box moving
+    /// and the ink jumping after it on release.
+    var makePreview: () -> UIImage? = { nil }
 
     @State private var phase: CGFloat = 0
+    @State private var preview: UIImage?
+    @State private var previewRequested = false
     @State private var drag: CGSize = .zero
     /// Live resize translation from the corner handle, in DISPLAY points —
     /// same idea as `drag`, so the box grows/shrinks under the finger instead
@@ -154,10 +217,16 @@ struct LassoSelectionView: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            // Tapping off the selection puts it down.
-            Color.clear
-                .contentShape(Rectangle())
-                .onTapGesture { onDismiss() }
+            // Tapping off the selection is handled by the lasso surface beneath,
+            // which also lets a new loop replace this one directly.
+            if isAdjusting, let preview {
+                Image(uiImage: preview)
+                    .resizable()
+                    .frame(width: liveWidth, height: liveHeight)
+                    .shadow(color: .black.opacity(0.18), radius: 8, y: 4)
+                    .offset(x: frame.minX + drag.width, y: frame.minY + drag.height)
+                    .allowsHitTesting(false)
+            }
 
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .strokeBorder(
@@ -172,7 +241,10 @@ struct LassoSelectionView: View {
                 .offset(x: frame.minX + drag.width, y: frame.minY + drag.height)
                 .gesture(
                     DragGesture()
-                        .onChanged { drag = $0.translation }
+                        .onChanged {
+                            requestPreview()
+                            drag = $0.translation
+                        }
                         .onEnded { value in
                             // `drag` is left exactly where the finger left it —
                             // NOT zeroed here — so the box stays put visually
@@ -197,8 +269,8 @@ struct LassoSelectionView: View {
 
             resizeHandle
                 .offset(
-                    x: frame.minX + drag.width + liveWidth - 16,
-                    y: frame.minY + drag.height + liveHeight - 16
+                    x: frame.minX + drag.width + liveWidth - 22,
+                    y: frame.minY + drag.height + liveHeight - 22
                 )
 
             actions
@@ -219,7 +291,17 @@ struct LassoSelectionView: View {
         .onChange(of: selection.bounds) { _, _ in
             drag = .zero
             resizeDelta = .zero
+            preview = nil
+            previewRequested = false
         }
+    }
+
+    private var isAdjusting: Bool { drag != .zero || resizeDelta != .zero }
+
+    private func requestPreview() {
+        guard !previewRequested else { return }
+        previewRequested = true
+        preview = makePreview()
     }
 
     /// A small, precise grab point at the selection's bottom-right corner,
@@ -231,11 +313,14 @@ struct LassoSelectionView: View {
             .overlay(Circle().strokeBorder(.white, lineWidth: 1.5))
             .frame(width: 14, height: 14)
             .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
-            .frame(width: 32, height: 32)
+            .frame(width: 44, height: 44)
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 0)
-                    .onChanged { value in resizeDelta = value.translation }
+                    .onChanged { value in
+                        requestPreview()
+                        resizeDelta = value.translation
+                    }
                     .onEnded { value in
                         // Same reasoning as the move handle above: `resizeDelta`
                         // stays at its final dragged value until `onChange(of:

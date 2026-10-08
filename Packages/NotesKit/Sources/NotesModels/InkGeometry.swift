@@ -99,6 +99,26 @@ public enum ScribbleDetector {
         return false
     }
 
+    /// How much of a stroke must sit under the scrub before the scrub takes it.
+    public static let minimumCoverage = 0.5
+
+    /// Whether the scrub ERASES the stroke sampled as `other`: it crosses it,
+    /// and at least `minimumCoverage` of that stroke lies within the area the
+    /// scrub covered.
+    ///
+    /// Crossing alone was the old rule, and a scrub only has to pass within a
+    /// few points of something to cross it — so scrubbing out a word took the
+    /// long underline beneath it, the line above's descenders and the arrow
+    /// leading into it. Writing that the user didn't scrub must never go.
+    public static func erases(_ scrub: [CGPoint], _ other: [CGPoint], tolerance: CGFloat) -> Bool {
+        guard crosses(scrub, other, tolerance: tolerance) else { return false }
+        let area = boundingBox(scrub).insetBy(dx: -tolerance, dy: -tolerance)
+        let inside = other.reduce(into: 0) { total, point in
+            if area.contains(point) { total += 1 }
+        }
+        return Double(inside) / Double(other.count) >= minimumCoverage
+    }
+
     private static func sampled(_ points: [CGPoint], maximum: Int) -> [CGPoint] {
         guard points.count > maximum else { return points }
         let step = points.count / maximum

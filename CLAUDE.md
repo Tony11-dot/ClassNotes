@@ -644,3 +644,37 @@ ML feature — distinct from the shipped handwriting→text) stays a premium stu
 - NovaMath accents (`\vec`, `\dot`, `\ddot`, `\hat`, `\bar`, `\overline`, `\tilde`)
   render as combining marks on the letter; an unknown command falls through as its
   own name, which is how `\vec{F}` used to read "vecF".
+
+## Architecture invariants (writing reliability round)
+
+- Page ink reaches disk IN ORDER. Every save takes a `PageInkJournal.Stamp` at
+  the moment it reads the drawing, and `DocumentStore.savePageData(…stamp:)`
+  drops any write older than one already on disk. Before this, a debounced save
+  still encoding when the editor flushed on exit landed AFTER the flush — so ink
+  the user had just erased came back, and the last stroke written could vanish.
+  The journal also STAGES the newest bytes until they are written, and
+  `pageData` reads staged bytes first: a page reopened in that gap used to load
+  the previous file and then save it over the newer one for good.
+- A page blob that won't decode is QUARANTINED (`<id>.drawing.unreadable`),
+  never shown blank and then saved over. The orphan scan only adopts `.drawing`.
+- `loadDrawing` MERGES ink drawn before the file arrived instead of assigning
+  over it.
+- An erase is judged by the tool that MADE the touch (`touchIsErasing`, read off
+  `canvas.tool` at `canvasViewDidBeginUsingTool`), not by `toolState.tool`. The
+  rail changes the instant a Pencil double-tap lands while the canvas keeps the
+  old tool until lift — asking the rail made a real erase read as unexplained
+  loss, and the "restore last known good" guard put the erased ink back. Any
+  erase (not only one that drops the count) retires the shape guard, and eraser
+  fragments never enter the ink pass as new strokes. Every external rewrite
+  (`setDrawing`, `clearDrawing`, `applyBeautified`) retires it too, so a lasso
+  move can't be "healed" back to where the shape was.
+- The lasso holds strokes by IDENTITY (`StrokeKey`: path creation date, point
+  count, placement), resolved against the live drawing at the moment of acting
+  (`LassoCatch.strokeIndices(in:)`). A key with no match is skipped, never
+  substituted. Move and resize re-key the selection, since placement changes.
+  The loop surface stays live under a selection: circling again replaces it,
+  tapping paper puts it down. Dragging shows a picture of the content under the
+  finger (`makePreview`).
+- Scribble-erase takes a stroke only when it crosses it AND covers at least
+  `ScribbleDetector.minimumCoverage` of it (`erases`). Crossing alone took
+  underlines and neighbouring lines the scrub merely grazed.

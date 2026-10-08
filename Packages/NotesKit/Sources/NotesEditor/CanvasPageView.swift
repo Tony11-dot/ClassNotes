@@ -28,12 +28,10 @@ let snapLog = Logger(subsystem: "com.classmate.notes", category: "ShapeSnap")
 @Observable
 public final class ActiveCanvasTracker {
     public weak var activeCanvas: PKCanvasView?
-    /// The page a lasso selection is currently open on, if any. A selection's
-    /// `strokeIndices` are captured once, at the moment the loop closes; any
-    /// background rewrite that reindexes the drawing after that (live
-    /// beautification replacing handwriting with type) would leave those
-    /// indices pointing at whatever now happens to sit there, so Move,
-    /// Duplicate, Resize and Delete would silently act on the wrong ink. Set
+    /// The page a lasso selection is currently open on, if any. A selection
+    /// holds its strokes by identity (`StrokeKey`), but live beautification
+    /// would still consume handwriting the user is in the middle of moving —
+    /// so it waits until the selection is put down. Set
     /// by `EditorScreen` whenever `lassoSelection` changes; checked by the
     /// beautifier before it rewrites a page's drawing.
     public var lassoHoldPageID: UUID?
@@ -131,6 +129,9 @@ public final class ActiveCanvasTracker {
             canvases[pageID]?.view?.drawing = drawing
             return
         }
+        // A lasso move, delete or resize is the user's own decision about this
+        // ink; the shape guard must not put a moved shape back where it was.
+        coordinator.guardedShapeStroke = nil
         coordinator.processedStrokeCount = drawing.strokes.count
         coordinator.replace(drawing, on: canvas, allowsFewerStrokes: true)
         coordinator.scheduleSave()
@@ -167,8 +168,10 @@ public final class ActiveCanvasTracker {
         // stroke drawn right after doesn't read as fewer strokes than expected
         // with the pen selected and trip the unexplained-loss guard in
         // `canvasViewDrawingDidChange`.
+        coordinator.guardedShapeStroke = nil
         coordinator.processedStrokeCount = ink.strokes.count
         coordinator.replace(ink, on: canvas, allowsFewerStrokes: true)
+        coordinator.scheduleSave()
     }
 
     public func canvas(for pageID: UUID) -> PKCanvasView? {
@@ -229,6 +232,7 @@ public final class ActiveCanvasTracker {
             canvases[pageID]?.view?.drawing = PKDrawing()
             return
         }
+        coordinator.guardedShapeStroke = nil
         coordinator.processedStrokeCount = 0
         coordinator.replace(PKDrawing(), on: canvas, allowsFewerStrokes: true)
         coordinator.scheduleSave()
@@ -629,6 +633,14 @@ struct CanvasPageView: UIViewRepresentable {
         /// (pen shaping, shape snap, scribble-erase, beautification) waits for the
         /// hand to lift.
         var isUsingTool = false
+        /// Whether the most recent touch was made with an eraser — read off the
+        /// tool the CANVAS held when the touch began, not `toolState.tool`.
+        /// The two differ whenever the tool changes during or just after a
+        /// touch (a Pencil double-tap mid-erase is the everyday case: the rail
+        /// shows the pen while the canvas is still erasing), and asking the
+        /// rail is how a real erase was mistaken for unexplained loss and the
+        /// erased ink put straight back.
+        var touchIsErasing = false
         private var inkPassTask: Task<Void, Never>?
         /// The page as of the last committed history step. Every step is the pair
         /// (this, what the page became) — which is why Redo works as well as Undo.
@@ -758,24 +770,40 @@ struct CanvasPageView: UIViewRepresentable {
         func loadDrawing() {
             Task {
                 var stored = PKDrawing()
-                if let data = await store.pageData(notebook: notebookID, page: pageID),
-                   let drawing = try? PKDrawing(data: data) {
-                    stored = drawing
+                if let data = await store.pageData(notebook: notebookID, page: pageID) {
+                    if let drawing = try? PKDrawing(data: data) {
+                        stored = drawing
+                    } else {
+                        // Showing it blank is unavoidable; letting the next stroke
+                        // save over it is not. Keep the bytes aside first.
+                        await store.quarantinePageData(notebook: notebookID, page: pageID)
+                    }
                 }
+                // A stroke can land before the file does (the page appears, the
+                // pencil is already moving). Assigning `stored` alone wiped it.
+                let drawnBeforeLoad = canvas?.drawing.strokes ?? []
+                let merged = drawnBeforeLoad.isEmpty
+                    ? stored
+                    : PKDrawing(strokes: stored.strokes + drawnBeforeLoad)
                 isRewriting = true
-                canvas?.drawing = stored
+                canvas?.drawing = merged
                 // Ink already on the page was shaped when it was written; a pass
                 // over it would only cost time and re-smooth what's settled.
-                processedStrokeCount = stored.strokes.count
-                lastKnownGoodDrawing = stored
+                processedStrokeCount = merged.strokes.count
+                lastKnownGoodDrawing = merged
                 undoBaseline = stored
-                hasUncommittedChange = false
+                hasUncommittedChange = !drawnBeforeLoad.isEmpty
                 // `loaded` waits a turn with `isRewriting`, so the delegate
                 // callback for OUR assignment can't be mistaken for the user's
                 // first stroke and pushed onto the history as "they drew a page".
                 Task { @MainActor [weak self] in
-                    self?.isRewriting = false
-                    self?.loaded = true
+                    guard let self else { return }
+                    self.isRewriting = false
+                    self.loaded = true
+                    if !drawnBeforeLoad.isEmpty {
+                        self.scheduleSave()
+                        self.scheduleUndoCommit()
+                    }
                 }
             }
         }
@@ -784,6 +812,7 @@ struct CanvasPageView: UIViewRepresentable {
 
         func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
             isUsingTool = true
+            touchIsErasing = canvasView.tool is PKEraserTool
             tracker.activeCanvas = canvasView
             // Anything queued would land under the moving pencil — hold it.
             inkPassTask?.cancel()
@@ -830,6 +859,7 @@ struct CanvasPageView: UIViewRepresentable {
             hasUncommittedChange = true
 
             let count = canvasView.drawing.strokes.count
+            let erasing = touchIsErasing || canvasView.tool is PKEraserTool
             if count < processedStrokeCount {
                 // Every path THIS class uses to remove ink (`replace`, `restore`)
                 // sets `isRewriting` before touching `canvas.drawing`, which is
@@ -848,7 +878,7 @@ struct CanvasPageView: UIViewRepresentable {
                 // hold-to-snap. See `lastKnownGoodDrawing`'s own doc for why a
                 // COUNT check here can't make the mistake the reverted
                 // content-check in `replace()` made.
-                guard toolState.tool == .eraser else {
+                guard erasing || toolState.tool == .eraser else {
                     snapLog.error(
                         "SPURIOUS LOSS: canvas reports \(count) strokes (expected >= \(self.processedStrokeCount)) with tool=\(String(describing: self.toolState.tool)), not eraser — restoring last known good drawing"
                     )
@@ -859,9 +889,17 @@ struct CanvasPageView: UIViewRepresentable {
                     return
                 }
                 processedStrokeCount = count
-                // A real content removal via the eraser. The vanish guard
-                // exists for UNEXPLAINED loss, not this.
+            }
+            if erasing {
+                // A real removal. The vanish guard exists for UNEXPLAINED loss,
+                // and a pixel eraser can bite a shape without changing the
+                // count (or split it into more strokes) — so ANY erase retires
+                // it, not only one that drops the count. Fragments a pixel
+                // eraser leaves behind are not new writing either: they must
+                // never reach the ink pass as fresh pen strokes to be ruled,
+                // snapped or read as a scribble.
                 guardedShapeStroke = nil
+                processedStrokeCount = count
             }
             lastKnownGoodDrawing = canvasView.drawing
 
@@ -1323,21 +1361,31 @@ struct CanvasPageView: UIViewRepresentable {
                 // and unlike a whole stroke disappearing, there's no count
                 // drop for the loss guard above to catch. Hopping off-actor
                 // for the encode itself doesn't change when the save lands.
+                //
+                // Stamped HERE, at the snapshot: a flush taken after this point
+                // is newer and must win even if this write arrives after it.
+                let stamp = self.store.journal.stamp()
                 let data = await Task.detached(priority: .utility) { healed.dataRepresentation() }.value
+                self.store.journal.stage(data, page: self.pageID, stamp: stamp)
                 try? await self.store.savePageData(
-                    data, notebook: self.notebookID, page: self.pageID
+                    data, notebook: self.notebookID, page: self.pageID, stamp: stamp
                 )
             }
         }
 
+        /// Writes the page NOW. Stamped and staged synchronously, so a page that
+        /// reloads before the write lands still reads this ink, and an older
+        /// save still in flight can't land on top of it.
         func flushPendingSave() {
             saveTask?.cancel()
             guard loaded, let canvas = self.canvas else { return }
             let drawing = healGuardedShape(canvas.drawing)
             guardedShapeStroke = nil
+            let stamp = store.journal.stamp()
             let data = drawing.dataRepresentation()
+            store.journal.stage(data, page: pageID, stamp: stamp)
             Task { [store, notebookID, pageID] in
-                try? await store.savePageData(data, notebook: notebookID, page: pageID)
+                try? await store.savePageData(data, notebook: notebookID, page: pageID, stamp: stamp)
             }
         }
 

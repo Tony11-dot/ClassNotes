@@ -22,7 +22,7 @@ enum ScribbleEraser {
             // Cheap reject first: no bounding-box overlap means no crossing.
             guard stroke.renderBounds.intersects(scribble.renderBounds.insetBy(dx: -tolerance, dy: -tolerance))
             else { return true }
-            if ScribbleDetector.crosses(scrub, path(of: stroke), tolerance: tolerance) {
+            if ScribbleDetector.erases(scrub, path(of: stroke), tolerance: tolerance) {
                 erasedSomething = true
                 return false
             }

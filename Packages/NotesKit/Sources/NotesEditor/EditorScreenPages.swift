@@ -568,6 +568,19 @@ extension EditorScreen {
             pastePendingActions(for: element, on: page.id, displaySize: displaySize, logicalSize: page.logicalSize)
         }
         if toolState.tool == .lasso {
+            // The loop surface stays live underneath a selection: circling
+            // something else selects that, tapping paper puts it down.
+            LassoOverlay(
+                displaySize: displaySize,
+                logicalSize: page.logicalSize,
+                resolve: { loop in resolveLasso(loop, on: page) },
+                onSelected: { caught in
+                    lassoSelection = PageSelection(pageID: page.id, caught: caught)
+                },
+                onDismiss: {
+                    if lassoSelection?.pageID == page.id { lassoSelection = nil }
+                }
+            )
             if let selection = lassoSelection, selection.pageID == page.id {
                 LassoSelectionView(
                     selection: selection.caught,
@@ -578,16 +591,8 @@ extension EditorScreen {
                     onCopy: { Task { await copySelection() } },
                     onMove: { offset in Task { await moveSelection(by: offset) } },
                     onResize: { bounds in Task { await resizeSelection(to: bounds) } },
-                    onDismiss: { lassoSelection = nil }
-                )
-            } else {
-                LassoOverlay(
-                    displaySize: displaySize,
-                    logicalSize: page.logicalSize,
-                    resolve: { loop in resolveLasso(loop, on: page) },
-                    onSelected: { caught in
-                        lassoSelection = PageSelection(pageID: page.id, caught: caught)
-                    }
+                    onDismiss: { lassoSelection = nil },
+                    makePreview: { snapshotSelection(selection) }
                 )
             }
         }
