@@ -222,10 +222,13 @@ public struct EditorScreen: View {
                 PageManagerView(
                     model: model,
                     cover: notebook.usesCoverPage ? notebook.coverPaper : nil,
-                    isVisible: $showPages
-                ) { id in
-                    jump(to: id)
-                }
+                    isVisible: $showPages,
+                    destinations: { pageDestinations() },
+                    onTransfer: { pages, destination, move in
+                        Task { await sendPages(pages, model: model, to: destination, move: move) }
+                    },
+                    onSelect: { id in jump(to: id) }
+                )
                 .transition(.move(edge: .leading))
                 .zIndex(2)
             }
@@ -253,6 +256,7 @@ public struct EditorScreen: View {
         .overlay(alignment: .bottomTrailing) { novaBubble }
         .overlay { novaDismissScrim }
         .overlay(alignment: .trailing) { novaPanel }
+        .background { keyboardCommands }
         .overlay(alignment: .top) { noticeBanner }
         .overlay(alignment: .top) { liveBeautifyIndicator }
         .overlay(alignment: .top) { saveProblemBanner }

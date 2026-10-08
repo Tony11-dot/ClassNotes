@@ -50,6 +50,27 @@ Last updated: 2026-10-09.
 | Decode that page (`PKDrawing(data:)`) | **24–57 ms** | |
 | Thumbnail that page (360 px wide) | **116–160 ms** (one outlier at 313 ms) | Off the main thread, cached by content fingerprint; an unchanged page costs nothing the second time |
 
+## 2b. Main-thread work around each stroke
+
+What the canvas does on the main thread when the pencil touches down and
+when a stroke ends. This is not latency; it's how much of the frame the app
+spends before PencilKit gets it back. `PerformanceBenchmarkTests.strokeBookkeeping`.
+
+| Read | 1,000 strokes | 10,000 strokes |
+|---|---|---|
+| `canvas.drawing` (a full copy out of PencilKit) | 0.24 ms | 2.6 ms |
+| `canvas.drawing.strokes.count` | 0.42–0.51 ms | 4.4–4.8 ms |
+
+| Moment | Before | After |
+|---|---|---|
+| Pencil-down | one stroke count: ~0.45 ms / ~4.4 ms | **none**: the page as it stood is already held, and counted only if a shape settles |
+| Stroke end | two full reads: ~0.7 ms / ~7 ms | one read plus a count: ~0.45 ms / ~4.4 ms |
+
+A suspected cost was ruled out by measurement. The editor writes the focused
+page on every stroke, but in this toolchain Observation does not notify
+observers when an equal value is written, so it doesn't re-render the 18
+views that read it.
+
 ## 3. Search
 
 The library search runs off the main thread, 220 ms after typing stops.
@@ -73,6 +94,10 @@ search code over 1,000 pages:
 Decoded, folded indexes are kept in memory between keystrokes, keyed by each
 file's size and modification time. The tests check that a replaced or deleted
 file is read fresh.
+
+Imported pages are now read by Vision too (round 2). That cost is paid once per
+page, in the background indexer; searching doesn't pay it. On-device time per
+page is unmeasured.
 
 ## 4. Import
 

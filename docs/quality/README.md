@@ -203,14 +203,34 @@ Also fixed along the way:
 - [x] Benchmarks in the test suite for storage, search and recovery at stress
       sizes; results in measurements.md
 
-### Phases 2, 3 and 5–9 (next rounds)
+### Round 2: Phases 2, 3, 5 and 7 (what can be done and checked without a device)
 
-- Pencil: profile on a device (main-thread stalls during strokes),
-  tool-switch latency, palm-rejection matrix.
-- Documents: live PDF pages (D-006), folders (D-007), move pages between
-  notebooks, page drag and drop.
-- Search: PDF text layer, result → exact page (exists). Latency at 1,000
-  pages is measured (measurements.md); 10k pages is next.
+- [x] **Pencil (2):** main-thread work around each stroke measured
+      (measurements.md §2b). Pencil-down no longer reads the whole drawing,
+      and stroke end reads it once instead of twice. The "every stroke
+      re-renders the editor" suspicion was measured and ruled out: Observation
+      does not notify on equal writes.
+- [ ] **Pencil (2), device only:** end-to-end latency, frame rate while
+      writing, palm-rejection matrix, hover and barrel roll on Pencil Pro.
+- [x] **Documents (3):** move or copy pages to another notebook from the
+      page manager. The cover stays behind, media travels with the page, and
+      a move leaves the originals in Recently Deleted. The destination is
+      written in full before the source changes, so a crash duplicates and
+      never loses.
+- [x] **Search (5):** imported PDF pages, scans and photos are read by Vision,
+      so a word printed in a handout is findable. Existing indexes upgrade
+      once (`search.json` v2, derived data).
+- [x] **iPadOS (7):** hardware-keyboard shortcuts for undo/redo (⌘Z had never
+      worked: the canvas is never first responder), tools ⌘1–5, next and
+      previous page ⌥⌘↓/↑, new page ⇧⌘N, page manager ⌥⌘P.
+
+### Next rounds
+
+- Pencil: the device-only items above.
+- Documents: live PDF pages (D-006), folders (D-007), page drag and drop
+  between notebooks.
+- Search: latency at 10k pages; a PDF's own text layer as an exact
+  alternative to OCR, if D-006 moves PDFs to a live engine.
 - AI: "found in your notes vs. general knowledge" labelling, notebook-wide
   questions grounded on `search.json`.
 - iPadOS: keyboard shortcuts beyond ⌘Z, drag and drop of pages and

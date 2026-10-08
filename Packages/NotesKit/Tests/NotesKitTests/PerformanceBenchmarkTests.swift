@@ -36,6 +36,13 @@ private func median(_ runs: Int, _ body: () async throws -> Void) async rethrows
     return samples.sorted()[samples.count / 2]
 }
 
+/// Median of `runs` timings of a synchronous `body`, in milliseconds — for
+/// work that has to stay on the caller's actor (the main thread, for a canvas).
+private func medianSync(_ runs: Int, _ body: () -> Void) -> Double {
+    let clock = ContinuousClock()
+    return (0..<runs).map { _ in milliseconds(clock.measure(body)) }.sorted()[runs / 2]
+}
+
 private func percentile(_ samples: [Double], _ p: Double) -> Double {
     guard !samples.isEmpty else { return 0 }
     let sorted = samples.sorted()
@@ -174,6 +181,27 @@ struct PerformanceBenchmarkTests {
         #expect(decode < 5_000)
     }
 
+    /// What the canvas does on the main thread at pencil-down and at each
+    /// stroke's end: read the drawing and its stroke count. PencilKit offers no
+    /// cheaper count, and the count is the floor the vanish guard checks, so it
+    /// is measured here rather than cached somewhere it could go stale.
+    @MainActor
+    @Test("Per-stroke bookkeeping on the main thread stays small on a heavy page")
+    func strokeBookkeeping() {
+        for strokes in [1_000, 10_000] {
+            let canvas = PKCanvasView(frame: CGRect(x: 0, y: 0, width: 768, height: 1024))
+            canvas.drawing = heavyDrawing(strokes: strokes)
+            var total = 0
+            let count = medianSync(9) { total += canvas.drawing.strokes.count }
+            var held = PKDrawing()
+            let snapshot = medianSync(9) { held = canvas.drawing }
+            total += held.strokes.isEmpty ? 0 : 1
+            bench("stroke.strokeCount.\(strokes)", count, "ms", "main thread")
+            bench("stroke.drawingSnapshot.\(strokes)", snapshot, "ms", "main thread")
+            #expect(total > 0)
+        }
+    }
+
     @Test("Searching 1,000 indexed pages stays fast enough to run per keystroke")
     func searchThousandPages() async throws {
         let root = benchRoot("search")
@@ -271,14 +299,15 @@ struct ImportSafetyTests {
         let store = DocumentStore(rootURL: root)
         let id = UUID()
         try await store.createDocument(id: id, style: PageStyle(template: .ruled))
-        let started = Mutex(false)
+        // Cancelled from INSIDE the import, at page 3: the progress callback
+        // runs on the import's own task. Cancelling from the test after
+        // polling for progress raced the import, which under load could
+        // finish all sixty pages before the poll looked.
         let importing = Task {
             try await store.importPDF(data: samplePDF(pages: 60), notebook: id) { done, _ in
-                if done >= 3 { started.withLock { $0 = true } }
+                if done == 3 { withUnsafeCurrentTask { $0?.cancel() } }
             }
         }
-        while !started.withLock({ $0 }) { try await Task.sleep(for: .milliseconds(2)) }
-        importing.cancel()
         await #expect(throws: CancellationError.self) { _ = try await importing.value }
 
         #expect(try await store.manifest(for: id).pages.count == 1)

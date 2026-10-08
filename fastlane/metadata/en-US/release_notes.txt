@@ -8,6 +8,8 @@ Writing you can trust.
 - A damaged notebook file is set aside and restored from its last good copy, keeping your images, text, bookmarks and page settings.
 - Notebooks deleted from the ClassMate tab now go to the Trash on your iPad instead of disappearing.
 - Large notebooks open, scroll and import PDFs smoothly, and you can keep writing while a PDF imports.
-- Search inside your notes is much faster.
+- Search inside your notes is much faster, and now finds the words in PDFs, scans and photos you've imported.
+- Move or copy pages to another notebook: select them in the page manager and tap Send.
+- Keyboard shortcuts on iPad: Command-Z to undo, Command-1 to 5 for tools, Option-Command-Up and Down to change page, Shift-Command-N for a new page.
 - The lasso holds exactly what you circled. Drag it and the content moves under your finger; circle again to reselect, tap the page to let go.
 - Scribble-to-erase only removes what you actually scrubbed out, never the line beside it.

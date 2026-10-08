@@ -760,3 +760,22 @@ pricing changes go through its change-control list first.
 - No AI model is pinned in `Info.plist` (`AIModelConfigurationTests`): a model
   string in config outlives the model.
 
+- Pages move between notebooks by COPY-THEN-SOFT-DELETE
+  (`DocumentStore.transferPages`): the destination is written whole (ink,
+  media, then its manifest) before the source changes, and a move's originals
+  go to the source's Recently Deleted. New page ids in the destination; the
+  cover never travels. A failed transfer removes whatever it had written, so
+  no orphan is adopted as a blank page.
+- Pencil-down does NO whole-drawing work. `strokeCountAtStrokeStart` is
+  counted lazily from `lastKnownGoodDrawing` held at pencil-down — exact
+  whenever the pencil is up, because every coordinator path that assigns the
+  canvas drawing updates it (keep it that way: the vanish guard depends on it
+  too). Before the page has loaded it counts eagerly. Each `canvas.drawing`
+  read is a full copy out of PencilKit (~2.6 ms at 10k strokes): read it ONCE
+  per callback.
+- Imported page backgrounds are READ for search (`recognizeBackground`), so a
+  PDF's printed words are findable; `search.json` v2 re-reads a v1 index's
+  imported pages once. The user's own words come before printed ones in the
+  page text.
+- Editor keyboard shortcuts live on the EDITOR (`EditorScreenShortcuts`), never
+  only on the canvas (never first responder) or the rail (it collapses).

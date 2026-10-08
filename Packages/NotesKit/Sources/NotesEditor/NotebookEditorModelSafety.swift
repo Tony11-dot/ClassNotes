@@ -151,3 +151,27 @@ public struct ImportProgress: Sendable, Equatable {
     public var done: Int
     public var total: Int
 }
+
+extension NotebookEditorModel {
+
+    /// Copies or moves pages to another notebook. Returns how many arrived, or
+    /// nil if nothing could be written (the editor then says why).
+    ///
+    /// A move leaves the originals in this notebook's Recently Deleted, so
+    /// sending pages to the wrong notebook is undone from there.
+    public func transferPages(_ pageIDs: Set<UUID>, to target: UUID, move: Bool) async -> Int? {
+        var added = 0
+        let landed = await commit { [store, notebookID] in
+            let result = try await store.transferPages(
+                Array(pageIDs), from: notebookID, to: target, removingFromSource: move
+            )
+            added = result.added.count
+            return result.source
+        }
+        guard landed else { return nil }
+        if move, let focusedPageID, pageIDs.contains(focusedPageID), !pages.contains(where: { $0.id == focusedPageID }) {
+            self.focusedPageID = manifest?.pages.first?.id
+        }
+        return added
+    }
+}

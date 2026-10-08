@@ -2,6 +2,7 @@ import CoreGraphics
 import Foundation
 import NotesModels
 import Testing
+import UIKit
 @testable import NotesServices
 
 /// Matching, ranking and snippets — the whole of what "find this in my notes"
@@ -345,5 +346,66 @@ struct SearchMatchingTests {
         let snippet = NoteSearch.search("krebs", in: index).first?.snippet ?? ""
         #expect(snippet.contains("Krebs cycle"))
         #expect(snippet.hasPrefix("…"))
+    }
+}
+
+@Suite("Imported pages are searchable")
+struct ImportedPageSearchTests {
+
+    private func handout() -> Data {
+        UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792)).pdfData { context in
+            context.beginPage()
+            ("Mitochondria and the Krebs cycle" as NSString).draw(
+                at: CGPoint(x: 60, y: 80),
+                withAttributes: [.font: UIFont.systemFont(ofSize: 30, weight: .semibold)]
+            )
+        }
+    }
+
+    private func importedNotebook() async throws -> (DocumentStore, UUID, URL) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cmnotes-printed-\(UUID().uuidString)", isDirectory: true)
+        let store = DocumentStore(rootURL: root)
+        let id = UUID()
+        try await store.createDocument(id: id, style: PageStyle(template: .blank))
+        _ = try await store.importPDF(data: handout(), notebook: id, at: 0)
+        return (store, id, root)
+    }
+
+    @Test("Words printed on an imported PDF page are found by search")
+    func printedTextIsIndexed() async throws {
+        let (store, id, root) = try await importedNotebook()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let indexer = SearchIndexer(store: store) { "en-US" }
+        let index = await indexer.index(notebook: id)
+        let page = try await store.manifest(for: id).pages[0].id
+        let text = NoteSearch.fold(index.text(for: page) ?? "")
+        #expect(text.contains("krebs"))
+        #expect(!NoteSearch.search("krebs cycle", in: index).isEmpty)
+    }
+
+    @Test("An index written before backgrounds were read reads imported pages once more")
+    func oldIndexRereadsImportedPages() async throws {
+        let (store, id, root) = try await importedNotebook()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let pages = try await store.manifest(for: id).pages.map(\.id)
+        // What a v1 build left: every page read, none of them anything.
+        var old = SearchIndex(version: 1, language: "en-US")
+        for page in pages { old.set("", for: page, at: .now.addingTimeInterval(3_600)) }
+        try await store.saveSearchIndex(old, for: id)
+
+        let index = await SearchIndexer(store: store) { "en-US" }.index(notebook: id)
+        #expect(index.version == SearchIndex.currentVersion)
+        #expect(NoteSearch.fold(index.text(for: pages[0]) ?? "").contains("krebs"))
+        #expect(index.text(for: pages[1]) == "", "a page with no background isn't read again for nothing")
+    }
+
+    @Test("Printed words come after the user's own, so a snippet favours what they wrote")
+    func printedComesLast() {
+        let text = SearchIndexer.pageText(
+            elements: [PageElement(kind: .text, x: 0, y: 0, width: 10, height: 10, text: "my note")],
+            recognized: "ink words", printed: "printed words"
+        )
+        #expect(text == "my note\nink words\nprinted words")
     }
 }

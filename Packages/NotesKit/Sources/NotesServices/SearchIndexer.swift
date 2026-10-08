@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 import NotesModels
 import PencilKit
 #if canImport(UIKit)
@@ -68,11 +69,16 @@ public actor SearchIndexer {
         // every page is read again, once, in the language now chosen.
         let language = await self.language()
         let relanguaged = index.isRead(in: language) == false
+        // An index from before backgrounds were read has every imported page
+        // indexed as if it were blank paper; those pages are read once more.
+        let unreadBackgrounds = index.version < SearchIndex.backgroundsVersion
 
         var changed = relanguaged
         for page in manifest.pages {
             let modified = await store.pageModifiedAt(notebook: id, page: page.id) ?? page.createdAt
-            guard force || relanguaged || index.needsReindex(page.id, changedAt: modified) else { continue }
+            let backgroundUnread = unreadBackgrounds && page.backgroundPayloadFilename != nil
+            guard force || relanguaged || backgroundUnread
+                    || index.needsReindex(page.id, changedAt: modified) else { continue }
             let text = await read(page: page, notebook: id, language: language)
             index.set(text, for: page.id)
             changed = true
@@ -90,12 +96,15 @@ public actor SearchIndexer {
     /// recognition makes of the handwriting.
     private func read(page: PageRecord, notebook: UUID, language: String) async -> String {
         let recognized: String
+        let printed: String
         #if canImport(UIKit)
         recognized = await recognizeInk(page: page, notebook: notebook, language: language)
+        printed = await recognizeBackground(page: page, notebook: notebook, language: language)
         #else
         recognized = ""
+        printed = ""
         #endif
-        return Self.pageText(elements: page.elements, recognized: recognized)
+        return Self.pageText(elements: page.elements, recognized: recognized, printed: printed)
     }
 
     #if canImport(UIKit)
@@ -112,6 +121,30 @@ public actor SearchIndexer {
         )
         guard let lines = try? await ocr.recognize(in: image, languages: [language]) else { return "" }
         return OCRService.assemble(lines)
+    }
+
+    /// The words printed on an imported page — a PDF page, a scan, a photo —
+    /// which is rendered into the page's background image at import. Without
+    /// this, a 300-page textbook imported as a PDF could not be found by a
+    /// single word in it. Read with the same Vision pass as handwriting, from
+    /// an image decoded straight to a bounded size.
+    private func recognizeBackground(page: PageRecord, notebook: UUID, language: String) async -> String {
+        guard let filename = page.backgroundPayloadFilename,
+              let image = Self.backgroundImage(at: store.mediaURL(notebook: notebook, filename: filename))
+        else { return "" }
+        guard let lines = try? await ocr.recognize(in: image, languages: [language]) else { return "" }
+        return OCRService.assemble(lines)
+    }
+
+    static func backgroundImage(at url: URL) -> UIImage? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maximumPageSide
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        return UIImage(cgImage: image)
     }
     #endif
 
@@ -130,33 +163,42 @@ public actor SearchIndexer {
     /// Text boxes come FIRST because they are exact: what a text box says is what
     /// the page says, whereas recognition is a best guess. When both contain the
     /// query the exact copy is the one the snippet is cut from.
-    public static func pageText(elements: [PageElement], recognized: String) -> String {
-        var parts: [String] = []
-        for element in elements {
-            switch element.kind {
-            case .text, .codeBlock:
-                if let text = element.text?.trimmingCharacters(in: .whitespacesAndNewlines),
-                   !text.isEmpty { parts.append(text) }
-            case .functionPlot:
-                if let expression = element.functionExpression?.trimmingCharacters(in: .whitespacesAndNewlines),
-                   !expression.isEmpty { parts.append(expression) }
-                if let secondary = element.functionSecondaryExpression?.trimmingCharacters(in: .whitespacesAndNewlines),
-                   !secondary.isEmpty { parts.append(secondary) }
-                if let tertiary = element.functionTertiaryExpression?.trimmingCharacters(in: .whitespacesAndNewlines),
-                   !tertiary.isEmpty { parts.append(tertiary) }
-            case .link:
-                // A link is findable by what it was CALLED as well as where it
-                // goes — nobody remembers the URL of the paper they saved.
-                if let name = element.displayName, !name.isEmpty { parts.append(name) }
-                if let url = element.urlString, !url.isEmpty { parts.append(url) }
-            case .file:
-                if let name = element.displayName, !name.isEmpty { parts.append(name) }
-            case .image, .audio, .tape, .fill, .unknown:
-                continue
-            }
-        }
+    public static func pageText(elements: [PageElement], recognized: String, printed: String = "") -> String {
+        var parts = elements.flatMap(searchableText(of:))
         let trimmedInk = recognized.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedInk.isEmpty { parts.append(trimmedInk) }
+        // What was printed on an imported page comes last: the user's own
+        // words on top of a handout are what they'll most often search for.
+        let trimmedPrint = printed.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedPrint.isEmpty { parts.append(trimmedPrint) }
         return parts.joined(separator: "\n")
+    }
+
+    /// The words one element contributes: what a text or code box says, a
+    /// graph's expressions, a link's name and address, a file's name.
+    static func searchableText(of element: PageElement) -> [String] {
+        let candidates: [String?]
+        switch element.kind {
+        case .text, .codeBlock:
+            candidates = [element.text]
+        case .functionPlot:
+            candidates = [
+                element.functionExpression,
+                element.functionSecondaryExpression,
+                element.functionTertiaryExpression
+            ]
+        case .link:
+            // A link is findable by what it was CALLED as well as where it
+            // goes — nobody remembers the URL of the paper they saved.
+            candidates = [element.displayName, element.urlString]
+        case .file:
+            candidates = [element.displayName]
+        case .image, .audio, .tape, .fill, .unknown:
+            candidates = []
+        }
+        return candidates.compactMap { text in
+            let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return trimmed.isEmpty ? nil : trimmed
+        }
     }
 }

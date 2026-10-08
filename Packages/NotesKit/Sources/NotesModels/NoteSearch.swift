@@ -10,7 +10,12 @@ import Foundation
 /// nothing but a re-read: it is derived data, never a source of truth, which is
 /// why it lives outside the manifest and is never repaired the way ink is.
 public struct SearchIndex: Codable, Sendable, Equatable {
-    public static let currentVersion = 1
+    /// 2: an imported page's printed background (PDF, scan, photo) is read as
+    /// well as its ink. A v1 index never read those, so its imported pages are
+    /// read once more (`SearchIndexer.index`).
+    public static let currentVersion = 2
+    /// The first version whose readings include page backgrounds.
+    public static let backgroundsVersion = 2
 
     public var version: Int
     public var pages: [PageText]

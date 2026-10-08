@@ -723,7 +723,24 @@ struct CanvasPageView: UIViewRepresentable {
         /// Capturing the baseline before the stroke exists at all removes the
         /// guess: any entry at or past this index belongs to the current touch,
         /// full stop.
-        var strokeCountAtStrokeStart: Int?
+        ///
+        /// Counted LAZILY from `drawingAtStrokeStart`. Counting at pencil-down
+        /// meant reading the whole drawing and bridging its stroke array on the
+        /// main thread in the instant the stroke begins — measured at ~0.4 ms
+        /// on a 1,000-stroke page and ~4.4 ms on a 10,000-stroke one — for a
+        /// number only a settled shape ever asks for.
+        var strokeCountAtStrokeStart: Int? {
+            get { strokeCountOverride ?? drawingAtStrokeStart?.strokes.count }
+            set {
+                strokeCountOverride = newValue
+                if newValue == nil { drawingAtStrokeStart = nil }
+            }
+        }
+        /// The page as it stood when the current touch began: the coordinator's
+        /// own `lastKnownGoodDrawing`, which is exact whenever the pencil is up
+        /// (the vanish guard already depends on that), held at no cost.
+        private var drawingAtStrokeStart: PKDrawing?
+        private var strokeCountOverride: Int?
         /// The tool's ink/width AT THE MOMENT the shape settled — see
         /// `commitSettledShape`. `pendingSnapPath` isn't committed until the
         /// pencil actually lifts and a 90ms debounce elapses (`scheduleInkPass`),
@@ -871,7 +888,15 @@ struct CanvasPageView: UIViewRepresentable {
             // The floor for this stroke — see the property's own doc for why
             // this has to be captured HERE, before the stroke exists, rather
             // than later once a shape has settled under it.
-            strokeCountAtStrokeStart = canvasView.drawing.strokes.count
+            if loaded {
+                strokeCountOverride = nil
+                drawingAtStrokeStart = lastKnownGoodDrawing
+            } else {
+                // Before the page's file arrives, changes aren't tracked
+                // (`loaded` gates them), so the held copy can lag: count now.
+                drawingAtStrokeStart = nil
+                strokeCountOverride = canvasView.drawing.strokes.count
+            }
         }
 
         func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
@@ -909,7 +934,11 @@ struct CanvasPageView: UIViewRepresentable {
             // The page has moved off its last history step.
             hasUncommittedChange = true
 
-            let count = canvasView.drawing.strokes.count
+            // Read once: each read of `.drawing` copies the whole page out of
+            // PencilKit (measured ~2.6 ms at 10,000 strokes), on the main
+            // thread, at the end of every stroke.
+            let current = canvasView.drawing
+            let count = current.strokes.count
             let erasing = touchIsErasing || canvasView.tool is PKEraserTool
             if count < processedStrokeCount {
                 // Every path THIS class uses to remove ink (`replace`, `restore`)
@@ -952,7 +981,7 @@ struct CanvasPageView: UIViewRepresentable {
                 guardedShapeStroke = nil
                 processedStrokeCount = count
             }
-            lastKnownGoodDrawing = canvasView.drawing
+            lastKnownGoodDrawing = current
 
             scheduleSave()
             scheduleBeautification()

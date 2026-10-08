@@ -103,3 +103,32 @@ extension EditorScreen {
         }
     }
 }
+
+// MARK: - Sending pages to another notebook
+
+extension EditorScreen {
+
+    func pageDestinations() -> [PageDestination] {
+        services.repository.pageDestinations(excluding: notebook.id).map {
+            PageDestination(id: $0.id, title: $0.title, colorHex: $0.coverColorHex)
+        }
+    }
+
+    func sendPages(
+        _ pages: Set<UUID>, model: NotebookEditorModel, to destination: PageDestination, move: Bool
+    ) async {
+        // The newest strokes first: a page sent while its save is still
+        // debouncing would otherwise arrive without them.
+        await tracker.flushAllPendingSavesAndWait()
+        guard let count = await model.transferPages(pages, to: destination.id, move: move) else { return }
+        services.repository.pagesArrived(in: destination.id)
+        let what = count == 1 ? "1 page" : "\(count) pages"
+        if count == 0 {
+            editorNotice = "The cover stays with its own notebook, so nothing was sent."
+        } else if move {
+            editorNotice = "Moved \(what) to \(destination.title). The originals are in Recently Deleted."
+        } else {
+            editorNotice = "Copied \(what) to \(destination.title)."
+        }
+    }
+}

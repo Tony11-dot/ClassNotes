@@ -114,7 +114,7 @@ are no other third-party components.
 | R-06 | Write failure blanks the editor / silent save failure | low | high | Keep the last good manifest; show a save-failure banner; staged ink retries | mitigated (tested) |
 | R-07 | Large-notebook memory exhaustion (thumbnails, exit render, PDF import) | med | high | Thumbnail-size lazy renders, changed-only pushes, streamed import | mitigated (tested) |
 | R-08 | Final write cut off by suspension | low | med | Background-task assertion around the flush | mitigated (tested) |
-| R-09 | Main-thread work while the pencil is down (latency spikes) | med | med | All rewrites gated on pencil-up; encode off main (done); device profiling next round | open |
+| R-09 | Main-thread work while the pencil is down (latency spikes) | med | med | All rewrites gated on pencil-up; encode off main; pencil-down no longer copies the drawing, stroke end copies it once (measured, measurements.md §2b). Device profiling still needed | partly mitigated |
 | R-10 | PencilKit format change in a future iPadOS | low | high | Quarantine on decode failure; the original bytes are never overwritten | mitigated |
 | R-11 | Retired AI model pinned in Info.plist | high | low | Override removed; `AIModelConfigurationTests` fails if the plist pins a model other than the default | fixed |
 | R-12 | No telemetry: regressions in the field are invisible | high | med | D-004 | open |
@@ -254,3 +254,18 @@ are no other third-party components.
 - Privacy, auth, pricing: unchanged. Nothing new is sent.
 - Rollback: re-add the key.
 - Tests: `AIModelConfigurationTests`.
+
+**CC-008: search index v2 reads imported page backgrounds.**
+
+- What: `SearchIndexer` also runs Vision over an imported page's background
+  image (PDF page, scan, photo). `search.json` is version 2. A v1 index has
+  its imported pages read once more; pages without a background are not
+  re-read.
+- Why: a PDF's words could not be found by search.
+- Format: `search.json` is DERIVED data, never a source of truth. A missing or
+  unreadable index is empty, never an error. The document format is unchanged.
+- Privacy: Vision runs on device. Nothing leaves the iPad.
+- Rollback: an older build reads a v2 index as an index (its fields are
+  unchanged).
+- Tests: `ImportedPageSearchTests`.
+

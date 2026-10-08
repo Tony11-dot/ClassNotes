@@ -15,6 +15,10 @@ struct PageManagerView: View {
     /// cover rather than like blank paper.
     let cover: CoverPaper?
     @Binding var isVisible: Bool
+    /// Notebooks the selected pages can be sent to, read when the sheet opens.
+    var destinations: () -> [PageDestination] = { [] }
+    /// Sends pages to another notebook: (pages, destination, move?).
+    var onTransfer: (Set<UUID>, PageDestination, Bool) -> Void = { _, _, _ in }
     let onSelect: (UUID) -> Void
 
     private let columns = [GridItem(.adaptive(minimum: 96, maximum: 130), spacing: 14)]
@@ -29,6 +33,16 @@ struct PageManagerView: View {
 
     /// The notebook's Recently Deleted pages, shown in their own sheet.
     @State private var showTrash = false
+
+    /// Pages on their way to another notebook, while the destination is picked.
+    @State private var transfer: PendingTransfer?
+
+    private struct PendingTransfer: Identifiable {
+        let id = UUID()
+        let pages: Set<UUID>
+        let isMove: Bool
+        let destinations: [PageDestination]
+    }
 
     private var shownPages: [(index: Int, page: PageRecord)] {
         let all = Array(model.pages.enumerated()).map { (index: $0.offset, page: $0.element) }
@@ -70,6 +84,16 @@ struct PageManagerView: View {
             Rectangle().frame(width: 0.5).foregroundStyle(theme.separator.color)
         }
         .shadow(color: .black.opacity(0.18), radius: 20, x: 6)
+        .sheet(item: $transfer) { pending in
+            PageTransferSheet(
+                pageCount: pending.pages.count,
+                isMove: pending.isMove,
+                destinations: pending.destinations
+            ) { destination in
+                selectedPageIDs = nil
+                onTransfer(pending.pages, destination, pending.isMove)
+            }
+        }
         .sheet(isPresented: $showTrash) {
             DeletedPagesSheet(model: model) { id in
                 showTrash = false
@@ -141,6 +165,8 @@ struct PageManagerView: View {
             }
             .disabled(selected.isEmpty || selected.count >= model.pages.count)
             Divider().frame(height: 20).overlay(theme.separator.color)
+            sendMenu(selected)
+            Divider().frame(height: 20).overlay(theme.separator.color)
             Button {
                 Task {
                     for id in selected { await model.toggleBookmark(id) }
@@ -160,6 +186,31 @@ struct PageManagerView: View {
         .overlay(alignment: .top) {
             Rectangle().frame(height: 0.5).foregroundStyle(theme.separator.color)
         }
+    }
+
+    /// Move or copy the selected pages to another notebook.
+    private func sendMenu(_ selected: Set<UUID>) -> some View {
+        Menu {
+            Button {
+                transfer = PendingTransfer(pages: selected, isMove: true, destinations: destinations())
+            } label: {
+                Label("Move to Notebook…", systemImage: "arrow.right.doc.on.clipboard")
+            }
+            // Moving every page would leave this notebook a blank page.
+            .disabled(selected.count >= model.pages.count)
+            Button {
+                transfer = PendingTransfer(pages: selected, isMove: false, destinations: destinations())
+            } label: {
+                Label("Copy to Notebook…", systemImage: "doc.on.doc")
+            }
+        } label: {
+            Label("Send", systemImage: "square.and.arrow.up.on.square")
+                .font(.dsFootnote.weight(.semibold))
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .disabled(selected.isEmpty || selected.allSatisfy { id in model.page(id)?.isCover == true })
+        .accessibilityHint("Moves or copies the selected pages to another notebook")
     }
 
     /// The cover isn't page one — it's the cover. Numbering starts after it.
