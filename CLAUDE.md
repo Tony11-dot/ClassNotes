@@ -909,3 +909,12 @@ pricing changes go through its change-control list first.
   `MultitaskingCycleTests` (1,000 background/kill/resize cycles) are the QA
   contract alongside the storage torture test; grow them when a feature joins
   the day.
+- A DRAG PREVIEW inherits NO environment: SwiftUI hosts it on its own,
+  outside the view tree. Anything a `.draggable { … }` preview reads with
+  `@Environment(SomeObject.self)` must be handed to it explicitly
+  (`NotebookCoverTile.dragPreview`), or SwiftUI traps the moment a long-press
+  becomes a lift. That is how 1.5 (80)–(82) quit when a library cover was
+  pressed and moved; the device lab found it, not a test. `DragPreviewTests`
+  renders previews with nothing around them, so a missing hand-over dies
+  there. Values with a default (`\.theme`) don't trap, but they render in the
+  wrong theme, so pass them as well.

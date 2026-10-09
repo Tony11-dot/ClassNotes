@@ -65,8 +65,7 @@ extension LibraryGridScreen {
         .librarySelectable(isActive: selection.isActive, isSelected: selection.contains(notebook.id))
         // Drag a cover onto a shelf or a tag in the bar to file it there.
         .draggable(notebook.id.uuidString) {
-            NotebookCoverTile(notebook: notebook)
-                .frame(width: 110)
+            NotebookCoverTile.dragPreview(notebook, services: services, theme: theme)
         }
         .contextMenu { coverMenu(notebook) }
     }

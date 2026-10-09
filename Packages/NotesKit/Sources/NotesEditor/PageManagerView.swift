@@ -328,8 +328,11 @@ struct PageManagerView: View {
             }
         }
         .draggable(page.id.uuidString) {
-            // Drag preview.
+            // Drag preview. It is hosted outside this view's tree and inherits
+            // no environment, so the theme is handed over (see
+            // `NotebookCoverTile.dragPreview` for what a missing object costs).
             paper(page)
+                .environment(\.theme, theme)
                 .aspectRatio(PageGeometry.size.width / PageGeometry.size.height, contentMode: .fit)
                 .frame(width: 90)
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))

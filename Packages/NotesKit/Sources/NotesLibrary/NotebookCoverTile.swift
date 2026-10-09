@@ -69,3 +69,18 @@ public struct NotebookCoverTile: View {
         render = data.flatMap { UIImage(data: $0) }
     }
 }
+
+extension NotebookCoverTile {
+    /// What follows the finger while a cover is dragged. A drag preview is
+    /// hosted on its OWN, outside the screen's view tree, so it inherits none
+    /// of the environment — and this tile reads `AppServices` from it. Without
+    /// the hand-over below, SwiftUI traps on the missing object the moment a
+    /// long-press on a cover turns into a lift: the app quit whenever someone
+    /// pressed a cover and moved.
+    static func dragPreview(_ notebook: Notebook, services: AppServices, theme: ThemeSpec) -> some View {
+        NotebookCoverTile(notebook: notebook)
+            .frame(width: 110)
+            .environment(services)
+            .environment(\.theme, theme)
+    }
+}

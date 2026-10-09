@@ -264,14 +264,42 @@ scene and its retinted monogram. That memory is given back within a second
 of the scene ending. It is well clear of any memory limit, but it is the
 largest single allocation in a normal launch.
 
+**The 300-page notebook** (Activity Monitor, attached to the running app; the
+owner opened the notebook, scrolled through it as fast as a finger goes for
+about a minute, then went back to the library).
+
+| Moment | Footprint | CPU |
+|---|---|---|
+| Library, before | 50 MB | 0% |
+| Opening it and the first fast scroll (first 14 s) | 148–571 MB, peak **571 MB** | 30–87% |
+| Fast scrolling, sustained (55 s) | 313–377 MB, flat | about 45% |
+| Leaving the notebook | one sample at 472 MB, then 130 MB within 2 s | |
+| Library after it, still working (15 s) | 102–229 MB, last 106 MB | about 25% |
+
+Memory stays bounded while scrolling: a minute of fast scrolling through 300
+pages holds a flat band and gives most of it back on leaving, which is what
+the lazy, cell-sized renders (`PageRenderCache`) are for. The trace can't say
+which work makes the 571 MB peak or the library's later 25% CPU, because the
+Activity Monitor template doesn't record the app's own signposts. Record
+with Points of Interest to attribute them.
+
+**A crash found here.** The recording ended early: 91 s in, the app quit when
+the owner long-pressed a cover in the library and the press became a drag.
+The drag preview (`NotebookCoverTile`) read `AppServices` from an environment
+that a drag preview never has: "No Observable object of type AppServices
+found". This was in 1.5 (80) to (82), since covers became draggable in round
+4. It is fixed in 1.5 (83) (`NotebookCoverTile.dragPreview`), and
+`DragPreviewTests` renders the preview with nothing around it; without the
+fix, that test dies with the same fatal error.
+
 ## 10. Unmeasured: needs a hand on the device
 
 | Metric | Why it's unmeasured | How to measure it |
 |---|---|---|
 | Pencil-to-pixel latency | Belongs to PencilKit and the display; the simulator has no Pencil | Instruments on a device; or a high-speed camera |
 | Frame rate while writing, scrolling and zooming | Needs someone writing | Instruments → Animation Hitches |
-| Device memory ceiling on large notebooks | Needs a hand to open and scroll the 300-page notebook while recording | Instruments → Activity Monitor, with the 300-page notebook |
 | Launch on the low-end iPad (A16) | Not borrowed yet (D-002) | Instruments → App Launch, as §9 |
+| Memory on the low-end iPad (A16), 300-page notebook | Not borrowed yet (D-002) | Instruments → Activity Monitor, as §9 |
 | Battery during a 1-hour session | Device only | Xcode Energy Log |
 | Layout after rotation and window resize (§80) | Needs a device and a hand moving the window | Instruments → Animation Hitches during rotation; screen recording |
 | Crash-free rate | Needs time in the field | Support → Diagnostics on each device (D-004), App Store Connect → Crashes |

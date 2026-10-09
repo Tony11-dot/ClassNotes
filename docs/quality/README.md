@@ -127,7 +127,8 @@ All eight were decided in round 4, on the recommendations in registers.md.
 | Criterion | Status | Why / mitigation |
 |---|---|---|
 | Pencil latency, FPS, zoom FPS (§55, 56, 63) | **unmeasured** | Needs a device and Instruments. Signposts are added this round so it can be measured |
-| Launch time, library memory (§52) | **measured** on the iPad Air (M4) | 162 ms to first frame and 319 ms to active (median of 5); 52 MB with a 1,260-page library. The designed 2.6 s launch scene comes on top (measurements.md §9). Low-end A16 still to borrow |
+| Launch time, memory (§52) | **measured** on the iPad Air (M4) | 162 ms to first frame and 319 ms to active (median of 5); 52 MB with a 1,260-page library; a 300-page notebook scrolled fast holds 313–377 MB (peak 571 MB on opening). The designed 2.6 s launch scene comes on top (measurements.md §9). Low-end A16 still to borrow |
+| Crash on device: long-press a library cover and move (1.5 (80)–(82)) | **fixed** in 1.5 (83) | Found by the device lab. The drag preview read `AppServices` from an environment a drag preview never has; `DragPreviewTests` guards it |
 | Crash-free ≥ 99.8% (A3) | **measurable** | MetricKit reports on each device (D-004) plus App Store Connect's crash counts. Needs time in the field |
 | PDF search, vector PDF zoom, PDF export of annotations over the original vector (§16, 66, 67) | **met** for PDFs imported from 1.6 | D-006; earlier imports stay rasterised |
 | Sync conflicts (§27, 28, 71, 72) | **met in tests**, on in the build | Keep-both on conflict, never replaced under an open editor, replaced copies kept; two-device and torture tests. Still needs a check on two real iPads |
