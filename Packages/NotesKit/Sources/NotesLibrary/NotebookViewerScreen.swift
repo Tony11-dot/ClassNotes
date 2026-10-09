@@ -22,15 +22,19 @@ public struct NotebookViewerScreen: View {
     private let notebook: Notebook
     /// The page to scroll to on open — a search hit, or a bookmark.
     private let openingPage: UUID?
+    /// On the iPad, a notebook marked View Only can be made editable right
+    /// here. The iPhone only ever views.
+    private let allowsEditing: Bool
 
     @State private var manifest: NotebookManifest?
     @State private var zoomedPage: PageRecord?
     /// A page rendered for the share sheet, made only when Share is chosen.
     @State private var sharedPage: SharedPageImage?
 
-    public init(notebook: Notebook, openingPage: UUID? = nil) {
+    public init(notebook: Notebook, openingPage: UUID? = nil, allowsEditing: Bool = false) {
         self.notebook = notebook
         self.openingPage = openingPage
+        self.allowsEditing = allowsEditing
     }
 
     public var body: some View {
@@ -65,6 +69,20 @@ public struct NotebookViewerScreen: View {
         .background(theme.surface.color)
         .navigationTitle(notebook.title)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if allowsEditing {
+                // The route above this screen swaps it for the editor the moment
+                // the flag clears. The long-press menu in the library was the
+                // only way out, and nothing here said so.
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        try? services.repository.setViewOnly(false, for: notebook)
+                    } label: {
+                        Label("Make Editable", systemImage: "pencil")
+                    }
+                }
+            }
+        }
         .task { await load() }
         .fullScreenCover(item: $zoomedPage) { page in
             ZoomablePageView(page: page, cover: coverPaper) { size, pixelWidth in

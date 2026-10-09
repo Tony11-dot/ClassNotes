@@ -208,9 +208,22 @@ public actor DocumentStore {
     /// the result over the original was the old behaviour, and it turned one
     /// unreadable field into the loss of every image, text box, fill, bookmark,
     /// cover and page setting the notebook held.
+    ///
+    /// A notebook with NO package here is not a damaged package, and reading
+    /// it creates nothing: it throws `noSuchNotebook`. It used to fall through
+    /// to the rebuild and write a blank one-page manifest — so the search
+    /// indexer and the launch push, which read every row, made a blank
+    /// "notebook" for every notebook that lives on another device. The next
+    /// launch took that for the real thing and opened it, empty, in the
+    /// editor, and leaving the editor pushed the blank page over the real
+    /// pages on the server. Only the editor creates a missing package
+    /// (`createDocumentIfMissing`), because only the editor is asked to.
     public func manifest(for id: UUID) throws -> NotebookManifest {
         let span = Perf.begin("Manifest load")
         defer { Perf.end("Manifest load", span) }
+        guard FileManager.default.fileExists(atPath: documentURL(for: id).path) else {
+            throw DocumentError.noSuchNotebook
+        }
         let url = manifestURL(for: id)
         var manifest: NotebookManifest?
         var recoveredFromDamage = false
@@ -240,7 +253,7 @@ public actor DocumentStore {
         // A manifest rebuilt from the blobs on disk can't know whether the
         // notebook had a cover page, so it's stamped pre-v7 and `ensureCoverPage`
         // decides — better than silently claiming "this notebook has no cover".
-        var recovered = manifest ?? NotebookManifest(version: 6, pages: [])
+        var recovered = manifest ?? NotebookManifest(version: Self.rebuiltManifestVersion, pages: [])
         if !orphans.isEmpty {
             // Adopted pages go at the END, oldest first. The pages the manifest
             // already lists keep the order the user gave them: sorting the whole
@@ -647,5 +660,28 @@ public actor DocumentStore {
     nonisolated static func fileStamp(_ date: Date = .now) -> String {
         let millis = Int64(date.timeIntervalSince1970 * 1000)
         return "\(millis)-\(UUID().uuidString.prefix(8))"
+    }
+}
+
+extension DocumentStore {
+    public enum DocumentError: Error, Sendable, Equatable {
+        /// There is no package for this notebook on this device — it lives on
+        /// another one (`Notebook.isRemoteOnly`), or it was never written.
+        case noSuchNotebook
+        /// A package is already there; making one would write over it.
+        case alreadyExists
+    }
+
+    /// The stamp on a manifest rebuilt from blobs: pre-v7, so `ensureCoverPage`
+    /// decides about the cover. Also how a stand-in is recognised (`isStandIn`).
+    static let rebuiltManifestVersion = 6
+
+    /// For the editor only: a notebook the library lists as THIS device's whose
+    /// package is gone entirely opens onto a fresh page rather than nothing.
+    /// Someone opening a notebook to write in it is the one caller entitled to
+    /// make one — every other reader gets `noSuchNotebook` (see `manifest(for:)`).
+    public func createDocumentIfMissing(id: UUID, style: PageStyle, includesCover: Bool) throws {
+        guard !FileManager.default.fileExists(atPath: documentURL(for: id).path) else { return }
+        try createDocument(id: id, style: style, includesCover: includesCover)
     }
 }

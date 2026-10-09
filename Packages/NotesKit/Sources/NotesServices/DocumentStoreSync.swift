@@ -89,7 +89,7 @@ extension DocumentStore {
         else { throw SyncError.unreadableCopy }
     }
 
-    private func forgetCaches(for id: UUID) {
+    func forgetCaches(for id: UUID) {
         searchIndexCache[id] = nil
         fingerprintCache[id] = nil
     }

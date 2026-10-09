@@ -244,6 +244,52 @@ extension DocumentStore {
         }
     }
 
+    // MARK: - Stand-ins for notebooks that live on another device
+
+    /// Whether this package is a STAND-IN: the blank one-page manifest that
+    /// `manifest(for:)` wrote, up to 1.5 (84), whenever something asked it about
+    /// a notebook with no package here — a remote-only notebook, read at launch
+    /// by the search indexer and the account push. Next launch it passed for
+    /// the real thing.
+    ///
+    /// Recognised by its exact shape, never by "it's empty" — a notebook made a
+    /// moment ago is empty too. The manifest reads, carries the made-up page
+    /// list's v6 stamp, and lists one page: blank, not a cover, nothing on it,
+    /// made at least a minute after the notebook was (a real notebook's first
+    /// page is made in the same instant as the notebook). And the package holds
+    /// nothing else anyone made: no ink of any kind, no media, no cover render,
+    /// no page trash, no backup or quarantined manifest.
+    public func isStandIn(_ id: UUID, notebookCreatedAt: Date) -> Bool {
+        let fm = FileManager.default
+        guard let entries = try? fm.contentsOfDirectory(atPath: documentURL(for: id).path),
+              Set(entries).isSubset(of: ["manifest.json", "info.json", "search.json", "pages"]),
+              (try? fm.contentsOfDirectory(atPath: pagesDirectory(for: id).path))?.isEmpty ?? true,
+              let data = try? Data(contentsOf: manifestURL(for: id)),
+              let manifest = try? decoder.decode(NotebookManifest.self, from: data),
+              manifest.version == Self.rebuiltManifestVersion,
+              manifest.pages.count == 1, let page = manifest.pages.first
+        else { return false }
+        return page.template == .blank && !page.isCover && !page.isBookmarked
+            && page.elements.isEmpty
+            && page.backgroundPayloadFilename == nil && page.backgroundPDF == nil
+            && page.createdAt > notebookCreatedAt.addingTimeInterval(60)
+    }
+
+    /// Moves a package out of the library, whole, into `Set Aside/` among the
+    /// notebooks: kept, never deleted, and invisible to `packageIDs` — so to
+    /// the library and to iCloud sync. Refused while the editor has it open.
+    @discardableResult
+    public func setAside(_ id: UUID) throws -> URL {
+        guard editing[id] == nil else { throw SyncError.inUse }
+        let fm = FileManager.default
+        let folder = rootURL.appendingPathComponent("Set Aside", isDirectory: true)
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        let kept = folder.appendingPathComponent("\(id.uuidString)-\(Self.fileStamp()).\(Self.fileExtension)")
+        try fm.moveItem(at: documentURL(for: id), to: kept)
+        forgetCaches(for: id)
+        return kept
+    }
+
     /// When the package was first written — the best creation date a notebook
     /// rebuilt without its own description can get.
     public func packageCreatedAt(id: UUID) -> Date? {

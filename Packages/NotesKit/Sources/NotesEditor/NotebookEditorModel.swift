@@ -39,6 +39,18 @@ public final class NotebookEditorModel {
 
     public var pages: [PageRecord] { manifest?.pages ?? [] }
 
+    /// Loads the manifest. A notebook that should have a cover page (`hasCover`)
+    /// and was written before manifest v7 gets its cover added here, once, and
+    /// everything after that is an ordinary page list.
+    ///
+    /// A notebook of this device's whose package is gone entirely opens onto a
+    /// fresh page in `style`. Reading a missing notebook creates nothing anywhere
+    /// else (`DocumentStore.manifest(for:)`), so the editor has to ask for it.
+    public func load(style: PageStyle, hasCover: Bool) async {
+        try? await store.createDocumentIfMissing(id: notebookID, style: style, includesCover: hasCover)
+        await load(coverStyle: hasCover ? style : nil)
+    }
+
     /// Loads the manifest. `coverStyle` is passed for a notebook that should have
     /// a cover page: a notebook written before manifest v7 gets its cover added
     /// here, once, and everything after that is an ordinary page list.

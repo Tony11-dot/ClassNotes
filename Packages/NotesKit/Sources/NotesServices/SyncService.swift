@@ -15,10 +15,13 @@ public struct NotebookSnapshot: Sendable {
     public let shelfID: UUID?
     public let createdAt: Date
     public let updatedAt: Date
+    /// For a notebook with no package here (remote-only): the page count the
+    /// server last reported, since there is no manifest to count.
+    public let remotePageCount: Int?
 
     public init(
         id: UUID, title: String, coverColorHex: String, template: String,
-        shelfID: UUID?, createdAt: Date, updatedAt: Date
+        shelfID: UUID?, createdAt: Date, updatedAt: Date, remotePageCount: Int? = nil
     ) {
         self.id = id
         self.title = title
@@ -27,6 +30,7 @@ public struct NotebookSnapshot: Sendable {
         self.shelfID = shelfID
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.remotePageCount = remotePageCount
     }
 }
 
@@ -107,8 +111,11 @@ public final class SyncService {
         guard let token = auth.token else { return }
         let client = client
         let store = store
-        // Page count lives in the on-disk manifest, not the SwiftData row.
-        let pages = (try? await store.manifest(for: snapshot.id).pages.count) ?? 1
+        // Page count lives in the on-disk manifest, not the SwiftData row. A
+        // notebook with no package here sends back the server's own count, and
+        // without one sends nothing: guessing told the server "one page".
+        guard let pages = (try? await store.manifest(for: snapshot.id).pages.count)
+                ?? snapshot.remotePageCount else { return }
         // The cover the user actually drew, so ClassMate's tile matches the
         // iPad's. Absent until the editor has rendered one.
         let cover = await store.coverImageData(for: snapshot.id)

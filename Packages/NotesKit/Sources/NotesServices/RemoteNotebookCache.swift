@@ -53,18 +53,36 @@ public actor RemoteNotebookCache {
     /// throwing — there's nothing more useful to do with a page that can't
     /// be reached right now.
     public func pages(for notebookID: UUID, token: String) async -> [Page] {
-        guard let fetched = try? await client.fetchNotebookPages(
-            id: notebookID.uuidString, token: token
-        ) else {
+        do {
+            return try await freshPages(for: notebookID, token: token)
+        } catch {
             return cachedPages(for: notebookID)
         }
+    }
+
+    public enum FetchError: Error, Sendable {
+        /// A page or an attachment on it couldn't be kept.
+        case incomplete
+    }
+
+    /// The pages straight from the server, re-cached — every one of them and
+    /// everything on them, or an error. What "Edit on this iPad" builds a
+    /// notebook from (`NotebookRepository.adoptRemote`): the cache keeps the
+    /// pictures between launches but not the voice notes, files and links, and
+    /// a notebook built without them would push their absence to the server.
+    public func freshPages(for notebookID: UUID, token: String) async throws -> [Page] {
+        let fetched = try await client.fetchNotebookPages(id: notebookID.uuidString, token: token)
         let dir = notebookDirectory(notebookID)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         var pages: [Page] = []
+        var complete = true
         for page in fetched.pages.sorted(by: { $0.pageIndex < $1.pageIndex }) {
             guard let imageURL = write(
                 dataURL: page.dataUrl, to: dir.appendingPathComponent("page-\(page.pageIndex).png")
-            ) else { continue }
+            ) else {
+                complete = false
+                continue
+            }
             let attachments = page.attachments.enumerated().compactMap { index, attachment -> Attachment? in
                 var fileURL: URL?
                 if let dataUrl = attachment.dataUrl {
@@ -73,6 +91,7 @@ public actor RemoteNotebookCache {
                         dataURL: dataUrl,
                         to: dir.appendingPathComponent("page-\(page.pageIndex)-attachment-\(index).\(ext)")
                     )
+                    if fileURL == nil { complete = false }
                 }
                 return Attachment(
                     kind: attachment.kind, name: attachment.name,
@@ -82,6 +101,7 @@ public actor RemoteNotebookCache {
             }
             pages.append(Page(id: page.pageIndex, imageURL: imageURL, attachments: attachments))
         }
+        guard complete else { throw FetchError.incomplete }
         return pages
     }
 

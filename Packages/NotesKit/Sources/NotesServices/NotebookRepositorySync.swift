@@ -3,12 +3,31 @@ import Foundation
 import NotesModels
 import SwiftData
 
-/// What iCloud sync (D-003) asks of the library's rows.
+/// What sync asks of the library's rows: the account mirror's launch push,
+/// and iCloud (D-003).
 extension NotebookRepository {
 
-    /// Every notebook the library lists, and those in the trash.
+    /// A snapshot of the ENTIRE local library, for the launch full-sync.
+    ///
+    /// Trashed notebooks are left out: they are not in the library any more, and
+    /// pushing one would put it straight back into the ClassNotes tab. So are
+    /// remote-only ones: the server is where they come FROM, and echoing them
+    /// back told it they had one page — this device's guess, since it has none.
+    public func fullSnapshot() -> (notebooks: [NotebookSnapshot], shelves: [ShelfSnapshot]) {
+        let notebooks = (try? context.fetch(FetchDescriptor<Notebook>())) ?? []
+        let shelves = (try? context.fetch(FetchDescriptor<Shelf>())) ?? []
+        return (notebooks.filter { !$0.isTrashed && !$0.isRemoteOnly }.map(snapshot), shelves.map(snapshot))
+    }
+
+    /// Every notebook the library lists as THIS device's, and those in the trash.
+    ///
+    /// Remote-only rows are left out: their package was never here, so a copy
+    /// of one in iCloud that this device's ledger says it sent is a stand-in an
+    /// older build uploaded (`DocumentStore.isStandIn`), and sync moves it out
+    /// of the shared folder instead of bringing it back down. A real package
+    /// from another device has no ledger entry here and is still taken in.
     public func rowIDs() -> (all: Set<UUID>, trashed: Set<UUID>) {
-        let rows = (try? context.fetch(FetchDescriptor<Notebook>())) ?? []
+        let rows = ((try? context.fetch(FetchDescriptor<Notebook>())) ?? []).filter { !$0.isRemoteOnly }
         return (Set(rows.map(\.id)), Set(rows.filter(\.isTrashed).map(\.id)))
     }
 

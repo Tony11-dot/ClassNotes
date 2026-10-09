@@ -12,3 +12,4 @@ Use ClassNotes without an account, keep your notebooks the same on every iPad wi
 - Short tips the first time you use a tool, like the lasso or NOVA. Show them again from Settings.
 - Support shows crash and speed reports kept on your iPad, and you can share them with us.
 - Better VoiceOver support, clearer error messages, and a fix for tape moved with the lasso landing in the wrong place.
+- A notebook written on another device now opens with Edit on this iPad: its pages come over as pages you can write on, with their voice notes, files and links.

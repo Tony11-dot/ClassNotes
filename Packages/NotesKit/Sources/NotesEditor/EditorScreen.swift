@@ -304,7 +304,7 @@ public struct EditorScreen: View {
             model = NotebookEditorModel(notebookID: notebook.id, store: services.documentStore)
             // A notebook that should have a cover page gets one here if it was
             // made before covers were pages — once, then never again.
-            await model.load(coverStyle: notebook.usesCoverPage ? notebook.pageStyle : nil)
+            await model.load(style: notebook.pageStyle, hasCover: notebook.usesCoverPage)
             Perf.end("Notebook open", opening)
             // Land on the page that was asked for, if it's still there. Checked
             // AFTER loading: the id came from an index or a bookmark written
@@ -823,7 +823,7 @@ extension EditorScreen {
                 // JPEG, not PNG: a handwritten page's render is several times
                 // smaller as a JPEG, and the smaller the body the less likely
                 // the upload is still in flight when iOS suspends the app.
-                if let data = renderPageImage(page, scale: 1.5, drawing: ink)
+                if let data = renderPageImage(page, scale: PagePictureFit.renderScale, drawing: ink)
                     .jpegData(compressionQuality: 0.85) {
                     images.append(NotebookPageImage(
                         pageIndex: index,

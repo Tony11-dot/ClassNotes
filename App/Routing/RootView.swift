@@ -91,29 +91,39 @@ struct RootView: View {
     private var deviceRoot: some View {
         if UIDevice.current.userInterfaceIdiom == .pad {
             LibraryTabScreen { notebook, pageID in
-                // A remote-only notebook (created on another device, never
-                // opened here) has no local ink package for the editor to
-                // open — route it to the read-only viewer on every device,
-                // iPad included, until real content sync exists. A notebook
-                // the user explicitly marked View Only has real local ink —
-                // it opens through the SAME local viewer the iPhone always
-                // gets, not the remote-cache one.
-                if notebook.isRemoteOnly {
-                    RemoteNotebookViewerScreen(notebook: notebook)
-                } else if notebook.isViewOnly {
-                    NotebookViewerScreen(notebook: notebook, openingPage: pageID)
-                } else {
-                    EditorScreen(notebook: notebook, openingPage: pageID)
-                }
+                NotebookRoute(notebook: notebook, pageID: pageID, canEdit: true)
             }
         } else {
             LibraryListScreen { notebook, pageID in
-                if notebook.isRemoteOnly {
-                    RemoteNotebookViewerScreen(notebook: notebook)
-                } else {
-                    NotebookViewerScreen(notebook: notebook, openingPage: pageID)
-                }
+                NotebookRoute(notebook: notebook, pageID: pageID, canEdit: false)
             }
+        }
+    }
+}
+
+/// Where opening a notebook goes, decided INSIDE a view of its own so it is
+/// decided again when the notebook changes under it: "Edit on this iPad" and
+/// "Make Editable" clear a flag, and the screen becomes the editor in place.
+/// Read in the library's destination closure, the flags were read once, and
+/// the user was left looking at a viewer for a notebook that could now be
+/// edited.
+///
+/// A remote-only notebook (written on another device, with no ink package
+/// here) shows the server's pictures of its pages; the iPad can bring it over.
+/// A notebook the user marked View Only has real local ink and opens in the
+/// SAME local viewer the iPhone always gets. The iPhone never edits.
+private struct NotebookRoute: View {
+    let notebook: Notebook
+    let pageID: UUID?
+    let canEdit: Bool
+
+    var body: some View {
+        if notebook.isRemoteOnly {
+            RemoteNotebookViewerScreen(notebook: notebook, allowsEditing: canEdit)
+        } else if !canEdit || notebook.isViewOnly {
+            NotebookViewerScreen(notebook: notebook, openingPage: pageID, allowsEditing: canEdit)
+        } else {
+            EditorScreen(notebook: notebook, openingPage: pageID)
         }
     }
 }

@@ -18,6 +18,10 @@ public final class NotebookRepository {
     /// Optional so tests / previews can omit it; when present, every mutation
     /// mirrors up to the ClassMate backend for the ClassNotes tab.
     let sync: SyncService?
+    /// How many pages the server holds for each notebook, from the last library
+    /// pull. A remote-only notebook has no manifest here to count, so a rename
+    /// made on this device tells the server the server's own number back.
+    @ObservationIgnored var remotePageCounts: [UUID: Int] = [:]
 
     public init(
         context: ModelContext,
@@ -37,25 +41,16 @@ public final class NotebookRepository {
         NotebookSnapshot(
             id: n.id, title: n.title, coverColorHex: n.coverColorHex,
             template: n.defaultTemplateRaw, shelfID: n.shelfID,
-            createdAt: n.createdAt, updatedAt: n.updatedAt
+            createdAt: n.createdAt, updatedAt: n.updatedAt,
+            remotePageCount: n.isRemoteOnly ? remotePageCounts[n.id] : nil
         )
     }
 
-    private func snapshot(_ s: Shelf) -> ShelfSnapshot {
+    func snapshot(_ s: Shelf) -> ShelfSnapshot {
         ShelfSnapshot(
             id: s.id, name: s.name, colorHex: s.colorHex,
             symbolName: s.symbolName, sortIndex: s.sortIndex, createdAt: s.createdAt
         )
-    }
-
-    /// A snapshot of the ENTIRE local library, for the launch full-sync.
-    ///
-    /// Trashed notebooks are left out: they are not in the library any more, and
-    /// pushing one would put it straight back into the ClassNotes tab.
-    public func fullSnapshot() -> (notebooks: [NotebookSnapshot], shelves: [ShelfSnapshot]) {
-        let notebooks = (try? context.fetch(FetchDescriptor<Notebook>())) ?? []
-        let shelves = (try? context.fetch(FetchDescriptor<Shelf>())) ?? []
-        return (notebooks.filter { !$0.isTrashed }.map(snapshot), shelves.map(snapshot))
     }
 
     /// The live library, reduced to what search needs. Trashed notebooks are left
@@ -434,6 +429,7 @@ public final class NotebookRepository {
         var touched: [Notebook] = []
         for entry in remote.notebooks {
             guard let id = UUID(uuidString: entry.id) else { continue }
+            remotePageCounts[id] = entry.pageCount
             if let existing = byID[id] {
                 guard entry.updatedAt > existing.updatedAt else { continue }
                 let title = entry.title.trimmingCharacters(in: .whitespacesAndNewlines)

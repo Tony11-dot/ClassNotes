@@ -70,7 +70,8 @@ public extension NotebookRepository {
     /// notebook" with its pages intact.
     ///
     /// Never deletes anything, and never touches a row that already exists
-    /// beyond clearing a stale remote-only flag on one whose package is here.
+    /// beyond clearing a stale remote-only flag on one whose package is here,
+    /// or setting aside a stand-in (`DocumentStore.isStandIn`) that isn't.
     @discardableResult
     func reconcileWithDisk() async -> LibraryReconciliation {
         let packageIDs = await store.packageIDs()
@@ -85,10 +86,7 @@ public extension NotebookRepository {
         var changed = false
         for id in packageIDs {
             if let row = rowByID[id] {
-                if row.isRemoteOnly {
-                    row.isRemoteOnly = false
-                    changed = true
-                }
+                if await settle(row) { changed = true }
                 continue
             }
             let notebook: Notebook
@@ -126,6 +124,26 @@ public extension NotebookRepository {
             Perf.event("Library recovered notebooks")
         }
         return result
+    }
+
+    /// Squares a row with the package found for it; true when the row changed.
+    ///
+    /// A package here means the notebook is this device's — unless it is a
+    /// stand-in an older build wrote for a notebook that lives on another
+    /// device. Taken for that notebook, a stand-in opened as a blank page in
+    /// the editor, and leaving pushed the blank page over the real ones on the
+    /// server. It holds nothing, so it is set aside and the notebook reads from
+    /// the server again — also when 1.5 (84) had already flipped the row to
+    /// local. While the editor has it open, nothing changes.
+    private func settle(_ row: Notebook) async -> Bool {
+        if await store.isStandIn(row.id, notebookCreatedAt: row.createdAt) {
+            guard (try? await store.setAside(row.id)) != nil, !row.isRemoteOnly else { return false }
+            row.isRemoteOnly = true
+            return true
+        }
+        guard row.isRemoteOnly else { return false }
+        row.isRemoteOnly = false
+        return true
     }
 
     /// A row for a package with no description: a placeholder name, the date

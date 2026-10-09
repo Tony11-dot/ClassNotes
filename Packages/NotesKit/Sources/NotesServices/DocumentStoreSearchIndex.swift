@@ -40,10 +40,10 @@ extension DocumentStore {
         return prepared
     }
 
+    /// A no-op for a notebook with no package: the index is derived from the
+    /// package, and a derived file must never be what creates one.
     public func saveSearchIndex(_ index: SearchIndex, for id: UUID) throws {
-        try FileManager.default.createDirectory(
-            at: documentURL(for: id), withIntermediateDirectories: true
-        )
+        guard FileManager.default.fileExists(atPath: documentURL(for: id).path) else { return }
         let data = try SearchIndexCoding.encoder.encode(index)
         let url = searchIndexURL(for: id)
         try data.write(to: url, options: .atomic)

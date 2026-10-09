@@ -882,6 +882,34 @@ pricing changes go through its change-control list first.
   before shipping one, launch a Release build signed with the real
   entitlements (`CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual` on the
   simulator embeds them; `CODE_SIGNING_ALLOWED=NO` strips them).
+- Reading a notebook never CREATES one. `DocumentStore.manifest(for:)` throws
+  `noSuchNotebook` when there is no package folder, and derived files
+  (`saveSearchIndex`, `writeInfo`) never make one; only the editor creates a
+  missing package, explicitly (`createDocumentIfMissing`). Up to 1.5 (84) the
+  read fell through to the damage rebuild and WROTE a blank one-page manifest,
+  so the launch push and the search indexer — which read every row — made a
+  blank stand-in for every remote-only notebook; the next launch took it for the
+  notebook, opened it empty in the editor, and leaving pushed the blank page
+  over the real pages on the server. Launch reconciliation sets such a stand-in
+  aside (`isStandIn`: v6, one blank page made a minute or more after the
+  notebook, nothing else in the package — recognised by SHAPE, because a
+  brand-new notebook is empty too) into `Set Aside/` and keeps the notebook
+  remote-only. Remote-only rows are left out of the launch push
+  (`fullSnapshot`) and out of iCloud's rows (`rowIDs`), and a rename of one
+  sends the server's own page count back (`remotePageCounts`), never a guess.
+- A remote-only notebook can be brought over on the iPad ("Edit on this
+  iPad", `NotebookRepository.adoptRemote`): the server keeps pictures, not
+  ink, so each page becomes its picture as a background
+  (`createDocument(id:fromPictures:)`, assembled in a temporary folder and
+  moved into place whole), sized to the page it was rendered from
+  (`PagePictureFit`, which also owns the 1.5 render scale the editor pushes
+  at). Its voice notes, files and links come over as working elements,
+  because leaving the editor pushes this device's pages and a page pushed
+  without them deletes them from the server — so it builds only from a
+  COMPLETE fresh fetch (`RemoteNotebookCache.freshPages`), never the offline
+  cache. Which screen a notebook opens in is decided inside `NotebookRoute`,
+  a view of its own, so clearing a flag swaps the viewer for the editor in
+  place.
 - NOVA citations are read in every form the live model writes
   (`NovaReply.citedPages`); when the model changes, re-run the live
   evaluation (`CLASSNOTES_LIVE_EVAL=1`, `NovaLiveEvalTests`) and record the

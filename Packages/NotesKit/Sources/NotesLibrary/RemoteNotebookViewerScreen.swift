@@ -16,19 +16,30 @@ import UIKit
 /// it is already baked into that render, the same way it's baked into the
 /// PDF export; only audio/file/link attachments need their own row, since
 /// those are the one thing a flat picture can't play or open.
+///
+/// On the iPad it also offers to bring the notebook over ("Edit on this iPad",
+/// `NotebookRepository.adoptRemote`). Without that, a notebook written on
+/// another device was something you could look at and never write in, with
+/// nothing on screen to say why.
 public struct RemoteNotebookViewerScreen: View {
     @Environment(AppServices.self) private var services
     @Environment(\.theme) private var theme
 
     private let notebook: Notebook
+    /// The iPad edits; the iPhone only ever views.
+    private let allowsEditing: Bool
 
-    public init(notebook: Notebook) {
+    public init(notebook: Notebook, allowsEditing: Bool = false) {
         self.notebook = notebook
+        self.allowsEditing = allowsEditing
     }
 
     @State private var pages: [RemoteNotebookCache.Page] = []
     @State private var pageImages: [Int: UIImage] = [:]
     @State private var isLoading = true
+    @State private var confirmingEdit = false
+    @State private var isBringingOver = false
+    @State private var bringOverFailed = false
 
     public var body: some View {
         Group {
@@ -58,10 +69,71 @@ public struct RemoteNotebookViewerScreen: View {
                 .refreshable { await load() }
             }
         }
+        .overlay {
+            if isBringingOver {
+                VStack(spacing: 14) {
+                    BrandLoader(size: 52)
+                    Text("Bringing the pages over…")
+                        .font(.dsSubheadline)
+                        .foregroundStyle(theme.inkSecondary.color)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(theme.surface.color.opacity(0.92))
+            }
+        }
         .background(theme.surface.color)
         .navigationTitle(notebook.title)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if allowsEditing {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        confirmingEdit = true
+                    } label: {
+                        Label("Edit on this iPad", systemImage: "pencil")
+                    }
+                    .disabled(isBringingOver)
+                }
+            }
+        }
+        .confirmationDialog(
+            "Edit this notebook on this iPad?", isPresented: $confirmingEdit, titleVisibility: .visible
+        ) {
+            Button("Edit on this iPad") { Task { await bringOver() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                "It was written on another device, and only pictures of its pages are here. "
+                    + "Each page becomes a picture you can write on; what's already on it can't be "
+                    + "erased or moved. The device it was written on keeps the original."
+            )
+        }
+        .alert("Couldn't bring this notebook over", isPresented: $bringOverFailed) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Check that you're online and signed in, then try again. Nothing was changed.")
+        }
         .task { await load() }
+    }
+
+    /// "Edit on this iPad": a COMPLETE fresh copy of the pages, then a package
+    /// built from them. When it lands the row stops being remote-only, and the
+    /// route above this screen swaps it for the editor.
+    private func bringOver() async {
+        guard let token = services.auth.token else {
+            bringOverFailed = true
+            return
+        }
+        isBringingOver = true
+        defer { isBringingOver = false }
+        do {
+            let cache = services.remoteNotebookCache
+            let fresh = try await cache.freshPages(for: notebook.id, token: token)
+            let cover = await cache.coverURL(for: notebook.id).flatMap { try? Data(contentsOf: $0) }
+            try await services.repository.adoptRemote(notebook, pages: fresh, coverRender: cover)
+        } catch {
+            bringOverFailed = true
+        }
     }
 
     private func pageView(_ page: RemoteNotebookCache.Page) -> some View {
