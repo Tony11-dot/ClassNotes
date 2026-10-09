@@ -328,8 +328,7 @@ wheel; two-finger ruler, media/file drop, voice-note bubbles;
 shelves/collections; page content (renders + attachments) synced to the ClassMate
 ClassNotes tab, where pages zoom and their voice notes, files and links work.
 
-Later: turning iCloud sync on (built, gated on the iCloud container);
-generating a PERSONAL font from handwriting samples (the hard
+Later: generating a PERSONAL font from handwriting samples (the hard
 ML feature — distinct from the shipped handwriting→text) stays a premium stub.
 
 ## Architecture invariants (tools added round 5)
@@ -867,9 +866,11 @@ pricing changes go through its change-control list first.
   recovery copies) never travel. The whole thing runs in tests against a
   plain folder (`FolderDrive`) as two devices; keep `CloudSyncTests` and
   `CloudSyncTortureTests` green.
-- iCloud sync is OFF in the build (`CMCloudSync` = false in Info.plist) until
-  the iCloud container exists on the App ID — the entitlements file was never
-  wired into the build. Don't show the switch while it can't work.
+- iCloud sync is ON in the build (`CMCloudSync` = true in Info.plist, since
+  1.5 (81)): the container `iCloud.com.classmate.notes` exists on the App ID and
+  `Config/ClassNotes.entitlements` is wired into the Release configuration. It is
+  tested only against `FolderDrive` as two simulated devices, never yet between
+  two real devices; keep the flag the single switch if it must go dark again.
 - NOVA citations are read in every form the live model writes
   (`NovaReply.citedPages`); when the model changes, re-run the live
   evaluation (`CLASSNOTES_LIVE_EVAL=1`, `NovaLiveEvalTests`) and record the
