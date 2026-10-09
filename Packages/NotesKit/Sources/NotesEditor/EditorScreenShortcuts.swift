@@ -35,6 +35,12 @@ extension EditorScreen {
                 Task { await addPageAfterFocused() }
             }
             .keyboardShortcut("n", modifiers: [.command, .shift])
+            Button("Zoom In") { zoom(to: Self.zoomStep(pageZoom, by: 1)) }
+                .keyboardShortcut("=", modifiers: .command)
+            Button("Zoom Out") { zoom(to: Self.zoomStep(pageZoom, by: -1)) }
+                .keyboardShortcut("-", modifiers: .command)
+            Button("Actual Size") { zoom(to: 1) }
+                .keyboardShortcut("0", modifiers: .command)
             Button(showPages ? "Hide Pages" : "Show Pages") {
                 withAnimation(.spring(duration: 0.3)) { showPages.toggle() }
             }
@@ -43,6 +49,33 @@ extension EditorScreen {
         .frame(width: 0, height: 0)
         .opacity(0)
         .accessibilityHidden(true)
+    }
+
+    /// The zoom levels ⌘= and ⌘- step through, the way every document app on
+    /// the platform steps: a fixed ladder, so pressing back lands exactly
+    /// where you were.
+    nonisolated static let zoomLadder: [CGFloat] = [0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4]
+
+    /// The next rung up (`direction` > 0) or down from `current`; a zoom left
+    /// between rungs by a pinch steps to the nearest rung in that direction.
+    nonisolated static func zoomStep(_ current: CGFloat, by direction: Int) -> CGFloat {
+        let tolerance: CGFloat = 0.01
+        if direction > 0 {
+            return zoomLadder.first { $0 > current + tolerance } ?? zoomLadder.last ?? current
+        }
+        return zoomLadder.last { $0 < current - tolerance } ?? zoomLadder.first ?? current
+    }
+
+    /// Zooms the page stack the way the 100% chip does. No jump to the top of
+    /// the focused page: the keyboard is often used mid-page, and being thrown
+    /// back to a page's top edge is the "unexpected page movement" to avoid.
+    func zoom(to level: CGFloat) {
+        let target = Self.clampZoom(level)
+        guard abs(target - pageZoom) > 0.001 else { return }
+        withAnimation(.spring(duration: 0.28)) {
+            pageZoom = target
+            zoomAnchor = target
+        }
     }
 
     /// Moves the focus one page on (or back) and scrolls to it.

@@ -61,8 +61,8 @@ public struct LibraryListScreen<Destination: View>: View {
                 } else if liveNotebooks.isEmpty {
                     EmptyStateView(
                         systemImage: "book.closed",
-                        title: "No notebooks yet",
-                        message: "Notebooks you create on iPad appear here to read and share."
+                        title: "Your notebooks will appear here",
+                        message: "Notebooks you write on iPad show up here, to read and share."
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {

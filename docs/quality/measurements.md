@@ -36,7 +36,7 @@ Last updated: 2026-10-09.
 | Failures injected | process crash (fresh store, staged ink lost), write cut off between backup and new manifest, manifest damaged (garbage, truncated, missing), with and without a crash |
 | Invariants | ink that reached disk is on its live page or in Recently Deleted, byte for byte; a live page shows its newest staged or written ink; no duplicate pages; no phantom pages; purged pages never return; Recently Deleted lists exactly the deleted pages; page order and elements are exact unless damage forced the one-step rollback the backup represents |
 | Bugs it found | 2, both fixed with targeted regression tests (README, "Phase 1 outcome") |
-| Unit and regression tests | 706 tests in 129 suites (NotesKit) + 21 (ClassMateTheme), all passing (round 4) |
+| Unit and regression tests | 735 tests in 136 suites (NotesKit) + 21 (ClassMateTheme), all passing (round 5) |
 
 ## 2. Storage
 
@@ -174,7 +174,7 @@ notebooks, editors opening and closing, syncs in any order):
 | 13 | 44 | 11 | 44 | 44 |
 
 The two libraries converged in every run. iCloud itself carrying the files
-is not measured here; that needs the container (R-25) and two iPads.
+is not measured here; that needs two real iPads (the container exists from 1.5 (81)).
 
 ## 7. Storage torture with PDF imports (round 4)
 
@@ -182,7 +182,45 @@ The 750-step crash and damage torture test now imports PDFs (33 imports
 across the four seeds) and checks after every step that a page's PDF exists
 while any live or deleted page uses it. All four seeds pass.
 
-## 8. Unmeasured: needs a hand on the device
+## 8. Round 5: drag and drop, long session, multitasking
+
+Same host and build as above.
+
+**Drag and drop (§78)** — `DragAndDropTests`: 200 drops in a row (photos
+and text alternating) onto one page, 200 of 200 landed. Routing is checked
+for PDF, four image formats, links, text, Office files and zips; reading is
+checked through real `NSItemProvider`s.
+
+**Long session (§44)** — `LongSessionTests`: six lectures over three
+notebooks in one process. Each lecture writes three pages (15 saves each,
+growing), drops a photo and a typed note on each, annotates a 4-page handout
+every other lecture, switches tools, visits every page, moves one, deletes and
+restores one, and searches. Then a fresh store reads everything back.
+
+| Measure | Value |
+|---|---|
+| Pages written and checked after the relaunch | 21 of 21, byte-identical, all decode |
+| Typed notes and photos still on their pages | all |
+| Files quarantined as unreadable | 0 |
+| Search finds that lecture's note | 6 of 6 |
+| Mean of lectures 1–2 / 5–6 | 2.78 s / 2.01 s (no slowdown) |
+| Footprint growth, after lecture 2 → after lecture 6 | +15.0 MB (from 101 MB) |
+
+**Multitasking (§79)** — `MultitaskingCycleTests`: 1,000 cycles of writing,
+the debounced save and the background flush landing in either order, the
+process killed in the background about one cycle in ten (107 kills), the
+window resized to a random width from 320 to 2,560 points at a random zoom.
+
+| Measure | Value |
+|---|---|
+| Data-loss events | 0 of 1,000 |
+| Page sizes that weren't a real page, or changed shape | 0 |
+| The page's own space after the run | unchanged |
+
+What a resize looks like on screen (no layout corruption, 300 ms to settle,
+§80) needs a device; it is listed below.
+
+## 9. Unmeasured: needs a hand on the device
 
 | Metric | Why it's unmeasured | How to measure it |
 |---|---|---|
@@ -191,6 +229,7 @@ while any live or deleted page uses it. All four seeds pass.
 | Launch to interactive | Ready to run: a devlab copy and a 1,260-page library are on the iPad Air (M4); waits for the iPad to be unlocked | Instruments → App Launch |
 | Device memory ceiling on large notebooks | Same | Instruments → Activity Monitor, with the 300-page notebook |
 | Battery during a 1-hour session | Device only | Xcode Energy Log |
+| Layout after rotation and window resize (§80) | Needs a device and a hand moving the window | Instruments → Animation Hitches during rotation; screen recording |
 | Crash-free rate | Needs time in the field | Support → Diagnostics on each device (D-004), App Store Connect → Crashes |
 
 Signposts are in place for these. They log under subsystem `app.classnotes`,

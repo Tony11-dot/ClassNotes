@@ -77,9 +77,41 @@ extension LassoSelectionView {
             Text("Photos and files keep their own colours.")
                 .font(.dsCaption)
                 .foregroundStyle(theme.inkSecondary.color)
+            if holdsInk {
+                Divider()
+                Text("Thickness")
+                    .font(.dsSubheadline.weight(.semibold))
+                    .foregroundStyle(theme.ink.color)
+                HStack(spacing: 10) {
+                    thicknessButton("Thinner", systemImage: "minus", factor: Self.thinner)
+                    thicknessButton("Thicker", systemImage: "plus", factor: Self.thicker)
+                }
+                Text("Each press changes the ink you circled; Undo takes it back.")
+                    .font(.dsCaption)
+                    .foregroundStyle(theme.inkSecondary.color)
+            }
         }
         .padding(16)
         .frame(width: 320)
         .presentationCompactAdaptation(.popover)
+    }
+
+    /// One press of Thicker, and the step Thinner takes back exactly.
+    static let thicker: CGFloat = 1.3
+    static let thinner: CGFloat = 1 / 1.3
+
+    /// Stays open: thickness is judged by eye, a press at a time.
+    private func thicknessButton(_ title: String, systemImage: String, factor: CGFloat) -> some View {
+        Button {
+            onRethicken(factor)
+            UISelectionFeedbackGenerator().selectionChanged()
+        } label: {
+            Label(title, systemImage: systemImage)
+                .font(.dsSubheadline.weight(.semibold))
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .background(theme.surfaceRaised.color, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .foregroundStyle(theme.ink.color)
+        }
+        .buttonStyle(.plain)
     }
 }

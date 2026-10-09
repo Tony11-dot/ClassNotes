@@ -1,5 +1,6 @@
 import ClassMateTheme
 import NotesDesignSystem
+import NotesModels
 import NotesServices
 import SwiftUI
 
@@ -97,6 +98,7 @@ enum HelpSheet: String, Identifiable {
 struct AboutSettingsSection: View {
     @Environment(\.theme) private var theme
     let onSelect: (HelpSheet) -> Void
+    @State private var tipsReset = false
 
     var body: some View {
         Section {
@@ -112,6 +114,13 @@ struct AboutSettingsSection: View {
             Link(destination: ClassMateLinks.accessibility) {
                 Label("Accessibility", systemImage: "accessibility")
             }
+            Button {
+                FirstUseHints().reset()
+                tipsReset = true
+            } label: {
+                Label(tipsReset ? "Tips will show again" : "Show tips again", systemImage: "lightbulb")
+            }
+            .disabled(tipsReset)
         } header: {
             Text("Help")
         } footer: {

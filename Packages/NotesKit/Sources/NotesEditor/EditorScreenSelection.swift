@@ -37,6 +37,36 @@ enum LassoInk {
         return PKDrawing(strokes: strokes)
     }
 
+    /// The widths a stroke may be thickened or thinned to, in points. Below
+    /// the floor a line stops showing; above the ceiling it is a smear.
+    static let thicknessRange: ClosedRange<CGFloat> = 0.4...80
+
+    /// `drawing` with the strokes at `indices` drawn `factor` times as thick.
+    /// Only each point's SIZE changes — where it is, its force, its timing and
+    /// the path's creation date stay as they were — so the stroke's shape is
+    /// untouched and its key (`StrokeKey`) still finds it: the selection
+    /// holds without re-keying, the same as a recolour.
+    static func rethickened(_ drawing: PKDrawing, at indices: Set<Int>, by factor: CGFloat) -> PKDrawing {
+        guard factor > 0 else { return drawing }
+        let strokes = drawing.strokes.enumerated().map { index, stroke -> PKStroke in
+            guard indices.contains(index) else { return stroke }
+            let points = stroke.path.map { point -> PKStrokePoint in
+                let width = min(max(point.size.width * factor, thicknessRange.lowerBound), thicknessRange.upperBound)
+                let height = min(max(point.size.height * factor, thicknessRange.lowerBound), thicknessRange.upperBound)
+                return PKStrokePoint(
+                    location: point.location, timeOffset: point.timeOffset,
+                    size: CGSize(width: width, height: height), opacity: point.opacity,
+                    force: point.force, azimuth: point.azimuth, altitude: point.altitude,
+                    secondaryScale: point.secondaryScale, threshold: point.threshold
+                )
+            }
+            var thick = stroke
+            thick.path = PKStrokePath(controlPoints: points, creationDate: stroke.path.creationDate)
+            return thick
+        }
+        return PKDrawing(strokes: strokes)
+    }
+
     /// The box everything caught covers, drawn as it now is: each stroke's
     /// rendered bounds and each element as turned.
     static func bounds(of strokes: [PKStroke], elements: [PageElement]) -> CGRect {
@@ -111,6 +141,29 @@ extension EditorScreen {
         }, elements: {
             await model.recolorElements(selection.caught.elementIDs, on: selection.pageID, hex: hex)
         }, rekeys: false)
+    }
+
+    /// Makes the caught ink `factor` times as thick. Ink only: a photo, a
+    /// text box or a strip of tape has no line width to change.
+    @MainActor
+    func rethickenSelection(by factor: CGFloat) async {
+        guard let selection = lassoSelection, !selection.caught.strokes.isEmpty, factor > 0, factor != 1 else { return }
+        await editSelection(selection, named: factor > 1 ? "Thicken Selection" : "Thin Selection", ink: { drawing, indices in
+            (LassoInk.rethickened(drawing, at: indices, by: factor), [])
+        }, elements: {}, rekeys: false)
+        refreshSelectionBounds()
+    }
+
+    /// Copy, then delete: one press, and the region is on the pasteboard and
+    /// in hand for the Paste chip. Nothing is deleted if the copy didn't
+    /// happen — a Cut that loses the thing it cut is the one outcome it must
+    /// never have.
+    @MainActor
+    func cutSelection() async {
+        guard lassoSelection != nil else { return }
+        guard await copySelection() else { return }
+        await deleteSelection()
+        editorNotice = "Cut — press Paste to place it."
     }
 
     /// The shared shape of every whole-selection edit: change the caught ink,

@@ -4,6 +4,7 @@ import NotesModels
 import NotesServices
 import PhotosUI
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The plumbing behind the library's `+`: everything except the full New Notebook
 /// sheet, which is a screen of its own.
@@ -23,6 +24,7 @@ struct AddContentFlows: ViewModifier {
     @State private var photoItem: PhotosPickerItem?
     @State private var working = false
     @State private var notice: String?
+    @State private var dropTargeted = false
 
     func body(content: Content) -> some View {
         content
@@ -64,6 +66,10 @@ struct AddContentFlows: ViewModifier {
                     createImport(kind: .image, title: "Image", images: [data])
                 }
             }
+            .onDrop(of: [.item], delegate: LibraryDropDelegate(isTargeted: $dropTargeted) { providers in
+                handleDrop(providers)
+            })
+            .overlay { if dropTargeted { dropHint } }
             .overlay(alignment: .top) { noticeBanner }
             .overlay { if working { progressOverlay } }
     }
@@ -122,18 +128,23 @@ struct AddContentFlows: ViewModifier {
         working = true
         Task {
             defer { working = false }
-            let color = coverColor(for: kind)
-            let created = try? await services.repository.createFromImport(
-                title: title, coverColor: color, kind: kind,
-                coverDesign: coverDesign(for: kind),
-                pdf: pdf, images: images, shelfID: shelfID
-            )
-            if let notebook = created ?? nil {
+            if let notebook = await makeImport(kind: kind, title: title, pdf: pdf, images: images) {
                 onCreated(notebook)
             } else {
                 notice = "Couldn't read that — try a PDF, a photo or a scan."
             }
         }
+    }
+
+    private func makeImport(
+        kind: NotebookKind, title: String, pdf: Data? = nil, images: [Data] = []
+    ) async -> Notebook? {
+        let created = try? await services.repository.createFromImport(
+            title: title, coverColor: coverColor(for: kind), kind: kind,
+            coverDesign: coverDesign(for: kind),
+            pdf: pdf, images: images, shelfID: shelfID
+        )
+        return created ?? nil
     }
 
     /// A file that isn't a page (a zip, a spreadsheet): make a document and drop it
@@ -142,22 +153,27 @@ struct AddContentFlows: ViewModifier {
         working = true
         Task {
             defer { working = false }
-            guard let notebook = try? await services.repository.create(
-                title: name,
-                coverColor: coverColor(for: .document),
-                style: PageStyle(template: .blank, margin: PageMargin(position: .none), pageSize: .a4),
-                kind: .document,
-                coverDesign: coverDesign(for: .document),
-                shelfID: shelfID
-            ) else {
+            guard let notebook = await makeFileAttachmentDocument(name: name, data: data, extension: ext) else {
                 notice = "Couldn't import that file."
                 return
             }
-            await services.repository.attachFile(
-                data, displayName: "\(name).\(ext)", fileExtension: ext, to: notebook.id
-            )
             onCreated(notebook)
         }
+    }
+
+    private func makeFileAttachmentDocument(name: String, data: Data, extension ext: String) async -> Notebook? {
+        guard let notebook = try? await services.repository.create(
+            title: name,
+            coverColor: coverColor(for: .document),
+            style: PageStyle(template: .blank, margin: PageMargin(position: .none), pageSize: .a4),
+            kind: .document,
+            coverDesign: coverDesign(for: .document),
+            shelfID: shelfID
+        ) else { return nil }
+        await services.repository.attachFile(
+            data, displayName: "\(name).\(ext)", fileExtension: ext, to: notebook.id
+        )
+        return notebook
     }
 
     /// Imported documents get a cover that hints at what's inside.
@@ -219,6 +235,79 @@ struct AddContentFlows: ViewModifier {
     }
 }
 
+// MARK: - Drag and drop
+
+extension AddContentFlows {
+
+    /// Files dragged onto the library become notebooks: each PDF its own,
+    /// every photo in the drop together as one, any other file a document
+    /// with it on page one. One new notebook opens; several stay on the shelf
+    /// for the user to see, since opening one would hide the others.
+    func handleDrop(_ providers: [NSItemProvider]) {
+        working = true
+        Task {
+            defer { working = false }
+            var made: [Notebook] = []
+            var images: [(data: Data, name: String)] = []
+            var unreadable = 0
+            for provider in providers {
+                let item = await DropLoader.load(provider)
+                if case .image(let data, let name, _) = item {
+                    images.append((data, name))
+                } else if let item, let notebook = await notebook(from: item) {
+                    made.append(notebook)
+                } else {
+                    unreadable += 1
+                }
+            }
+            if !images.isEmpty {
+                let title = images.count == 1 ? (images[0].name.isEmpty ? "Image" : images[0].name) : "Images"
+                if let notebook = await makeImport(kind: .image, title: title, images: images.map(\.data)) {
+                    made.append(notebook)
+                } else {
+                    unreadable += images.count
+                }
+            }
+            if made.count == 1, unreadable == 0 {
+                onCreated(made[0])
+            } else if made.isEmpty {
+                notice = "Couldn't read that — try a PDF, a photo or a file."
+            } else {
+                let added = made.count == 1 ? "1 notebook added" : "\(made.count) notebooks added"
+                notice = unreadable == 0 ? added : "\(added); \(unreadable) couldn't be read"
+            }
+        }
+    }
+
+    /// One notebook for a dropped PDF or file; nil for anything else.
+    private func notebook(from item: DroppedItem) async -> Notebook? {
+        switch item {
+        case .pdf(let data, let name):
+            await makeImport(kind: .document, title: name.isEmpty ? "PDF" : name, pdf: data)
+        case .file(let data, let name, let ext):
+            await makeFileAttachmentDocument(
+                name: (name as NSString).deletingPathExtension, data: data, extension: ext
+            )
+        case .image, .link, .text:
+            nil
+        }
+    }
+
+    var dropHint: some View {
+        RoundedRectangle(cornerRadius: 24, style: .continuous)
+            .strokeBorder(theme.accent.color, style: StrokeStyle(lineWidth: 3, dash: [10, 8]))
+            .background(theme.accent.withAlpha(0.06).color, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .overlay {
+                Label("Drop to add to your library", systemImage: "square.and.arrow.down")
+                    .font(.dsHeadline)
+                    .foregroundStyle(theme.accent.color)
+            }
+            .padding(12)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+}
+
 extension View {
     /// Attaches the library's `+` flows. `choice` drives which one is presented.
     func addContentFlows(
@@ -227,5 +316,34 @@ extension View {
         onCreated: @escaping (Notebook) -> Void
     ) -> some View {
         modifier(AddContentFlows(choice: choice, shelfID: shelfID, onCreated: onCreated))
+    }
+}
+
+/// Accepts only drags that can become a notebook (`DropRouting.libraryKind`),
+/// so a notebook dragged towards a shelf isn't caught by the library behind it.
+struct LibraryDropDelegate: DropDelegate {
+    @Binding var isTargeted: Bool
+    let perform: ([NSItemProvider]) -> Void
+
+    private func accepted(_ info: DropInfo) -> [NSItemProvider] {
+        info.itemProviders(for: [.item]).filter {
+            DropRouting.libraryKind(for: $0.registeredTypeIdentifiers) != nil
+        }
+    }
+
+    func validateDrop(info: DropInfo) -> Bool { !accepted(info).isEmpty }
+    func dropEntered(info: DropInfo) { isTargeted = !accepted(info).isEmpty }
+    func dropExited(info: DropInfo) { isTargeted = false }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        accepted(info).isEmpty ? DropProposal(operation: .forbidden) : DropProposal(operation: .copy)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        isTargeted = false
+        let providers = accepted(info)
+        guard !providers.isEmpty else { return false }
+        perform(providers)
+        return true
     }
 }

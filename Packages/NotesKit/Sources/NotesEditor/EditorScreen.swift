@@ -111,6 +111,10 @@ public struct EditorScreen: View {
     @State var selectedElementID: UUID?
     @State var beautifying = false
     @State var editorNotice: String?
+    /// The page something is being dragged over, outlined as a drop target.
+    @State var dropTargetPageID: UUID?
+    /// A first-use hint on screen (`FirstUseHint`).
+    @State var activeHint: FirstUseHint?
     @State var pageSettings: PageRecord?
     /// Decoded PDF/image page backgrounds, cached so SwiftUI re-renders don't
     /// re-decode the PNG on every frame.
@@ -178,7 +182,11 @@ public struct EditorScreen: View {
         // on screen to suggest why.
         .onChange(of: toolState.tool) { _, tool in
             if tool != .lasso { lassoSelection = nil }
+            offerHint(Self.hint(for: tool))
         }
+        .onChange(of: showNova) { _, open in if open { offerHint(.nova) } }
+        .onChange(of: explainMode) { _, on in if on { offerHint(.snip) } }
+        .onChange(of: showPages) { _, open in if open { offerHint(.pageManager) } }
         // Undo and Redo replace a page's drawing outright, and the rail's
         // buttons sit outside the page so they are live while a selection is
         // open. The marching ants would keep sitting there afterwards around a
@@ -258,6 +266,7 @@ public struct EditorScreen: View {
         .overlay(alignment: .trailing) { novaPanel }
         .background { keyboardCommands }
         .overlay(alignment: .top) { noticeBanner }
+        .overlay(alignment: .top) { hintBanner }
         .overlay(alignment: .top) { liveBeautifyIndicator }
         .overlay(alignment: .top) { saveProblemBanner }
         .overlay(alignment: .top) { importProgressPill }

@@ -55,6 +55,8 @@ public struct LibraryTabScreen<Destination: View>: View {
     /// a tab that has nothing open doesn't inherit another tab's hidden bar.
     @State private var shelvesDetailOpen = false
     @State private var searchDetailOpen = false
+    /// Bumped by ⌘F; the Search tab puts the cursor in its field on each bump.
+    @State private var searchFocusRequest = 0
 
     public init(@ViewBuilder destination: @escaping (Notebook, UUID?) -> Destination) {
         self.destination = destination
@@ -76,7 +78,9 @@ public struct LibraryTabScreen<Destination: View>: View {
             .opacity(selectedTab == .shelves ? 1 : 0)
             .allowsHitTesting(selectedTab == .shelves)
 
-            LibrarySearchScreen(isDetailOpen: $searchDetailOpen, destination: destination)
+            LibrarySearchScreen(
+                isDetailOpen: $searchDetailOpen, focusRequest: searchFocusRequest, destination: destination
+            )
                 .opacity(selectedTab == .search ? 1 : 0)
                 .allowsHitTesting(selectedTab == .search)
 
@@ -89,6 +93,7 @@ public struct LibraryTabScreen<Destination: View>: View {
                 .allowsHitTesting(selectedTab == .settings)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background { keyboardCommands }
         .safeAreaInset(edge: .bottom) {
             if !isDetailOpen {
                 bottomBar
@@ -102,6 +107,39 @@ public struct LibraryTabScreen<Destination: View>: View {
                 showCreateSheet = false
             }
         }
+    }
+
+    /// Hardware-keyboard commands for the library, listed in the ⌘-hold
+    /// overlay. Off while a notebook is open over the library: the editor has
+    /// its own, and ⌘N there must not quietly make a note behind the page.
+    private var keyboardCommands: some View {
+        Group {
+            // Creation opens on the Shelves tab: that is where the new
+            // notebook is pushed, so creating from another tab would open it
+            // behind the one on screen.
+            Button("New Quick Note") { create(.quickNote) }
+                .keyboardShortcut("n", modifiers: .command)
+            Button("New Notebook…") { create(.notebook) }
+                .keyboardShortcut("n", modifiers: [.command, .option])
+            Button("Import a File…") { create(.file) }
+                .keyboardShortcut("o", modifiers: .command)
+            Button("Search") {
+                selectedTab = .search
+                searchFocusRequest += 1
+            }
+            .keyboardShortcut("f", modifiers: .command)
+            Button("Settings") { selectedTab = .settings }
+                .keyboardShortcut(",", modifiers: .command)
+        }
+        .disabled(isDetailOpen)
+        .frame(width: 0, height: 0)
+        .opacity(0)
+        .accessibilityHidden(true)
+    }
+
+    private func create(_ choice: AddContentChoice) {
+        selectedTab = .shelves
+        addChoice = choice
     }
 
     private var bottomBar: some View {
@@ -170,12 +208,20 @@ struct LibrarySearchScreen<Destination: View>: View {
     /// pushed from a search hit is on screen.
     @Binding var isDetailOpen: Bool
 
+    /// Changes when ⌘F is pressed: the cursor goes into the search field.
+    let focusRequest: Int
+
     @State private var opened: LibraryOpenRequest?
     @State private var searchText = ""
     @State private var search = LibrarySearchModel()
+    @FocusState private var searchFocused: Bool
 
-    init(isDetailOpen: Binding<Bool>, @ViewBuilder destination: @escaping (Notebook, UUID?) -> Destination) {
+    init(
+        isDetailOpen: Binding<Bool>, focusRequest: Int = 0,
+        @ViewBuilder destination: @escaping (Notebook, UUID?) -> Destination
+    ) {
         self._isDetailOpen = isDetailOpen
+        self.focusRequest = focusRequest
         self.destination = destination
     }
 
@@ -202,6 +248,8 @@ struct LibrarySearchScreen<Destination: View>: View {
             .navigationTitle("Search")
             .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $searchText, prompt: "Search notebooks and pages")
+            .searchFocused($searchFocused)
+            .onChange(of: focusRequest) { _, _ in searchFocused = true }
             .onChange(of: searchText) { _, query in
                 search.search(
                     query, targets: services.repository.searchTargets(),

@@ -875,3 +875,37 @@ pricing changes go through its change-control list first.
   (`NovaReply.citedPages`); when the model changes, re-run the live
   evaluation (`CLASSNOTES_LIVE_EVAL=1`, `NovaLiveEvalTests`) and record the
   numbers in docs/quality/measurements.md.
+
+## Architecture invariants (round 5: drops, lasso cut/thickness, hints, QA)
+
+- What a drag becomes is decided by the TYPES it offers (`DropRouting`, pure,
+  in NotesModels), in this order: PDF → pages, image → photo, web URL → link,
+  plain text → text box, anything else that is a file → file chip. A drag
+  offers several types for one thing (a Files PDF is also a file URL, a Safari
+  link is also plain text), so the order IS the behaviour; load by
+  `DropRouting.identifier(for:in:)`, never the first registered type, or a
+  Files drag hands back its path. `DropLoader` (NotesServices, main actor —
+  providers aren't Sendable) reads the bytes inside the provider's handler,
+  because the file it hands over is deleted when the handler returns.
+- A drop on a page lands on THAT page at THAT point
+  (`NotebookEditorModel.drop`, `DropRouting.frame` keeps it on the page), and
+  a PDF goes after the page it was dropped on — not after whichever page had
+  the focus. The library's drop (`LibraryDropDelegate`) accepts only what can
+  become a notebook (`libraryKind`): a notebook cover dragged to a shelf
+  travels as its id in plain text, and a library that swallowed text would eat
+  that drag on its way to the shelf.
+- Lasso thickness changes each point's SIZE only — location, force, timing
+  and the path's creation date stay — so `StrokeKey` still finds the stroke
+  and the selection holds without re-keying. Cut is copy-THEN-delete and
+  deletes nothing if the copy didn't happen (`copySelection` returns Bool).
+- First-use hints (`FirstUseHint`, `FirstUseHints`) are claimed on SHOWING,
+  per device, once each; Settings → Show tips again resets them. No tutorial
+  screens: a hint appears when the feature is first reached.
+- Library keyboard commands are disabled while a notebook is open over the
+  library (`isDetailOpen`) — the editor has its own, and ⌘N must not make a
+  note behind the page. Creation from the keyboard switches to Shelves first,
+  because that is where the new notebook is pushed.
+- `LongSessionTests` (a whole day of lectures, then a relaunch) and
+  `MultitaskingCycleTests` (1,000 background/kill/resize cycles) are the QA
+  contract alongside the storage torture test; grow them when a feature joins
+  the day.

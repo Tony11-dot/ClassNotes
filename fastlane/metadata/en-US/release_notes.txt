@@ -1,10 +1,14 @@
-Use ClassNotes without an account, ask NOVA about a whole notebook, organise with folders and tags, and see PDFs sharp at any zoom.
+Use ClassNotes without an account, keep your notebooks the same on every iPad with iCloud, drag in PDFs and photos, ask NOVA about a whole notebook, and see PDFs sharp at any zoom.
 
 - No account needed: tap Continue without an account and start writing. Sign in any time to sync and use NOVA. Your notebooks are never locked away if you're signed out.
 - NOVA knows your notebook: tap Read this notebook, then ask anything about it. Answers show which pages they came from; tap a page to jump to it. When something isn't in your notes, NOVA says so.
 - NOVA asks before it sends anything, explains exactly what it sends, and you can change your answer in Settings.
+- iCloud sync: turn it on in Settings and your notebooks stay the same on every device signed in to your iCloud. If the same notebook changes on two devices, both versions are kept.
+- Drag and drop: drop a PDF onto a page to add its pages, or drop a photo, text, a link or a file exactly where you want it. Drop files onto the library to make new notebooks.
 - Shelves inside shelves, and tags. Drag a notebook onto a shelf or tag to file it.
 - PDFs you import now stay sharp however far you zoom, their words are searchable exactly, and they export with the original text.
-- Lasso: rotate a selection with the new handle, and recolour it in one tap.
+- Lasso: rotate a selection with the new handle, recolour it, make the ink thinner or thicker, and Cut (Command-X).
+- Keyboard: Command-N for a new note, Command-F to search, Command-plus and Command-minus to zoom.
+- Short tips the first time you use a tool, like the lasso or NOVA. Show them again from Settings.
 - Support shows crash and speed reports kept on your iPad, and you can share them with us.
 - Better VoiceOver support, clearer error messages, and a fix for tape moved with the lasso landing in the wrong place.

@@ -176,6 +176,12 @@ struct LassoSelectionView: View {
     let onRotate: (CGFloat) -> Void
     /// Paints the catch in a colour (hex).
     let onRecolor: (String) -> Void
+    /// Makes the caught ink thicker (> 1) or thinner (< 1), by that factor.
+    var onRethicken: (CGFloat) -> Void = { _ in }
+    /// Copies the catch and removes it.
+    var onCut: () -> Void = {}
+    /// Whether the catch holds any ink, i.e. whether thickness means anything.
+    var holdsInk: Bool { !selection.strokes.isEmpty }
     /// The colours offered for recolouring: the pen palette.
     var palette: [String] = []
     let onDismiss: () -> Void
@@ -204,10 +210,10 @@ struct LassoSelectionView: View {
     /// How far below the outline the turn handle sits, centre to edge.
     private static let handleDrop: CGFloat = 30
     static let space = "lassoSelection"
-    /// Five 44-point buttons plus the capsule's 6-point padding either side.
+    /// Six 44-point buttons plus the capsule's 6-point padding either side.
     /// Derived rather than guessed, so adding another action cannot quietly
     /// start pushing the bar off the right edge.
-    private static let actionCount = 5
+    private static let actionCount = 6
     private static let actionsWidth = CGFloat(actionCount) * 44 + 12
     private static let actionsHeight: CGFloat = 40
 
@@ -403,15 +409,17 @@ struct LassoSelectionView: View {
     ///
     /// An iPad with a keyboard attached is the machine this app is mostly used
     /// on, and ⌘C / ⌘D are what anyone would try first on something they have
-    /// just selected. The shortcuts hang off these buttons rather than the
+    /// just selected (and ⌘X). The shortcuts hang off these buttons rather than the
     /// editor, so they exist only while a selection does — there is no hidden
     /// global ⌘C quietly doing something else to the page. Delete takes ⌘⌫
     /// rather than a bare Backspace on purpose: a bare one would fire from
     /// ordinary typing the moment anything else on screen took focus.
     private var actions: some View {
         HStack(spacing: 2) {
-            action("Colour", systemImage: "paintpalette", { showColors = true })
+            action("Colour and thickness", systemImage: "paintpalette", { showColors = true })
                 .popover(isPresented: $showColors) { colorPicker }
+            action("Cut", systemImage: "scissors", onCut)
+                .keyboardShortcut("x", modifiers: .command)
             action("Copy", systemImage: "doc.on.doc", onCopy)
                 .keyboardShortcut("c", modifiers: .command)
             action("Duplicate", systemImage: "plus.square.on.square", onDuplicate)

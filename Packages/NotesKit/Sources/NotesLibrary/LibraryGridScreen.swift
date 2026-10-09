@@ -251,8 +251,46 @@ public struct LibraryGridScreen<Destination: View>: View {
         .refreshable { await services.refreshRemoteLibrary(force: true) }
     }
 
+    // Creation, Trash and Settings moved to `LibraryTabScreen`'s tab bar; this
+    // stays for what's specific to THIS tab — managing shelves.
+    private var floatingToolbar: some View {
+        GlassEffectContainer {
+            HStack(spacing: 4) {
+                DSGlassIconButton("New shelf", systemImage: "tray.and.arrow.down") {
+                    showNewShelf = true
+                }
+                if activeShelfID != nil {
+                    DSGlassIconButton("Add books to shelf", systemImage: "plus.rectangle.on.folder") {
+                        showAddBooks = true
+                    }
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .dsGlass(in: Capsule(), interactive: true)
+        }
+        .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
+        .padding(.bottom, 12)
+    }
+
+    private var renameAlertBinding: Binding<Bool> {
+        Binding(
+            get: { renameTarget != nil },
+            set: { if !$0 { renameTarget = nil } }
+        )
+    }
+
+    private var deleteDialogBinding: Binding<Bool> {
+        Binding(
+            get: { deleteTarget != nil },
+            set: { if !$0 { deleteTarget = nil } }
+        )
+    }
+}
+
+extension LibraryGridScreen {
     @ViewBuilder
-    private var emptyState: some View {
+    var emptyState: some View {
         if selectedShelf == .favorites {
             EmptyStateView(
                 systemImage: "star",
@@ -289,47 +327,40 @@ public struct LibraryGridScreen<Destination: View>: View {
                 .buttonStyle(.plain)
             }
         } else {
-            EmptyStateView(
-                systemImage: "book.closed",
-                title: "No notebooks yet",
-                message: "Tap + for a quick note, a full notebook, a whiteboard, or to bring in a photo, file or scan."
-            )
-        }
-    }
-
-    // Creation, Trash and Settings moved to `LibraryTabScreen`'s tab bar; this
-    // stays for what's specific to THIS tab — managing shelves.
-    private var floatingToolbar: some View {
-        GlassEffectContainer {
-            HStack(spacing: 4) {
-                DSGlassIconButton("New shelf", systemImage: "tray.and.arrow.down") {
-                    showNewShelf = true
-                }
-                if activeShelfID != nil {
-                    DSGlassIconButton("Add books to shelf", systemImage: "plus.rectangle.on.folder") {
-                        showAddBooks = true
+            // The first thing a new student sees. It says what goes here and
+            // offers the three ways in, instead of pointing at a button.
+            VStack(spacing: 20) {
+                EmptyStateView(
+                    systemImage: "book.closed",
+                    title: "Your notebooks will appear here",
+                    message: "Start writing straight away, or bring in a PDF to write on. You can also drag a PDF or photo here."
+                )
+                HStack(spacing: 12) {
+                    emptyStateButton("Create your first notebook", systemImage: "plus", prominent: true) {
+                        addChoice = .notebook
+                    }
+                    emptyStateButton("Quick note", systemImage: "square.and.pencil") {
+                        addChoice = .quickNote
+                    }
+                    emptyStateButton("Import a PDF", systemImage: "doc.richtext") {
+                        addChoice = .file
                     }
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .dsGlass(in: Capsule(), interactive: true)
         }
-        .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
-        .padding(.bottom, 12)
     }
 
-    private var renameAlertBinding: Binding<Bool> {
-        Binding(
-            get: { renameTarget != nil },
-            set: { if !$0 { renameTarget = nil } }
-        )
-    }
-
-    private var deleteDialogBinding: Binding<Bool> {
-        Binding(
-            get: { deleteTarget != nil },
-            set: { if !$0 { deleteTarget = nil } }
-        )
+    func emptyStateButton(
+        _ title: String, systemImage: String, prominent: Bool = false, action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .font(.dsSubheadline.weight(.semibold))
+                .padding(.horizontal, 16).padding(.vertical, 10)
+                .frame(minHeight: 44)
+                .background(prominent ? theme.accent.color : theme.surfaceRaised.color, in: Capsule())
+                .foregroundStyle(prominent ? theme.contrastingInk(on: theme.accent).color : theme.ink.color)
+        }
+        .buttonStyle(.plain)
     }
 }

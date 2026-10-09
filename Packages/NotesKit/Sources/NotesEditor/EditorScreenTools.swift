@@ -265,11 +265,12 @@ extension EditorScreen {
     /// it looks. Text boxes are rendered along with everything else rather than
     /// extracted, so what lands in the other app is what was on the page.
     @MainActor
-    func copySelection() async {
-        guard let selection = lassoSelection else { return }
+    @discardableResult
+    func copySelection() async -> Bool {
+        guard let selection = lassoSelection else { return false }
         guard let image = snapshotSelection(selection) else {
             editorNotice = "Nothing to copy."
-            return
+            return false
         }
         // Encoding happens OFF the main actor. The snapshot itself has to be
         // rendered here — it reads the live page — but turning a couple of
@@ -279,7 +280,7 @@ extension EditorScreen {
         let png = await Task.detached(priority: .userInitiated) { image.pngData() }.value
         guard let png else {
             editorNotice = "Nothing to copy."
-            return
+            return false
         }
         // Both representations: apps that want a picture get the PNG (with its
         // transparency intact), and the plain image satisfies everything else.
@@ -297,6 +298,7 @@ extension EditorScreen {
         )
         withAnimation(.spring(duration: 0.3)) { copiedSnip = snip }
         editorNotice = "Copied — press Paste to place it."
+        return true
     }
 
     /// Drops the copied region back onto the page as a picture you can move and

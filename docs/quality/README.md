@@ -11,7 +11,7 @@ Registers (dependencies, decisions, risks, permissions, network use, change
 control) are in [registers.md](registers.md). Measured numbers are in
 [measurements.md](measurements.md).
 
-Last updated: 2026-10-09. Phase 1 is complete; see "Phase 1 outcome" below. Rounds 2, 3 and 4 are below it. Round 4 settled every open decision (section 6).
+Last updated: 2026-10-09. Phase 1 is complete; see "Phase 1 outcome" below. Rounds 2, 3 and 4 are below it. Round 4 settled every open decision (section 6). Round 5 closed the remaining code gaps in phases 2, 3, 7, 8 and 9.
 
 ---
 
@@ -30,7 +30,7 @@ Last updated: 2026-10-09. Phase 1 is complete; see "Phase 1 outcome" below. Roun
 | Handwriting recognition | Apple Vision, on device and offline |
 | AI (NOVA) | `NovaBackendProvider` → ClassMate API `POST /classnotes/ai` (model key held on the server; the server calls Groq). Asks before sending anything (`NovaConsent`). Groq direct is a fallback only |
 | Auth | ClassNotes' own accounts (`/classnotes/auth/*`), token in the Keychain. **Optional**: the library opens without one (D-001) |
-| Sync | The ClassMate mirror (metadata and page renders up; renames and deletes down). **iCloud notebook sync** is built and tested (`NotebookSync`, D-003) and switched off in this build until the iCloud container exists (owner step, R-25) |
+| Sync | The ClassMate mirror (metadata and page renders up; renames and deletes down). **iCloud notebook sync** (`NotebookSync`, D-003) is on from 1.5 (81): the container exists and the entitlements are wired (R-25) |
 | Settings sync | `PUT/GET /classnotes/settings`; the higher revision wins (no wall clock) |
 | Payments | StoreKit 2: a lifetime unlock plus an optional subscription (`EntitlementService`) |
 | Tests | Swift Testing only: see measurements.md for the current count. Includes a 3,000-step crash/damage torture test, a two-device sync torture test, benchmarks, and the NOVA evaluation set |
@@ -128,11 +128,14 @@ All eight were decided in round 4, on the recommendations in registers.md.
 | Pencil latency, FPS, zoom FPS (§55, 56, 63) | **unmeasured** | Needs a device and Instruments. Signposts are added this round so it can be measured |
 | Crash-free ≥ 99.8% (A3) | **measurable** | MetricKit reports on each device (D-004) plus App Store Connect's crash counts. Needs time in the field |
 | PDF search, vector PDF zoom, PDF export of annotations over the original vector (§16, 66, 67) | **met** for PDFs imported from 1.6 | D-006; earlier imports stay rasterised |
-| Sync conflicts (§27, 28, 71, 72) | **met in tests**, off in the build | Keep-both on conflict, never replaced under an open editor, replaced copies kept; two-device and torture tests. Needs the iCloud container and a two-iPad check (R-25) |
+| Sync conflicts (§27, 28, 71, 72) | **met in tests**, on in the build | Keep-both on conflict, never replaced under an open editor, replaced copies kept; two-device and torture tests. Still needs a check on two real iPads |
 | Handwriting recognition ≥ 95% CER (§65) | **unmeasured** | Needs a labelled handwriting dataset; Vision is the engine |
 | AI context accuracy and hallucination gates (§75, 76) | **measured** | Evaluation set: right page found first 96%; live model cites a right page 23/25, admits 5/5 out-of-notes questions, 0 citations to pages that don't exist (measurements.md §5) |
 | Folders/nesting, tags, pinned (§12) | **met** | Nested shelves, tags, favourites, drag to file (D-007) |
-| Lasso rotate, recolour, rethicken (§7) | **mostly met** | Rotate and recolour added (D-008); rethicken isn't offered |
+| Lasso rotate, recolour, rethicken, cut (§7) | **met** | Rotate and recolour (D-008); thickness and Cut (⌘X) in round 5 |
+| Drag and drop (§18, 78) | **met in tests** | PDF → pages, image/text/link/file → where dropped, files → new notebooks in the library; 200 repeated drops all land |
+| Multitasking (§19, 79) | **met in tests** | 1,000 background/kill/resize cycles, 0 data-loss events; Split View and Stage Manager keep the editor (routing is by device, not width) |
+| Long session (§44) | **met in tests** | Six lectures in one run: nothing lost or corrupt, no slowdown, bounded memory (measurements.md) |
 | 10,000 forced-termination device runs (§61) | **simulated** | A randomised crash-recovery torture test runs against the storage layer in-process; a device kill-loop needs a UI-test host |
 
 ## 9. Plan (phases from the mandate, in order; no phase advances past an open P0)
@@ -257,9 +260,9 @@ Also fixed along the way:
       (that is on-device) and promised iCloud sync (D-003 is open). Restore
       Purchases showed StoreKit's raw error, and called a cancelled sign-in
       an error.
-- [ ] **Owner:** the published privacy policy names Anthropic for NOVA and
-      does not mention ClassNotes (R-21); the App Store privacy label should
-      list user content sent to an AI service.
+- [x] **Owner:** the privacy policy now covers ClassNotes and names Groq,
+      and the App Store privacy label lists user content (R-21, closed
+      2026-10-09).
 
 ### Round 4: every open decision
 
@@ -296,14 +299,32 @@ Also fixed along the way:
       1,260-page library are on the iPad Air; the launch and memory traces
       run as soon as the iPad is unlocked.
 
+### Round 5: the remaining gaps in phases 2, 3, 7, 8 and 9
+
+- [x] **Drag and drop (3, 7).** A PDF dropped on a page becomes pages
+      after that page; a photo, words, a link or any other file lands where
+      it was dropped, on the page it was dropped on. Files dropped on the
+      library become notebooks (each PDF its own, the photos together). A
+      notebook being dragged to a shelf still reaches the shelf (CC-016).
+- [x] **Lasso (2).** Cut (⌘X) and Thickness (thinner/thicker, ink only,
+      one undo step per press; the selection holds).
+- [x] **Keyboard (7).** Library: ⌘N quick note, ⌥⌘N notebook, ⌘O import,
+      ⌘F search (cursor in the field), ⌘, settings. Editor: ⌘= / ⌘- / ⌘0
+      zoom on a fixed ladder.
+- [x] **Empty states and onboarding (8).** The empty library says what goes
+      there and offers "Create your first notebook", "Quick note" and
+      "Import a PDF". First-use hints teach the lasso, tape, fill, text,
+      ruled lines, the hand, NOVA, the snip and the page manager once each,
+      at the moment they're reached; Settings → Show tips again.
+- [x] **QA (9).** A long-session test (six lectures over three notebooks,
+      then a relaunch) and a 1,000-cycle background/kill/resize test.
+
 ### What's left, and who it waits on
 
-- **Owner:** create the iCloud container and enable iCloud on the App ID
-  (R-25); the privacy policy and App Store privacy label (R-21).
 - **A hand and a Pencil:** latency, frame rate while writing, palm
   rejection, hover and barrel roll (PencilKit supplies both for ink tools),
   an hour-long session, battery.
-- **Two iPads:** the iCloud sync check once the container exists.
+- **Two iPads:** the iCloud sync check on real devices.
 
 ## 10. Explicitly out of scope
 

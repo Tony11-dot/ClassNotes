@@ -139,8 +139,8 @@ each records its outcome under **Decided**.
 | R-09 | Main-thread work while the pencil is down (latency spikes) | med | med | All rewrites gated on pencil-up; encode off main; pencil-down no longer copies the drawing, stroke end copies it once (measured, measurements.md §2b). Device profiling still needed | partly mitigated |
 | R-10 | PencilKit format change in a future iPadOS | low | high | Quarantine on decode failure; the original bytes are never overwritten | mitigated |
 | R-11 | Retired AI model pinned in Info.plist | high | low | Override removed; `AIModelConfigurationTests` fails if the plist pins a model other than the default | fixed |
-| R-12 | No telemetry: regressions in the field are invisible | high | med | D-004 | open |
-| R-13 | Rasterised PDFs: no text search, blurry at high zoom | high | med | D-006 | open |
+| R-12 | No telemetry: regressions in the field are invisible | high | med | D-004: MetricKit on the device, shared from Support | mitigated |
+| R-13 | Rasterised PDFs: no text search, blurry at high zoom | high | med | D-006: live PDF from 1.6 imports; earlier imports re-import | fixed (tested) |
 | R-14 | Purged page resurrected from the manifest backup after damage | low | med | Purge removes the page from the backup too (found by the torture test) | fixed (tested) |
 | R-15 | Delete rolled back by recovery leaves the page blank, and saves go to the trash | low | high | Live pages are reconciled against the trash on every manifest load (found by the torture test) | fixed (tested) |
 | R-16 | Deferred `info.json` write reads a purged SwiftData row and traps | med | high | Snapshot synchronously, defer only the write (found by the full suite) | fixed (tested) |
@@ -148,7 +148,7 @@ each records its outcome under **Decided**.
 | R-18 | Note content sent to a third-party AI without the user's permission (App Store Review Guideline 5.1.2(i)) | high | high | One consent gate in `NovaConversation` in front of every request; asked once per account; withdrawn in Settings (CC-009) | fixed (tested) |
 | R-19 | NOVA's own style prompt sent as `pageContext`, which the server labels "the page the student is looking at" | high | low | The identity prompt is excluded from page context | fixed (tested) |
 | R-20 | A question or page context over 6,000 characters is refused by the server (400), shown as "NOVA couldn't respond" | med | low | Both are cut to fit, measured in UTF-16 as the server's validator measures | fixed (tested) |
-| R-21 | The published privacy policy names Anthropic for NOVA and does not mention ClassNotes; NOVA in ClassNotes runs on Groq | high | med | Policy text must be updated by the owner (outside this repository) | **closed: policy updated 2026-10-09; App Store privacy label still to review** |
+| R-21 | The published privacy policy names Anthropic for NOVA and does not mention ClassNotes; NOVA in ClassNotes runs on Groq | high | med | Policy text must be updated by the owner (outside this repository) | **closed: policy updated and App Store privacy label published 2026-10-09** |
 | R-22 | Moving or resizing tape (lasso or finger) shifted its frame-relative path as if it were in page space: the strip landed twice as far as the finger went | high | low | One geometry for every element (`PageElement.moved/transformed`): page-space paths (fills) move, frame-relative ones (tape) don't | fixed (tested) |
 | R-23 | NOVA answers that cited their page in the model's own forms (【p. 1】, "(see p. 3)", a "Page 1" heading) were left unlabelled: one in five | high | low | The citation reader takes every form the live evaluation found; the display shows ordinary brackets | fixed (tested, re-measured live) |
 | R-24 | iCloud sync keeping a whole copy of every notebook it replaces could fill the device for a notebook written on elsewhere all day | med | med | Two copies per notebook, 30 days at most | fixed (tested) |
@@ -395,7 +395,7 @@ call NOVA.
   change.
 - Tests: `DiagnosticsTests`.
 
-**CC-014: iCloud notebook sync (D-003), built and switched off.**
+**CC-014: iCloud notebook sync (D-003). On from 1.5 (81).**
 
 - What: `NotebookSync` reconciles each notebook with a copy in the app's
   iCloud container by content fingerprint against the last agreed state:
@@ -408,9 +408,10 @@ call NOVA.
 - Storage: the local store is unchanged and stays the source of truth.
 - Privacy: notebooks go to the user's own iCloud, which needs no privacy-label
   entry (data not collected by the developer).
-- Switch: `CMCloudSync` in Info.plist (false). To turn on: create
-  `iCloud.com.classmate.notes` and enable iCloud Documents on the App ID,
-  set `CODE_SIGN_ENTITLEMENTS = Config/ClassNotes.entitlements`, set the flag.
+- Switch: `CMCloudSync` in Info.plist, true from 1.5 (81). The container
+  `iCloud.com.classmate.notes` exists on the App ID and
+  `CODE_SIGN_ENTITLEMENTS = Config/ClassNotes.entitlements` is set for
+  Release. Setting the flag to false turns it off again.
 - Tests: `CloudSyncTests` (two devices, 13 scenarios), `CloudSyncTortureTests`.
 
 **CC-015: NOVA reads citations as the model writes them.**
@@ -421,3 +422,15 @@ call NOVA.
 - Privacy and format: unchanged.
 - Tests: `NovaReplySourceTests`, measured live (`NovaLiveEvalTests`).
 
+**CC-016: drag and drop into pages and the library.**
+
+- What: a drop on a page is routed by the types it offers
+  (`DropRouting`): a PDF becomes pages after that page, a photo, words, a
+  link or any other file becomes an element centred where it was dropped
+  (`NotebookEditorModel.drop`). A drop on the library makes notebooks.
+  Files larger than 200 MB are refused (`DropLoader.maximumBytes`).
+- Storage: the same elements, media and imports as the toolbar makes; no
+  format change.
+- Privacy: nothing leaves the device.
+- Tests: `DragAndDropTests` (routing, reading real `NSItemProvider`s,
+  placement, PDF order, 200 repeated drops).

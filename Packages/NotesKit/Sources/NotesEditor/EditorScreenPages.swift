@@ -457,6 +457,7 @@ extension EditorScreen {
             selectedElementID = nil
         }
         .frame(width: size.width, height: size.height)
+        .modifier(pageDropTarget(page, size: size))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -603,6 +604,8 @@ extension EditorScreen {
                     onResize: { bounds in Task { await resizeSelection(to: bounds) } },
                     onRotate: { radians in Task { await rotateSelection(by: radians) } },
                     onRecolor: { hex in Task { await recolorSelection(hex) } },
+                    onRethicken: { factor in Task { await rethickenSelection(by: factor) } },
+                    onCut: { Task { await cutSelection() } },
                     palette: toolState.inkPalette(theme: theme).map(\.hexString),
                     onDismiss: { lassoSelection = nil },
                     makePreview: { snapshotSelection(selection) }
