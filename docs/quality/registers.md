@@ -154,6 +154,8 @@ each records its outcome under **Decided**.
 | R-24 | iCloud sync keeping a whole copy of every notebook it replaces could fill the device for a notebook written on elsewhere all day | med | med | Two copies per notebook, 30 days at most | fixed (tested) |
 | R-25 | The app's entitlements file was never wired into the build and the App ID has no iCloud: sync cannot run until the owner creates the container | high | med | Sync is built, tested and gated off (`CMCloudSync`); turning it on is a portal step, then a build flag | **closed: container created, entitlements wired, sync on in 1.5 (81)** |
 | R-26 | A pull racing an editor opening the same notebook could leave the editor holding the old version and later save it over the new one | low | high | The store refuses to replace a notebook registered as open, on the same actor that serves the editor's load (`beginEditing`) | fixed (tested) |
+| R-27 | Signing with the iCloud entitlement turned on SwiftData's CloudKit default, which refuses the schema's unique ids: 1.5 (81)–(83) quit on launch on every real device while tests, the simulator and the device lab (all signed without the entitlement) passed | high | high | Every store configuration is `cloudKitDatabase: .none` (`ModelContainerFactory.configuration`), pinned by a test; a build whose entitlements change is launched first as a Release build on a simulator signed with the real entitlements | fixed in 1.5 (84) (tested; found on the owner's iPad) |
+| R-28 | Reading a notebook with no package here wrote a blank one, so a notebook from another device got a blank stand-in that the next launch opened in the editor, and leaving could push that blank page over the server's real pages | high | high | Reads never create (`noSuchNotebook`); launch sets stand-ins aside by exact shape (CC-017); remote-only rows stay out of the launch push and iCloud; "Edit on this iPad" builds only from a complete fresh copy of the server's pages | fixed in 1.5 (85) (tested; found on the owner's iPad) |
 
 ## Permission matrix
 
@@ -182,6 +184,8 @@ each records its outcome under **Decided**.
   - sign-in, sign-up, password reset, account deletion;
   - viewing a remote-only notebook (one created on another device) unless it
     is cached;
+  - bringing a remote-only notebook over with "Edit on this iPad": it is built
+    only from a complete fresh copy of the server's pages, never the cache;
   - purchases.
 
 ## What NOVA sends (AI data flow)
@@ -211,9 +215,9 @@ call NOVA.
 
 ## Version compatibility
 
-- **Current document schema:** manifest v8. `info.json` v1 and
-  `trash.json` v1 are added this round as sibling files, so the manifest
-  version does not change.
+- **Current document schema:** manifest v9 (`backgroundPDF`, CC-011).
+  `info.json` v1 and `trash.json` v1 are sibling files, so they never moved
+  the manifest version.
 - **Minimum readable schema:** v1. Every later field is optional or defaulted.
 - **Migration policy:** additive only. A field is never removed or
   reinterpreted. `ensureCoverPage` keys off `coverPageVersion`, never
@@ -434,3 +438,24 @@ call NOVA.
 - Privacy: nothing leaves the device.
 - Tests: `DragAndDropTests` (routing, reading real `NSItemProvider`s,
   placement, PDF order, 200 repeated drops).
+
+**CC-017: reading never creates a notebook; stand-ins are set aside.**
+
+- What: `DocumentStore.manifest(for:)` throws `noSuchNotebook` when a
+  notebook has no package, and derived files (`saveSearchIndex`, `writeInfo`)
+  never make one. Launch reconciliation moves a stand-in an older build wrote
+  (`isStandIn`: manifest v6, one blank page made a minute or more after the
+  notebook, nothing else in the package) into `Set Aside/` and keeps the
+  notebook remote-only. Remote-only rows are left out of the launch push
+  (`fullSnapshot`) and iCloud (`rowIDs`). "Edit on this iPad"
+  (`NotebookRepository.adoptRemote`) makes a real package from the server's
+  page pictures, voice notes, files and links.
+- Why: R-28.
+- Storage: new folder `Notebooks/Set Aside/<uuid>-<stamp>.cmnote`, never
+  deleted and invisible to the library and to iCloud. No manifest change.
+- Rollback: an older build ignores `Set Aside/`. Up to 1.5 (84) it would
+  write a new stand-in for the same notebook, which 1.5 (85) sets aside
+  again.
+- Privacy: nothing new leaves the device.
+- Tests: `RemoteNotebookTests`, including the stand-in read off the owner's
+  iPad.
