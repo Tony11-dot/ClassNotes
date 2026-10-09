@@ -11,7 +11,7 @@ Registers (dependencies, decisions, risks, permissions, network use, change
 control) are in [registers.md](registers.md). Measured numbers are in
 [measurements.md](measurements.md).
 
-Last updated: 2026-10-09. Phase 1 is complete; see "Phase 1 outcome" below.
+Last updated: 2026-10-09. Phase 1 is complete; see "Phase 1 outcome" below. Rounds 2 and 3 are below it.
 
 ---
 
@@ -28,12 +28,12 @@ Last updated: 2026-10-09. Phase 1 is complete; see "Phase 1 outcome" below.
 | PDF | PDFKit **rasterises** every imported page to a 2× PNG page background at import. There is no live PDF engine and no PDF text layer |
 | Search | `SearchIndexer` (actor): Vision `VNRecognizeTextRequest` over rendered ink, plus element text, cached per package in `search.json` |
 | Handwriting recognition | Apple Vision, on device and offline |
-| AI (NOVA) | `NovaBackendProvider` → ClassMate API `POST /classnotes/ai` (model key held on the server). Groq is a direct fallback only |
+| AI (NOVA) | `NovaBackendProvider` → ClassMate API `POST /classnotes/ai` (model key held on the server; the server calls Groq). Asks before sending anything (`NovaConsent`). Groq direct is a fallback only |
 | Auth | ClassNotes' own accounts (`/classnotes/auth/*`), token in the Keychain |
 | Sync | **Mirror only**. Notebook metadata and page *renders* (JPEG) go up to ClassMate's ClassNotes tab. Renames and deletes made in that tab come back down. There is no document content sync and no iCloud |
 | Settings sync | `PUT/GET /classnotes/settings`; the higher revision wins (no wall clock) |
 | Payments | StoreKit 2: a lifetime unlock plus an optional subscription (`EntitlementService`) |
-| Tests | Swift Testing only: 104 suites, 592 tests in NotesKit (including a 3,000-step crash/damage torture test and benchmarks), 21 in ClassMateTheme |
+| Tests | Swift Testing only: 116 suites, 636 tests in NotesKit (including a 3,000-step crash/damage torture test and benchmarks), 21 in ClassMateTheme |
 | CI/CD | fastlane run locally (`beta`, `check`, `listing`, `submit`). There is no hosted CI |
 | Crash reporting and analytics | **None**. Only Apple's own (Xcode Organizer / App Store Connect crash logs) |
 
@@ -224,19 +224,52 @@ Also fixed along the way:
       worked: the canvas is never first responder), tools ⌘1–5, next and
       previous page ⌥⌘↓/↑, new page ⇧⌘N, page manager ⌥⌘P.
 
+### Round 3: Phases 5, 6, 7 and 8 (AI, accessibility, plain language)
+
+- [x] **AI (6): consent.** NOVA sent questions, snips and whole notebooks to
+      the AI provider with no permission asked. Every request now waits at
+      one gate until the account allows it; the card says what is sent and
+      to whom (the ClassNotes server, then Groq), and Settings can withdraw
+      it (CC-009, R-18). The unused server "beautify" and "explain" client
+      calls are gone, so the gate is the only way out.
+- [x] **AI (6): grounded answers.** After "Read this notebook", each question
+      carries the pages that best match it (named pages first, then rarer
+      shared words) plus a share of every other page, under the server's
+      limit. The chat shows "Answering from this notebook" with a Stop, each
+      question says which pages went with it, and answers are labelled from
+      their own citations: "From your notes" with page links, or "General
+      knowledge". Before, the notebook was its first 4,000 characters, sent
+      once and cut to 2,000 by the third question.
+- [x] **AI (6): two server-contract bugs.** NOVA's own instructions were
+      sent as "the page the student is looking at" (R-19); a question or page
+      context over 6,000 characters was refused (R-20).
+- [x] **Search (5):** measured at 10,000 pages: 67–111 ms per keystroke
+      (measurements.md §3), a third of the 1,000-page target.
+- [x] **iPadOS (7): VoiceOver.** Every icon-only control has a name; sliders
+      say what they set and read out their value; page thumbnails are one
+      element each ("Page 3, current page, bookmarked") with the same tap;
+      the voice-note bubble says whether it's playing; shelf icons have
+      spoken names.
+- [x] **Polish (8): words.** The About screen said notebooks "stay on your
+      device" (page pictures sync); the FAQ said NOVA tidies handwriting
+      (that is on-device) and promised iCloud sync (D-003 is open). Restore
+      Purchases showed StoreKit's raw error, and called a cancelled sign-in
+      an error.
+- [ ] **Owner:** the published privacy policy names Anthropic for NOVA and
+      does not mention ClassNotes (R-21); the App Store privacy label should
+      list user content sent to an AI service.
+
 ### Next rounds
 
 - Pencil: the device-only items above.
 - Documents: live PDF pages (D-006), folders (D-007), page drag and drop
   between notebooks.
-- Search: latency at 10k pages; a PDF's own text layer as an exact
-  alternative to OCR, if D-006 moves PDFs to a live engine.
-- AI: "found in your notes vs. general knowledge" labelling, notebook-wide
-  questions grounded on `search.json`.
-- iPadOS: keyboard shortcuts beyond ⌘Z, drag and drop of pages and
-  notebooks, VoiceOver audit.
-- Polish and QA: empty states, error copy audit, long-session test on a
-  device.
+- Search: a PDF's own text layer as an exact alternative to OCR, if D-006
+  moves PDFs to a live engine.
+- AI: an evaluation set for answer accuracy and citation honesty (§75–76);
+  the server prompt could carry the citation rule itself.
+- iPadOS: drag and drop of pages and notebooks; a VoiceOver pass on a device.
+- Polish and QA: long-session test on a device.
 
 ## 10. Explicitly out of scope
 

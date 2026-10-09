@@ -293,6 +293,8 @@ struct NewNotebookSheet: View {
                 )
                 .disabled(!style.template.honorsLineSpacing)
                 .opacity(style.template.honorsLineSpacing ? 1 : 0.4)
+                .accessibilityLabel("Line spacing")
+                .accessibilityValue("\(style.lineSpacingSteps)")
             }
         }
         .background(theme.surfaceRaised.color, in: RoundedRectangle(cornerRadius: 16, style: .continuous))

@@ -98,7 +98,7 @@ public final class AuthService {
             lastError = message
             return false
         } catch {
-            lastError = "Something went wrong signing in."
+            lastError = "Couldn't sign in right now. Try again in a moment."
             return false
         }
     }
@@ -211,7 +211,7 @@ public final class AuthService {
             return .init(sent: false, message: "Enter your email.")
         }
         return (try? await client.forgotPassword(email: address))
-            ?? .init(sent: false, message: "Something went wrong. Try again.")
+            ?? .init(sent: false, message: "Couldn't send the reset link. Check your connection and try again.")
     }
 
     public func signOut() {

@@ -204,6 +204,7 @@ public struct ColorWheelPicker: View {
                     .overlay(Capsule().strokeBorder(theme.separator.color, lineWidth: 0.5))
                 Slider(value: value, in: 0.02...1)
                     .tint(.clear)
+                    .accessibilityLabel(title)
             }
         }
     }

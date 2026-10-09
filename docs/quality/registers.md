@@ -123,6 +123,10 @@ are no other third-party components.
 | R-15 | Delete rolled back by recovery leaves the page blank, and saves go to the trash | low | high | Live pages are reconciled against the trash on every manifest load (found by the torture test) | fixed (tested) |
 | R-16 | Deferred `info.json` write reads a purged SwiftData row and traps | med | high | Snapshot synchronously, defer only the write (found by the full suite) | fixed (tested) |
 | R-17 | Orphan adoption re-sorted the whole notebook by creation date, undoing page moves | low | med | Adopted pages are appended; existing order kept | fixed (tested) |
+| R-18 | Note content sent to a third-party AI without the user's permission (App Store Review Guideline 5.1.2(i)) | high | high | One consent gate in `NovaConversation` in front of every request; asked once per account; withdrawn in Settings (CC-009) | fixed (tested) |
+| R-19 | NOVA's own style prompt sent as `pageContext`, which the server labels "the page the student is looking at" | high | low | The identity prompt is excluded from page context | fixed (tested) |
+| R-20 | A question or page context over 6,000 characters is refused by the server (400), shown as "NOVA couldn't respond" | med | low | Both are cut to fit, measured in UTF-16 as the server's validator measures | fixed (tested) |
+| R-21 | The published privacy policy names Anthropic for NOVA and does not mention ClassNotes; NOVA in ClassNotes runs on Groq | high | med | Policy text must be updated by the owner (outside this repository) | **open (owner)** |
 
 ## Permission matrix
 
@@ -141,7 +145,7 @@ are no other third-party components.
   - pages, templates, shelves, trash;
   - export (PDF, images);
   - search over indexed handwriting and text (Vision runs on device);
-  - beautify (on-device recognition; NOVA tidy-up is skipped offline);
+  - beautify (on-device recognition; it never calls NOVA);
   - PDF, photo and scan import.
 - **Online when available:** library mirror to ClassMate, settings sync,
   remote rename/delete pull, cover and page pushes. All are queued
@@ -152,6 +156,22 @@ are no other third-party components.
   - viewing a remote-only notebook (one created on another device) unless it
     is cached;
   - purchases.
+
+## What NOVA sends (AI data flow)
+
+Nothing in this table is sent until the account has allowed it
+(`NovaConsent`, asked the first time, changeable in Settings). Everything
+goes to `POST /classnotes/ai` on the ClassNotes server, which forwards it to
+Groq. The editor, search, beautification and handwriting recognition never
+call NOVA.
+
+| Trigger | What is sent |
+|---|---|
+| A typed question | The question and the chat so far (the server keeps the last 8 turns, 2,000 characters each) |
+| A snip | The snipped region as a JPEG, and its recognised text as a hint |
+| "Read this notebook" | A contact-sheet picture of every page, plus an even share of every page's recognised text (at most 5,600 characters) |
+| A question in a chat that is reading a notebook | The question, the best-matching pages' text and a share of the rest (at most 5,600 characters). The chat shows "Answering from this notebook" with a Stop button, and each question says which pages went with it |
+| Follow-up suggestions | The chat so far, after a reply |
 
 ## External-service failure policy
 
@@ -269,3 +289,28 @@ are no other third-party components.
   unchanged).
 - Tests: `ImportedPageSearchTests`.
 
+**CC-009: NOVA asks before sending anything; notebook-grounded answers.**
+
+- What:
+  - Every NOVA request waits at one gate (`NovaConversation`) until the
+    account has allowed it (`NovaConsent`, per account, per disclosure
+    version). The consent card says what is sent and to whom; Settings has
+    the switch to withdraw it.
+  - "Read this notebook" now grounds the chat: each later question carries
+    the pages that match it (`NovaGrounding`), and answers are labelled from
+    their own citations ("From your notes" with page links, or "General
+    knowledge").
+  - NOVA's identity prompt is no longer sent as page context; the question
+    and page context are cut to the server's limits.
+  - Removed the unused client calls for server-side "beautify" and "explain".
+- Why: R-18 (privacy, App Store 5.1.2(i)), R-19, R-20, and the mandate's AI
+  phase (grounding and "found in your notes vs. general knowledge").
+- Privacy: no new kind of data is sent. Notebook text goes only after the user
+  taps "Read this notebook", only in that chat, and the chat shows it.
+- Auth, pricing, document format: unchanged.
+- Rollback: the gate is client-side; a build without it sends as before.
+- Owner action: the privacy policy (R-21) and the App Store privacy label
+  should list "User Content" sent to an AI service for app functionality.
+- Tests: `NovaConsentTests`, `NovaGroundingContextTests`,
+  `NovaGroundedConversationTests`, `NovaReplySourceTests`,
+  `NovaPayloadLimitTests`.

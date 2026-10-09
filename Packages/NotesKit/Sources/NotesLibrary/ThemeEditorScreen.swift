@@ -187,6 +187,8 @@ struct TokenColorEditor: View {
                         Text("Opacity — \(Int((color.alpha * 100).rounded()))%")
                             .foregroundStyle(theme.ink.color)
                         Slider(value: alphaBinding, in: 0.05...1.0)
+                            .accessibilityLabel("Opacity")
+                            .accessibilityValue("\(Int((color.alpha * 100).rounded())) percent")
                     }
                 }
                 .padding(20)

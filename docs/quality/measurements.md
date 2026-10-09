@@ -36,7 +36,7 @@ Last updated: 2026-10-09.
 | Failures injected | process crash (fresh store, staged ink lost), write cut off between backup and new manifest, manifest damaged (garbage, truncated, missing), with and without a crash |
 | Invariants | ink that reached disk is on its live page or in Recently Deleted, byte for byte; a live page shows its newest staged or written ink; no duplicate pages; no phantom pages; purged pages never return; Recently Deleted lists exactly the deleted pages; page order and elements are exact unless damage forced the one-step rollback the backup represents |
 | Bugs it found | 2, both fixed with targeted regression tests (README, "Phase 1 outcome") |
-| Unit and regression tests | 592 tests in 104 suites (NotesKit) + 21 (ClassMateTheme), all passing |
+| Unit and regression tests | 636 tests in 116 suites (NotesKit) + 21 (ClassMateTheme), all passing (round 3) |
 
 ## 2. Storage
 
@@ -80,6 +80,20 @@ The library search runs off the main thread, 220 ms after typing stops.
 | Rare term (`krebs cycle`, 1 notebook matches) | 36–50 ms | **7.7–10.9 ms** |
 | Common term (on most pages) | 87–110 ms | **7.4–15.4 ms** |
 | First search after launch (every index read from disk) | not measured | **19–34 ms** |
+
+At ten times that size (round 3; the target is 300 ms for 1,000 pages):
+
+| Benchmark (1,000 notebooks × 10 pages = 10,000 pages) | Result (3 standalone runs) |
+|---|---|
+| Rare term | **67–111 ms** |
+| Common term | **87–105 ms** |
+| First search after launch | **187–481 ms** |
+
+Where the time goes at 10,000 pages (Debug build, one probe run, 3 rounds):
+calling into the document store once per notebook 15–19 ms, checking each
+index file's size and date 14–24 ms, the matching itself 21–23 ms. Batching
+the store calls would save the first of those; at a third of the target with
+ten times the pages, it isn't worth the code yet.
 
 Where the time went, profiled in an optimised standalone build with the same
 search code over 1,000 pages:

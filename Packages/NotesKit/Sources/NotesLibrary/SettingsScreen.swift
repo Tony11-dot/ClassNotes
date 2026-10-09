@@ -34,6 +34,7 @@ public struct SettingsScreen: View {
                 customThemesSection
                 paperSection
                 PencilGestureSection()
+                NovaPrivacySection()
                 AboutSettingsSection { helpSheet = $0 }
                 #if DEBUG
                 debugSection

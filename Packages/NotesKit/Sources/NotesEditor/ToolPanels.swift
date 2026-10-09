@@ -49,11 +49,11 @@ struct PanelSlider: View {
                     stepper(1)
                 }
             }
-            if let step {
-                Slider(value: $value, in: range, step: step)
-            } else {
-                Slider(value: $value, in: range)
+            Group {
+                if let step { Slider(value: $value, in: range, step: step) } else { Slider(value: $value, in: range) }
             }
+            .accessibilityLabel(title) // by name and readout, not a bare percentage
+            .accessibilityValue(readout)
         }
     }
 

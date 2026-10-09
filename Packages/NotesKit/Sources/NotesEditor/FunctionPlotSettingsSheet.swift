@@ -332,16 +332,20 @@ struct FunctionPlotSettingsSheet: View {
                 } label: {
                     Image(systemName: "plus.magnifyingglass")
                 }
+                .accessibilityLabel("Zoom in")
                 Slider(
                     value: $window,
                     in: FunctionPlotSettings.windowRange
                 )
+                .accessibilityLabel("Zoom window")
                 Button {
                     window = min(FunctionPlotSettings.windowRange.upperBound, window * 1.4)
                 } label: {
                     Image(systemName: "minus.magnifyingglass")
                 }
+                .accessibilityLabel("Zoom out")
                 TextField("", value: $window, format: .number.precision(.fractionLength(0...1)))
+                    .accessibilityLabel("Zoom window size")
                     .keyboardType(.decimalPad)
                     .multilineTextAlignment(.trailing)
                     .frame(width: 50)

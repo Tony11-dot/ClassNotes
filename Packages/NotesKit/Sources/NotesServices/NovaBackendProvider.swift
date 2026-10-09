@@ -1,4 +1,5 @@
 import Foundation
+import NotesModels
 import os
 
 private let novaLog = Logger(subsystem: "com.classmate.notes", category: "Nova")
@@ -43,16 +44,31 @@ public struct NovaBackendProvider: AIProvider {
     /// 401, 404) is a contract or auth problem that a retry just repeats.
     static let retryableStatuses: Set<Int> = [429, 500, 502, 503, 504]
 
+    /// The endpoint rejects a `text` or `pageContext` longer than this, in
+    /// JavaScript string length (UTF-16 code units). A request over it was a
+    /// 400, which the user saw as "NOVA couldn't respond".
+    static let maximumFieldLength = 6_000
+
     /// Splits `messages` the way the endpoint expects: a task, the latest
-    /// question, the turns before it, and any system prompt as page context.
+    /// question, the turns before it, and page context.
+    ///
+    /// Page context is the system messages EXCEPT NOVA's own identity prompt.
+    /// The server has its own identity for NOVA and labels `pageContext` as
+    /// "the page the student is looking at", so sending the identity there
+    /// told the model the student's notes said "You are NOVA…".
     ///
     /// Exposed for tests — the mapping is the whole contract with the server.
     public static func payload(for messages: [AIMessage]) -> [String: Any] {
-        let question = messages.last(where: { $0.role == .user })?.content ?? ""
-        let context = messages
-            .filter { $0.role == .system }
-            .map(\.content)
-            .joined(separator: "\n\n")
+        let question = NovaGrounding.clip(
+            messages.last(where: { $0.role == .user })?.content ?? "", to: maximumFieldLength
+        )
+        let context = NovaGrounding.clip(
+            messages
+                .filter { $0.role == .system && $0.id != NovaConversation.systemPrompt.id }
+                .map(\.content)
+                .joined(separator: "\n\n"),
+            to: maximumFieldLength
+        )
         // Everything before the question, as plain turns.
         var history: [[String: String]] = []
         if let index = messages.lastIndex(where: { $0.role == .user }) {

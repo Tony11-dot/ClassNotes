@@ -111,7 +111,7 @@ struct NovaConversationTests {
 
     @Test("Streaming assembles tokens into the assistant message")
     func streaming() async {
-        let nova = NovaConversation(provider: FakeProvider(tokens: ["Hel", "lo!"]))
+        let nova = NovaConversation(provider: FakeProvider(tokens: ["Hel", "lo!"]), consent: testConsent())
         nova.send("hi")
         await waitUntilIdle(nova)
         #expect(nova.visibleMessages.last?.role == .assistant)
@@ -120,7 +120,7 @@ struct NovaConversationTests {
 
     @Test("explain seeds a user turn from page context")
     func explain() async {
-        let nova = NovaConversation(provider: FakeProvider(tokens: ["ok"]))
+        let nova = NovaConversation(provider: FakeProvider(tokens: ["ok"]), consent: testConsent())
         nova.explain(context: "photosynthesis")
         await waitUntilIdle(nova)
         #expect(nova.visibleMessages.first?.role == .user)
@@ -129,7 +129,7 @@ struct NovaConversationTests {
 
     @Test("Missing key surfaces a helpful error, no dangling assistant bubble")
     func missingKey() async {
-        let nova = NovaConversation(provider: FailingProvider())
+        let nova = NovaConversation(provider: FailingProvider(), consent: testConsent())
         nova.send("hi")
         await waitUntilIdle(nova)
         #expect(nova.errorText != nil)

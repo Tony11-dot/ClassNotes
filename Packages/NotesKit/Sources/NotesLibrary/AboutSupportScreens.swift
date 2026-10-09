@@ -3,18 +3,6 @@ import NotesDesignSystem
 import NotesServices
 import SwiftUI
 
-public enum ClassMateLinks {
-    public static let legalHome = URL(string: "https://tony11-dot.github.io/classmate-legal/")!
-    public static let privacy = URL(string: "https://tony11-dot.github.io/classmate-legal/privacy.html")!
-    public static let accessibility = URL(string: "https://tony11-dot.github.io/classmate-legal/accessibility.html#classnotes")!
-    public static let supportEmail = "support@classmateapp.org"
-    public static let supportPhone = "+972525488441"
-    public static var appVersion: String {
-        let v = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
-        return v
-    }
-}
-
 /// Support: talk-to-us card, Ask NOVA, and FAQ — mirrors ClassMate's support.
 public struct SupportScreen: View {
     @Environment(\.theme) private var theme
@@ -67,13 +55,18 @@ public struct SupportScreen: View {
                         """)
                     faq("How does NOVA work?",
                         """
-                        Circle or highlight anything on a page and NOVA explains \
-                        it — or ask her to tidy up your handwriting. Chats are \
-                        saved with the notebook. She's built in and works while \
-                        you're signed in; nothing to set up.
+                        Snip anything on a page and NOVA explains it, or tap \
+                        Read this notebook and ask about all of it; answers say \
+                        which pages they came from. Chats are saved with the \
+                        notebook. NOVA asks before it sends anything, and works \
+                        while you're signed in.
                         """)
                     faq("Where are my notes stored?",
-                        "On your device, as self-contained notebook files. iCloud sync is coming.")
+                        """
+                        On your device, as self-contained notebook files. A \
+                        picture of each page also syncs to your ClassNotes \
+                        account so the ClassMate app can show it.
+                        """)
                 }
                 .listRowBackground(theme.surfaceRaised.color)
             }
@@ -118,9 +111,12 @@ public struct AboutScreen: View {
                           """)
                     block("Privacy first",
                           """
-                          Your notebooks stay on your device. No third-party \
-                          trackers, no ad networks. NOVA's AI runs through our \
-                          secure servers using your ClassNotes account.
+                          Your notebooks are kept on your device. Page pictures \
+                          sync to your ClassNotes account so the ClassMate app \
+                          can show them. No third-party trackers, no ad \
+                          networks. NOVA only sees what you send it, after you \
+                          allow it, through our servers to Groq, the AI \
+                          service that writes its replies.
                           """)
                     block("Contact",
                           "Built by the ClassMate team.\nQuestions: \(ClassMateLinks.supportEmail)")

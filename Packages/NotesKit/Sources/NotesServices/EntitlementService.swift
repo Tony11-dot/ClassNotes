@@ -207,8 +207,22 @@ public final class EntitlementService {
         do {
             try await AppStore.sync()
         } catch {
-            lastRestoreError = error.localizedDescription
+            lastRestoreError = Self.restoreMessage(for: error)
         }
         await refreshEntitlements()
+    }
+
+    /// What the paywall says when Restore fails. StoreKit's own description
+    /// reads like "StoreKit.StoreKitError error 2", and cancelling the App
+    /// Store sign-in is the user's choice, not a failure to report.
+    nonisolated public static func restoreMessage(for error: Error) -> String? {
+        switch error as? StoreKitError {
+        case .userCancelled:
+            return nil
+        case .networkError:
+            return "Couldn't reach the App Store. Check your connection and try again."
+        default:
+            return "Couldn't restore purchases right now. Try again in a moment."
+        }
     }
 }

@@ -59,4 +59,35 @@ public enum ShelfSymbol: String, CaseIterable, Sendable {
     case sportscourt
 
     public var systemName: String { rawValue }
+
+    /// What VoiceOver calls the icon. An SF Symbol's own name is not a word
+    /// ("tray.full", "gamecontroller").
+    public var spokenName: String {
+        switch self {
+        case .bag: "Bag"
+        case .book: "Books"
+        case .backpack: "Backpack"
+        case .folder: "Folder"
+        case .graduationcap: "Graduation cap"
+        case .pencilAndRuler: "Pencil and ruler"
+        case .flask: "Flask"
+        case .paintpalette: "Paint palette"
+        case .star: "Star"
+        case .heart: "Heart"
+        case .bookmark: "Bookmark"
+        case .tray: "Tray"
+        case .calendar: "Calendar"
+        case .function: "Function"
+        case .atom: "Atom"
+        case .globe: "Globe"
+        case .leaf: "Leaf"
+        case .musicNote: "Music note"
+        case .sparkles: "Sparkles"
+        case .lightbulb: "Light bulb"
+        case .briefcase: "Briefcase"
+        case .cameraShutter: "Camera"
+        case .gameController: "Game controller"
+        case .sportscourt: "Sports court"
+        }
+    }
 }

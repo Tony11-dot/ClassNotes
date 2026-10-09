@@ -292,6 +292,23 @@ struct PageManagerView: View {
                 onSelect(page.id)
             }
         }
+        // One element per page for VoiceOver: its name, whether it's the page
+        // in view or bookmarked, and the same tap.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(page.isCover ? "Cover" : "Page \(number)")
+        .accessibilityValue(
+            [isCurrent ? "Current page" : nil, page.isBookmarked ? "Bookmarked" : nil]
+                .compactMap { $0 }.joined(separator: ", ")
+        )
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityHint(selectedPageIDs != nil ? "Selects or deselects this page" : "Opens this page")
+        .accessibilityAction {
+            if selectedPageIDs != nil {
+                toggleSelection(page.id)
+            } else {
+                onSelect(page.id)
+            }
+        }
         .contextMenu {
             if selectedPageIDs == nil {
                 Button { Task { await model.toggleBookmark(page.id) } } label: {

@@ -52,6 +52,9 @@ public struct NovaChatView: View {
                     ForEach(conversation.visibleMessages) { message in
                         messageRow(message).id(message.id)
                     }
+                    if conversation.awaitingConsent {
+                        NovaConsentCard(conversation: conversation, draft: $draft).id("nova-consent")
+                    }
                     if let error = conversation.errorText {
                         Text(error)
                             .font(.dsFootnote)
@@ -73,6 +76,10 @@ public struct NovaChatView: View {
             .onChange(of: conversation.errorText) { _, error in
                 guard error != nil else { return }
                 withAnimation { proxy.scrollTo("nova-error", anchor: .bottom) }
+            }
+            .onChange(of: conversation.awaitingConsent) { _, waiting in
+                guard waiting else { return }
+                withAnimation { proxy.scrollTo("nova-consent", anchor: .bottom) }
             }
         }
     }
@@ -143,6 +150,7 @@ public struct NovaChatView: View {
                     .foregroundStyle(theme.accent.color)
             }
             .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty || conversation.streaming)
+            .accessibilityLabel("Send")
         }
         .padding(12)
         .background(.ultraThinMaterial)

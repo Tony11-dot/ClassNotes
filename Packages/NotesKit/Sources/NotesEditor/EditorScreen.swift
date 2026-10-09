@@ -396,6 +396,7 @@ public struct EditorScreen: View {
                 store: services.novaChats,
                 notebookID: notebook.id,
                 onReadNotebook: { await readNotebookForNova() },
+                onOpenPage: { openNovaCitedPage($0) },
                 onClose: { showNova = false }
             )
             .transition(.move(edge: .trailing))
@@ -521,22 +522,51 @@ extension EditorScreen {
         }
     }
 
-    /// Renders the whole notebook to one contact-sheet image plus a text hint,
-    /// for NOVA's "Read notebook" button. Ink is flushed first for the same
-    /// reason `exportPDF` does — the renderer reads pages off disk.
-    private func readNotebookForNova() async -> (image: Data, pageCount: Int, textHint: String)? {
+    /// Renders the whole notebook to one contact-sheet image for NOVA's "Read
+    /// notebook" button, and hands over where the pages' text comes from for
+    /// each later question. Ink is flushed first for the same reason
+    /// `exportPDF` does — the renderer reads pages off disk.
+    private func readNotebookForNova() async -> NovaNotebookReading? {
         await flushInkForExport()
         let exporter = NotebookExporter(
             store: services.documentStore, theme: theme, paperTone: paperTone
         )
         guard let sheet = await exporter.contactSheet(notebook: notebook) else { return nil }
-        let index = await services.searchIndexer.index(notebook: notebook.id)
-        let hint = index.pages
-            .map(\.text)
-            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            .joined(separator: " ")
-            .prefix(4000)
-        return (sheet.image, sheet.pageCount, String(hint))
+        return NovaNotebookReading(image: sheet.image, pageCount: sheet.pageCount, source: novaNotebookSource())
+    }
+
+    /// The notebook's pages as NOVA reads them: the search index's reading of
+    /// each page, numbered as the app shows them, read fresh for every
+    /// question so a page written mid-chat is part of the next answer.
+    ///
+    /// The closure outlives this view value, so it captures the references it
+    /// needs rather than `self`: an `@Environment` read from a stale copy of a
+    /// view returns the default, not the app's services.
+    private func novaNotebookSource() -> NovaNotebookSource {
+        let model = model
+        let tracker = tracker
+        let store = services.documentStore
+        let indexer = services.searchIndexer
+        let notebookID = notebook.id
+        return NovaNotebookSource(title: notebook.title) {
+            for page in model.pages {
+                guard let drawing = tracker.drawing(for: page.id) else { continue }
+                try? await store.savePageData(drawing.dataRepresentation(), notebook: notebookID, page: page.id)
+            }
+            let index = await indexer.index(notebook: notebookID)
+            var text: [UUID: String] = [:]
+            for page in index.pages { text[page.id] = page.text }
+            let pages = model.pages
+            return zip(pages, PageNumbering.numbers(of: pages)).map { page, number in
+                NovaGrounding.Page(number: number, text: text[page.id] ?? "")
+            }
+        }
+    }
+
+    /// Opens the page NOVA cited, by the number the app shows it under.
+    func openNovaCitedPage(_ number: Int) {
+        guard let page = PageNumbering.page(numbered: number, in: model.pages) else { return }
+        jump(to: page.id)
     }
 
     /// Writes every live canvas's ink to disk so an export sees it.

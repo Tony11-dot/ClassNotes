@@ -32,6 +32,9 @@ struct NewShelfSheet: View {
                                     in: RoundedRectangle(cornerRadius: 12, style: .continuous)
                                 )
                                 .onTapGesture { symbol = option }
+                                .accessibilityLabel(option.spokenName)
+                                .accessibilityAddTraits(symbol == option ? [.isButton, .isSelected] : .isButton)
+                                .accessibilityAction { symbol = option }
                         }
                     }
                 }

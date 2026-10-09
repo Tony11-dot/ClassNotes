@@ -29,6 +29,9 @@ public final class AppServices {
     public let remoteNotebookCache: RemoteNotebookCache
     /// Saved NOVA conversations, per notebook.
     public let novaChats: NovaChatStore
+    /// Whether this account has agreed to NOVA sending what they ask about to
+    /// the AI provider. Nothing is sent without it.
+    public let novaConsent: NovaConsent
     /// How the tools are tuned and what the Pencil's gestures do — saved, and
     /// carried between the user's own devices.
     public let settings: SettingsStore
@@ -66,6 +69,7 @@ public final class AppServices {
         self.remoteNotebookCache = RemoteNotebookCache(client: ClassMateAPIClient())
         self.themeService = ThemeService(context: context, entitlements: entitlements)
         self.novaChats = NovaChatStore(context: context)
+        self.novaConsent = NovaConsent { [auth] in auth.account?.id }
         let settings = SettingsStore(context: context)
         self.settings = settings
         self.repository = NotebookRepository(
@@ -87,18 +91,10 @@ public final class AppServices {
         set { keychain.set(newValue.trimmingCharacters(in: .whitespaces), for: .groqAPIKey) }
     }
 
+    /// Every NOVA conversation shares the account's permission to send
+    /// (`NovaConsent`); asked once, withdrawn in Settings.
     public func makeNovaConversation() -> NovaConversation {
-        NovaConversation(provider: aiProvider)
-    }
-
-    /// Ask NOVA (server-side, keyless) to tidy up the student's own note text.
-    /// Returns the cleaned text, or nil if signed out / the request fails — the
-    /// caller falls back to the raw OCR text so beautify still works offline.
-    public func beautifyText(_ text: String) async -> String? {
-        guard let token = auth.token, !token.isEmpty else { return nil }
-        let cleaned = try? await ClassMateAPIClient().beautify(text: text, token: token)
-        let trimmed = cleaned?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return (trimmed?.isEmpty == false) ? trimmed : nil
+        NovaConversation(provider: aiProvider, consent: novaConsent)
     }
 
     /// Kick off async work after launch: entitlements, products, and restoring

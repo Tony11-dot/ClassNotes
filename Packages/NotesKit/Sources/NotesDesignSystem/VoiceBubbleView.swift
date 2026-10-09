@@ -43,6 +43,11 @@ public struct VoiceBubbleView: View {
         .background(theme.accent.color, in: Capsule())
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Voice note, \(Int(duration)) seconds")
+        // Combined, the bubble is one element: say whether it's playing, and
+        // make activating it play or pause, as the button inside does.
+        .accessibilityValue(player.isPlaying ? "Playing" : "Paused")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { player.toggle(url: url) }
     }
 
     public static func timeString(_ seconds: TimeInterval) -> String {

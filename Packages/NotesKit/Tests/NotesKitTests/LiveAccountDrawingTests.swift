@@ -139,8 +139,15 @@ struct LiveAccountDrawingTests {
         // The page came back as the same picture that went up, not a placeholder.
         #expect(returned.count > 1000)
 
-        // 6. NOVA answers on this session too — it is the same token.
-        let answer = try await data.explainNote(text: "What is 7 x 6?", token: session.token)
+        // 6. NOVA answers on this session too — it is the same token, through
+        // the same provider the app uses.
+        let secrets = InMemorySecretStore()
+        secrets.set(session.token, for: .authToken)
+        let nova = NovaBackendProvider(keychain: secrets, baseURL: baseURL)
+        var answer = ""
+        for try await token in nova.streamReply(to: [AIMessage(role: .user, content: "What is 7 x 6?")]) {
+            answer += token
+        }
         #expect(answer.contains("42"))
 
         // 7. Deleting the account takes the notebooks with it.

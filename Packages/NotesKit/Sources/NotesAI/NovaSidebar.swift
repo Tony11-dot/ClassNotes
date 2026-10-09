@@ -18,12 +18,15 @@ public struct NovaSidebar: View {
     private let store: NovaChatStore
     private let notebookID: UUID?
     private let onClose: () -> Void
-    /// Renders the whole notebook down to one contact-sheet image plus a text
-    /// hint, for the "Read notebook" button. Nil hides the button — `NovaSidebar`
-    /// itself only knows the notebook's id, not how to render its pages, so
-    /// whoever presents it (the editor, which already has the notebook and the
-    /// document store) supplies this.
-    private let onReadNotebook: (() async -> (image: Data, pageCount: Int, textHint: String)?)?
+    /// Renders the whole notebook down to one contact-sheet image, and hands
+    /// over where its pages' text comes from, for the "Read notebook" button.
+    /// Nil hides the button — `NovaSidebar` itself only knows the notebook's
+    /// id, not how to render its pages, so whoever presents it (the editor,
+    /// which already has the notebook and the document store) supplies this.
+    private let onReadNotebook: (() async -> NovaNotebookReading?)?
+    /// Opens a page by the number the app shows it under (0 is the cover),
+    /// for the page links under an answer that cites the notes.
+    private let onOpenPage: ((Int) -> Void)?
 
     @State private var chat: NovaChat?
     @State private var draft = ""
@@ -40,13 +43,15 @@ public struct NovaSidebar: View {
         store: NovaChatStore,
         notebookID: UUID?,
         chat: NovaChat? = nil,
-        onReadNotebook: (() async -> (image: Data, pageCount: Int, textHint: String)?)? = nil,
+        onReadNotebook: (() async -> NovaNotebookReading?)? = nil,
+        onOpenPage: ((Int) -> Void)? = nil,
         onClose: @escaping () -> Void
     ) {
         self.conversation = conversation
         self.store = store
         self.notebookID = notebookID
         self.onReadNotebook = onReadNotebook
+        self.onOpenPage = onOpenPage
         self.onClose = onClose
         _chat = State(initialValue: chat)
     }
@@ -54,6 +59,11 @@ public struct NovaSidebar: View {
     public var body: some View {
         VStack(spacing: 0) {
             header
+            if conversation.notebook != nil, !showHistory {
+                NovaNotebookChip { conversation.stopReadingNotebook() }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 10)
+            }
             Divider().overlay(theme.separator.color)
             if showHistory {
                 historyList
@@ -154,15 +164,20 @@ public struct NovaSidebar: View {
                         emptyState
                     }
                     ForEach(conversation.visibleMessages) { message in
-                        NovaMessageRow(
+                        NovaTranscriptEntry(
                             message: message,
-                            onEdit: message.role == .user ? { beginEditing(message) } : nil
+                            conversation: conversation,
+                            onEdit: message.role == .user ? { beginEditing(message) } : nil,
+                            onOpenPage: onOpenPage
                         )
                         .id(message.id)
                         if message.id == lastAssistantReplyID, !conversation.streaming,
                            !conversation.followUpSuggestions.isEmpty {
-                            followUpRow
+                            NovaFollowUpRow(conversation: conversation)
                         }
+                    }
+                    if conversation.awaitingConsent {
+                        NovaConsentCard(conversation: conversation, draft: $draft).id("nova-consent")
                     }
                     if let error = conversation.errorText {
                         Text(error).font(.dsFootnote).foregroundStyle(.red)
@@ -187,6 +202,10 @@ public struct NovaSidebar: View {
                 guard error != nil else { return }
                 withAnimation { proxy.scrollTo("nova-error", anchor: .bottom) }
             }
+            .onChange(of: conversation.awaitingConsent) { _, waiting in
+                guard waiting else { return }
+                withAnimation { proxy.scrollTo("nova-consent", anchor: .bottom) }
+            }
         }
     }
 
@@ -198,42 +217,13 @@ public struct NovaSidebar: View {
         return last.id
     }
 
-    /// Tappable follow-ups under NOVA's latest reply, generated from the real
-    /// conversation (`NovaConversation.followUpSuggestions`) rather than a fixed
-    /// list — no backend change needed, since generation reuses the same
-    /// chat-completion path a typed message already goes through.
-    private var followUpRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(conversation.followUpSuggestions, id: \.self) { suggestion in
-                    Button {
-                        conversation.send(suggestion)
-                    } label: {
-                        Text(suggestion)
-                            .font(.dsCaption.weight(.medium))
-                            .foregroundStyle(theme.accent.color)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(theme.accentMuted.withAlpha(0.16).color, in: Capsule())
-                            .overlay(Capsule().strokeBorder(theme.accent.withAlpha(0.3).color, lineWidth: 0.5))
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.leading, 34) // clears the avatar column above it
-        }
-        .disabled(conversation.streaming)
-    }
-
-    private func readNotebook(
-        using render: @escaping () async -> (image: Data, pageCount: Int, textHint: String)?
-    ) {
+    private func readNotebook(using render: @escaping () async -> NovaNotebookReading?) {
         readingNotebook = true
         Task {
             defer { readingNotebook = false }
-            guard let context = await render() else { return }
+            guard let reading = await render() else { return }
             conversation.explainNotebook(
-                image: context.image, pageCount: context.pageCount, textHint: context.textHint
+                image: reading.image, pageCount: reading.pageCount, source: reading.source
             )
         }
     }
@@ -494,83 +484,5 @@ struct NovaMessageRow: View {
                 }
             }
         }
-    }
-}
-
-/// Three breathing dots for the gap between "asked" and "the first word of the
-/// answer" — with reasoning hidden, that gap is real, and a blank row looked broken.
-struct NovaTypingDots: View {
-    @Environment(\.theme) private var theme
-    @State private var phase = 0.0
-
-    var body: some View {
-        HStack(spacing: 5) {
-            ForEach(0..<3, id: \.self) { index in
-                Circle()
-                    .fill(theme.accent.color)
-                    .frame(width: 6, height: 6)
-                    .opacity(0.35 + 0.65 * pulse(index))
-            }
-        }
-        .frame(height: 18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityLabel("NOVA is thinking")
-        .onAppear {
-            withAnimation(.linear(duration: 1.2).repeatForever(autoreverses: false)) {
-                phase = 3
-            }
-        }
-    }
-
-    private func pulse(_ index: Int) -> Double {
-        let offset = (phase - Double(index)).truncatingRemainder(dividingBy: 3)
-        return max(0, 1 - abs(offset - 0.5) * 1.6)
-    }
-}
-
-/// The floating NOVA bubble every notebook carries. Draggable so it never sits on
-/// top of what you're writing.
-public struct NovaBubble: View {
-    @Environment(\.theme) private var theme
-
-    let isActive: Bool
-    let action: () -> Void
-
-    @State private var offset: CGSize = .zero
-    @State private var dragStart: CGSize = .zero
-
-    public init(isActive: Bool, action: @escaping () -> Void) {
-        self.isActive = isActive
-        self.action = action
-    }
-
-    public var body: some View {
-        ZStack {
-            Circle()
-                .fill(theme.accent.color)
-                .shadow(color: .black.opacity(0.26), radius: 12, y: 5)
-            NovaAvatar(size: 30, animated: isActive)
-        }
-        .frame(width: 56, height: 56)
-        .contentShape(Circle())
-        .accessibilityLabel("Ask NOVA")
-        .accessibilityAddTraits(.isButton)
-        .offset(offset)
-        // A plain view rather than a `Button`, because a Button's own press
-        // gesture wins the touch and only yields once SwiftUI decides the drag
-        // has begun — so the bubble sat still under the finger and then flicked
-        // to the release point. Here the drag is the primary gesture and the tap
-        // is what happens when the finger didn't travel.
-        .highPriorityGesture(
-            DragGesture(minimumDistance: 4)
-                .onChanged { value in
-                    offset = CGSize(
-                        width: dragStart.width + value.translation.width,
-                        height: dragStart.height + value.translation.height
-                    )
-                }
-                .onEnded { _ in dragStart = offset }
-        )
-        .onTapGesture { action() }
     }
 }

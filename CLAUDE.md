@@ -779,3 +779,31 @@ pricing changes go through its change-control list first.
   page text.
 - Editor keyboard shortcuts live on the EDITOR (`EditorScreenShortcuts`), never
   only on the canvas (never first responder) or the rail (it collapses).
+
+## Architecture invariants (quality round 3: NOVA consent and grounding)
+
+- NOTHING reaches the AI provider without the account's permission. Every NOVA
+  request passes `NovaConversation.beginAssistantReply`, which holds it
+  (`awaitingConsent`) until `NovaConsent` says yes; the card that asks
+  (`NovaConsentCard`) says what is sent and to whom, and Settings withdraws it
+  (`NovaPrivacySection`). Consent is per account and per `currentVersion` —
+  bump that when what NOVA sends, or who receives it, changes. Don't add a
+  second path to `/classnotes/ai`: the unused "beautify"/"explain" client
+  calls were deleted so the gate is the only way out. App Store 5.1.2(i).
+- A notebook goes to NOVA only after "Read this notebook", only in that chat,
+  and the chat says so ("Answering from this notebook", with Stop). Each
+  question then carries `NovaGrounding.context`: pages the question names, then
+  pages ranked by its rarer words, then an even share of every other page,
+  inside the server's 6,000-character page-context limit (measured in UTF-16,
+  as the server's validator measures). The context rides as a transient system
+  message before the question and is never stored in the transcript. Page text
+  comes from the search index, numbered by `PageNumbering` (the cover is 0,
+  never page 1), so "(p. 3)" opens the page labelled 3.
+- Answers are labelled from their OWN markers (`NovaReply.source`): page
+  citations that exist in the notebook, or an opening "Not in your notes:".
+  `NovaGrounding.citationRule` asks for exactly those; keep the two in step.
+  No marker, no label.
+- `NovaBackendProvider.payload` never sends NOVA's identity prompt as
+  `pageContext` (the server labels that field "the page the student is looking
+  at" and has its own identity), and clips `text` and `pageContext` to the
+  server's limits; over them was a 400.

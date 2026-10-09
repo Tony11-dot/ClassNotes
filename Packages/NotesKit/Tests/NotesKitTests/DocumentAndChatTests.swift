@@ -344,7 +344,7 @@ struct NovaConversationBridgeTests {
 
     @Test("Restoring a saved chat rebuilds the visible transcript, system prompt hidden")
     func restores() {
-        let conversation = NovaConversation(provider: SilentProvider())
+        let conversation = NovaConversation(provider: SilentProvider(), consent: testConsent())
         let turns = [
             NovaChatTurn(role: .user, content: "hello"),
             NovaChatTurn(role: .assistant, content: "hi there")
@@ -359,7 +359,7 @@ struct NovaConversationBridgeTests {
 
     @Test("Stored turns drop empty placeholders so a failed reply is never saved")
     func skipsEmptyTurns() {
-        let conversation = NovaConversation(provider: SilentProvider())
+        let conversation = NovaConversation(provider: SilentProvider(), consent: testConsent())
         conversation.restore(turns: [
             NovaChatTurn(role: .user, content: "question"),
             NovaChatTurn(role: .assistant, content: "   ")
@@ -371,7 +371,7 @@ struct NovaConversationBridgeTests {
 
     @Test("Reset clears the transcript back to just the system prompt")
     func reset() {
-        let conversation = NovaConversation(provider: SilentProvider())
+        let conversation = NovaConversation(provider: SilentProvider(), consent: testConsent())
         conversation.restore(turns: [NovaChatTurn(role: .user, content: "x")])
         conversation.reset()
         #expect(conversation.visibleMessages.isEmpty)

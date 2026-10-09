@@ -202,9 +202,13 @@ struct PerformanceBenchmarkTests {
         }
     }
 
-    @Test("Searching 1,000 indexed pages stays fast enough to run per keystroke")
-    func searchThousandPages() async throws {
-        let root = benchRoot("search")
+    @Test(
+        "Searching 1,000 and 10,000 indexed pages stays fast enough to run per keystroke",
+        arguments: [100, 1_000]
+    )
+    func searchIndexedPages(notebooks: Int) async throws {
+        let pages = notebooks * 10
+        let root = benchRoot("search-\(pages)")
         defer { try? FileManager.default.removeItem(at: root) }
         let store = DocumentStore(rootURL: root)
         let words = [
@@ -214,7 +218,7 @@ struct PerformanceBenchmarkTests {
         ]
         var targets: [SearchTarget] = []
         var generator = SystemRandomNumberGenerator()
-        for notebook in 0..<100 {
+        for notebook in 0..<notebooks {
             let id = UUID()
             try await store.createDocument(id: id, style: PageStyle(template: .ruled))
             var index = SearchIndex(language: "en-US")
@@ -235,9 +239,9 @@ struct PerformanceBenchmarkTests {
         var results: [NotebookSearchResult] = []
         let rare = await median(7) { results = await indexer.search("krebs cycle", across: targets) }
         let common = await median(7) { _ = await indexer.search("mitochondria", across: targets) }
-        bench("search.cold.1000pages", cold, "ms", "first search, every index read from disk")
-        bench("search.rare.1000pages", rare, "ms", "100 notebooks x 10 pages, median of 7")
-        bench("search.common.1000pages", common, "ms", "a term on most pages")
+        bench("search.cold.\(pages)pages", cold, "ms", "first search, every index read from disk")
+        bench("search.rare.\(pages)pages", rare, "ms", "\(notebooks) notebooks x 10 pages, median of 7")
+        bench("search.common.\(pages)pages", common, "ms", "a term on most pages")
         #expect(results.map(\.notebookID) == [targets[42].id])
         #expect(rare < 2_000)
     }
