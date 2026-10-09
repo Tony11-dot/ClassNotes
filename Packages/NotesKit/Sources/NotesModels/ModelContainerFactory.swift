@@ -39,8 +39,7 @@ public enum ModelContainerFactory {
     public static func makeRecovering(
         inMemory: Bool = false, url: URL? = nil
     ) -> (container: ModelContainer, recovery: Recovery?) {
-        let configuration = url.map { ModelConfiguration(schema: schema, url: $0) }
-            ?? ModelConfiguration(schema: schema, isStoredInMemoryOnly: inMemory)
+        let configuration = configuration(inMemory: inMemory, url: url)
         if let container = try? ModelContainer(for: schema, configurations: [configuration]) {
             return (container, nil)
         }
@@ -48,12 +47,31 @@ public enum ModelContainerFactory {
            let container = try? ModelContainer(for: schema, configurations: [configuration]) {
             return (container, .movedAside(aside))
         }
-        let fallback = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        let fallback = Self.configuration(inMemory: true, url: nil)
         do {
             return (try ModelContainer(for: schema, configurations: [fallback]), .inMemoryOnly)
         } catch {
             fatalError("Unable to create even an in-memory model container: \(error)")
         }
+    }
+
+    /// Where the library database lives: in memory, at `url`, or at SwiftData's
+    /// default location — and in every case on THIS device only.
+    ///
+    /// `cloudKitDatabase: .none` is load-bearing. SwiftData's default,
+    /// `.automatic`, switches on CloudKit mirroring whenever the app is signed
+    /// with an iCloud container, and the App Store build is (iCloud Drive, for
+    /// `NotebookSync`). CloudKit refuses unique constraints, every model here
+    /// keys on a unique id, so no container would open — not even the in-memory
+    /// last resort — and 1.5 (81)–(83) quit on launch on every real device. The
+    /// simulator, the tests and the device lab are signed without the
+    /// entitlement, which is why none of them saw it. iCloud sync is files in
+    /// iCloud Drive; this database never syncs.
+    static func configuration(inMemory: Bool, url: URL?) -> ModelConfiguration {
+        if let url {
+            return ModelConfiguration(schema: schema, url: url, cloudKitDatabase: .none)
+        }
+        return ModelConfiguration(schema: schema, isStoredInMemoryOnly: inMemory, cloudKitDatabase: .none)
     }
 
     /// Moves a store and its `-wal`/`-shm` companions into

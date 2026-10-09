@@ -1,9 +1,9 @@
 import ClassMateTheme
 import Foundation
-import NotesModels
 import SwiftData
 import Testing
 @testable import NotesEditor
+@testable import NotesModels
 @testable import NotesServices
 
 /// Every notebook on disk is in the library — whatever happened to the
@@ -197,6 +197,29 @@ struct StoreRecoveryTests {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let (_, recovery) = ModelContainerFactory.makeRecovering(url: folder.appendingPathComponent("ok.store"))
         #expect(recovery == nil)
+    }
+
+    @Test("The library database is local only: no configuration lets SwiftData reach for CloudKit")
+    func configurationsAreLocalOnly() {
+        // SwiftData's default is `.automatic`, which turns CloudKit on whenever
+        // the app is signed with an iCloud container — the App Store build is,
+        // for iCloud Drive. CloudKit forbids unique constraints and every model
+        // keys on a unique id, so no container could open, the in-memory last
+        // resort included: 1.5 (81)–(83) quit on launch on every device. The
+        // test host is signed with nothing, so `.automatic` passes every other
+        // test here; only the setting itself shows it. (Opening this schema
+        // with `.private(...)` here reproduces the failure, but CloudKit's
+        // teardown can hang the test host, so it isn't a test.)
+        let local = String(describing: ModelConfiguration.CloudKitDatabase.none)
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cmnotes-store-\(UUID().uuidString).store")
+        for configuration in [
+            ModelContainerFactory.configuration(inMemory: false, url: nil),
+            ModelContainerFactory.configuration(inMemory: true, url: nil),
+            ModelContainerFactory.configuration(inMemory: false, url: url)
+        ] {
+            #expect(String(describing: configuration.cloudKitDatabase) == local)
+        }
     }
 
     @Test("Library notices say what happened, that notes are safe, and what changed")

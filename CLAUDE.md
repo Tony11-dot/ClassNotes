@@ -871,6 +871,17 @@ pricing changes go through its change-control list first.
   `Config/ClassNotes.entitlements` is wired into the Release configuration. It is
   tested only against `FolderDrive` as two simulated devices, never yet between
   two real devices; keep the flag the single switch if it must go dark again.
+- The SwiftData library database is LOCAL ONLY: every `ModelConfiguration`
+  comes from `ModelContainerFactory.configuration`, which passes
+  `cloudKitDatabase: .none`. SwiftData's default `.automatic` switches CloudKit
+  on the moment the app is signed with an iCloud container, CloudKit forbids
+  the schema's `@Attribute(.unique)` ids, and nothing opens — not even the
+  in-memory fallback. That is how 1.5 (81)–(83) quit on launch on every real
+  device while every test, the simulator and the device lab passed: all three
+  were signed WITHOUT the entitlement. An entitlement change is a launch risk;
+  before shipping one, launch a Release build signed with the real
+  entitlements (`CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual` on the
+  simulator embeds them; `CODE_SIGNING_ALLOWED=NO` strips them).
 - NOVA citations are read in every form the live model writes
   (`NovaReply.citedPages`); when the model changes, re-run the live
   evaluation (`CLASSNOTES_LIVE_EVAL=1`, `NovaLiveEvalTests`) and record the
