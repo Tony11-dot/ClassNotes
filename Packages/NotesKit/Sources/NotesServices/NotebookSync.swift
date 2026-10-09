@@ -55,10 +55,6 @@ public actor NotebookSync {
         /// Open in the editor, or not downloaded yet: next time.
         public var deferred: [UUID] = []
         public var failed: [UUID] = []
-
-        public var changedLibrary: Bool {
-            !pulled.isEmpty || !adopted.isEmpty || !forked.isEmpty || !removedElsewhere.isEmpty || !metadata.isEmpty
-        }
     }
 
     /// The suffix a kept-both copy's title gets.

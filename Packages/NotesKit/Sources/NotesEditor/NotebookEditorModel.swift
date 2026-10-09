@@ -79,15 +79,6 @@ public final class NotebookEditorModel {
         return manifest?.pages.first { $0.id == id }
     }
 
-    /// The page an insertion lands on, and its logical size.
-    public var focusedPage: PageRecord? {
-        page(focusedPageID) ?? manifest?.pages.first
-    }
-
-    public var focusedPageSize: CGSize {
-        focusedPage?.logicalSize ?? PageGeometry.size
-    }
-
     // MARK: - Page settings & management
 
     public func updatePageSettings(
@@ -217,13 +208,6 @@ public final class NotebookEditorModel {
 
     // MARK: - Handwriting beautification
 
-    /// OCRs the page's handwriting → returns the recognized text. Used by the
-    /// explicit "handwriting → text" command; real-time beautification goes
-    /// through `LiveBeautifier` and `apply(plan:)`.
-    public func recognizedHandwriting(pageID: UUID, drawing: PKDrawing) async -> String {
-        await recognizeText(pageID: pageID, drawing: drawing)
-    }
-
     /// Commits one beautification pass: new typeset runs are added, runs the
     /// student continued are rewritten, all in a single manifest write.
     ///
@@ -262,23 +246,6 @@ public final class NotebookEditorModel {
         current.pages[index].elements = elements
         manifest = current
         await saveElements(elements, notebook: notebookID, page: pageID)
-    }
-
-    /// Drops beautified text onto the page at `origin` (the ink's top-left), so
-    /// it replaces the handwriting rather than appearing as a centered box.
-    public func placeBeautifiedText(
-        _ text: String, at origin: CGPoint, fontName: String, colorHex: String, pageID: UUID
-    ) async {
-        guard !text.isEmpty else { return }
-        let pageSize = page(pageID)?.logicalSize ?? PageGeometry.size
-        let width = min(pageSize.width - origin.x - 32, pageSize.width * 0.73)
-        let height = min(pageSize.height * 0.7, max(60, Double(text.count) / 42 * 26 + 44))
-        let x = max(24, min(origin.x, pageSize.width - width - 24))
-        let y = max(24, min(origin.y, pageSize.height - 60))
-        await append(PageElement(
-            kind: .text, x: x, y: y, width: width, height: height,
-            text: text, fontName: fontName, textColorHex: colorHex
-        ), to: pageID)
     }
 
     var targetPageID: UUID? { focusedPageID ?? manifest?.pages.first?.id }
@@ -335,22 +302,6 @@ public final class NotebookEditorModel {
         )
     }
 
-    /// Copies an element, offset so the copy is visible rather than exactly on
-    /// top of what it was copied from.
-    public func duplicateElement(_ elementID: UUID, on pageID: UUID, offset: CGSize) async {
-        guard var current = manifest,
-              let pageIndex = current.pages.firstIndex(where: { $0.id == pageID }),
-              let source = current.pages[pageIndex].elements.first(where: { $0.id == elementID })
-        else { return }
-        var copy = source.moved(by: offset)
-        copy.id = UUID()
-        current.pages[pageIndex].elements.append(copy)
-        manifest = current
-        await saveElements(
-            current.pages[pageIndex].elements, notebook: notebookID, page: pageID
-        )
-    }
-
     /// Shifts an element, and any path it carries, by `offset`.
     public func moveElement(_ elementID: UUID, on pageID: UUID, by offset: CGSize) async {
         guard var current = manifest,
@@ -362,23 +313,6 @@ public final class NotebookEditorModel {
         // and moves by itself (`PageElement.moved`).
         current.pages[pageIndex].elements[elementIndex] =
             current.pages[pageIndex].elements[elementIndex].moved(by: offset)
-        manifest = current
-        await saveElements(
-            current.pages[pageIndex].elements, notebook: notebookID, page: pageID
-        )
-    }
-
-    /// Applies an arbitrary affine transform to an element's frame and any
-    /// path it carries — used by lasso resize, which SCALES a whole selection
-    /// rather than just shifting it the way `moveElement` does.
-    public func transformElement(_ elementID: UUID, on pageID: UUID, by transform: CGAffineTransform) async {
-        guard var current = manifest,
-              let pageIndex = current.pages.firstIndex(where: { $0.id == pageID }),
-              let elementIndex = current.pages[pageIndex].elements
-                .firstIndex(where: { $0.id == elementID })
-        else { return }
-        current.pages[pageIndex].elements[elementIndex] =
-            current.pages[pageIndex].elements[elementIndex].transformed(by: transform)
         manifest = current
         await saveElements(
             current.pages[pageIndex].elements, notebook: notebookID, page: pageID

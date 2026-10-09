@@ -69,7 +69,6 @@ struct ToolRailView: View {
     }
 
     private static let edgeInset: CGFloat = 30
-    private static let railWidth: CGFloat = 84
     /// The instruments are drawn as objects, not icons, so they need the room to
     /// show a clip, a ferrule, a nib. Below about this size the detail turns into
     /// texture and every pen starts to look like the same coloured stick.

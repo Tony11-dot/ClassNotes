@@ -71,10 +71,6 @@ struct PanelSlider: View {
     }
 }
 
-/// The page line-spacing slider's bounds as doubles.
-let pageSpacingRange: ClosedRange<Double> =
-    Double(PageLineSpacing.range.lowerBound)...Double(PageLineSpacing.range.upperBound)
-
 /// The header every panel shares: an optional leading action, a title, and an
 /// optional trailing action.
 struct PanelHeader: View {
@@ -395,4 +391,3 @@ struct EraserPanel: View {
         .background(theme.surfaceRaised.color)
     }
 }
-

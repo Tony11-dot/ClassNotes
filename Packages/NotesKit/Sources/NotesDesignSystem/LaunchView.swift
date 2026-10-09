@@ -68,15 +68,6 @@ public struct LaunchView: View {
                 try? await Task.sleep(for: .seconds(LaunchScene.duration + 1.2))
                 finishOnce()
             }
-        } else if let videoURL = LaunchMedia.videoURL {
-            // Your bundled launch clip plays once, then hands off. Falls back to
-            // the native animation below if no video has been added yet.
-            ZStack {
-                theme.surface.color.ignoresSafeArea()
-                LaunchVideoView(url: videoURL, onFinished: onFinished)
-                    .ignoresSafeArea()
-            }
-            .task { CMFonts.registerIfNeeded() }
         } else {
             nativeBody
         }

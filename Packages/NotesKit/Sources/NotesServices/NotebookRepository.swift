@@ -64,25 +64,6 @@ public final class NotebookRepository {
         entitlements.canCreateNotebook(currentCount: currentCount)
     }
 
-    @discardableResult
-    public func createNotebook(
-        title: String,
-        coverColor: ThemeColor,
-        template: PageTemplate,
-        margin: PageMargin = .default,
-        paperColorHex: String? = nil,
-        shelfID: UUID? = nil
-    ) async throws -> Notebook {
-        try await create(
-            title: title,
-            coverColor: coverColor,
-            style: PageStyle(
-                template: template, margin: margin, paperColorHex: paperColorHex
-            ),
-            shelfID: shelfID
-        )
-    }
-
     /// The one path every creation flow goes through: quick note, the full New
     /// Notebook sheet, a whiteboard, and the image / file / scan imports. `kind`
     /// decides how the editor later presents it; `style` is the paper every page

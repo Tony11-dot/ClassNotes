@@ -96,13 +96,6 @@ public final class AppServices {
         }
     }
 
-    // MARK: - Groq key (entered in Settings, stored in Keychain)
-
-    public var groqAPIKey: String {
-        get { keychain.get(.groqAPIKey) ?? "" }
-        set { keychain.set(newValue.trimmingCharacters(in: .whitespaces), for: .groqAPIKey) }
-    }
-
     /// Every NOVA conversation shares the account's permission to send
     /// (`NovaConsent`); asked once, withdrawn in Settings.
     public func makeNovaConversation() -> NovaConversation {

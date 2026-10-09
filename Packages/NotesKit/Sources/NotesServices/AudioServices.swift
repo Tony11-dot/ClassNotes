@@ -117,12 +117,6 @@ public final class AudioPlayerModel: NSObject, AVAudioPlayerDelegate {
         timer?.invalidate()
     }
 
-    public func seek(to fraction: Double) {
-        guard let player else { return }
-        player.currentTime = fraction * player.duration
-        progress = fraction
-    }
-
     private func tick() {
         guard let player else { return }
         progress = player.duration > 0 ? player.currentTime / player.duration : 0

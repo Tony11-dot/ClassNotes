@@ -107,8 +107,8 @@ Universal app, Swift 6 (strict concurrency), SwiftUI-first, Liquid Glass design 
   Replacing that file replaces the launch. `lottie-ios` is the app's one
   third-party dependency, added deliberately: the launch used to be a SwiftUI
   rebuild of the artwork, which drifted from the artwork every time it changed.
-  `LaunchView` still falls back to a bundled video and then to the native
-  animation if the scene is missing. It is staged exactly the way ClassMate stages
+  `LaunchView` still falls back to the native animation if the scene is
+  missing. It is staged exactly the way ClassMate stages
   its splash: theme surface, `AmbientBackground` fading in over 1.1 s behind it,
   and the scene centred and aspect-fitted across the FULL width (its own
   `LaunchScene.aspectRatio`, not a hardcoded cap) — which needs
@@ -670,7 +670,7 @@ ML feature — distinct from the shipped handwriting→text) stays a premium stu
   loss, and the "restore last known good" guard put the erased ink back. Any
   erase (not only one that drops the count) retires the shape guard, and eraser
   fragments never enter the ink pass as new strokes. Every external rewrite
-  (`setDrawing`, `clearDrawing`, `applyBeautified`) retires it too, so a lasso
+  (`setDrawing`, `applyBeautified`) retires it too, so a lasso
   move can't be "healed" back to where the shape was.
 - The lasso holds strokes by IDENTITY (`StrokeKey`: path creation date, point
   count, placement), resolved against the live drawing at the moment of acting

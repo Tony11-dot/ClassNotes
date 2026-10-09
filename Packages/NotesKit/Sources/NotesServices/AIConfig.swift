@@ -8,9 +8,8 @@ import Foundation
 ///   SUPPORT_AI_MODEL     (default openai/gpt-oss-120b)
 ///
 /// Resolution order for each value: process environment (Xcode Run / xcodebuild
-/// dev) → Info.plist (injected at build time from `Config/Secrets.xcconfig`,
-/// which reaches TestFlight/Release) → for the key only, the user-entered
-/// Keychain value. No key is ever stored in source.
+/// dev) → `Config/Info.plist` (which never carries a key or a model) → for the
+/// key only, the Keychain. No key is ever stored in source.
 public enum AIConfig {
     public static let defaultBaseURL = "https://api.groq.com/openai/v1"
     /// Groq decommissioned `llama-3.3-70b-versatile` on 2026-06-17; a build still

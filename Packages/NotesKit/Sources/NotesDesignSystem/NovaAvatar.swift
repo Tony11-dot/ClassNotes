@@ -43,26 +43,3 @@ public struct NovaAvatar: View {
         .accessibilityLabel("NOVA")
     }
 }
-
-/// Three bouncing dots for NOVA's "thinking" state.
-public struct TypingDots: View {
-    @Environment(\.theme) private var theme
-    @State private var phase = 0.0
-
-    public init() {}
-
-    public var body: some View {
-        TimelineView(.animation) { timeline in
-            let t = timeline.date.timeIntervalSinceReferenceDate
-            HStack(spacing: 5) {
-                ForEach(0..<3, id: \.self) { index in
-                    Circle()
-                        .fill(theme.inkSecondary.color)
-                        .frame(width: 6, height: 6)
-                        .offset(y: -3 * sin(t * 4 + Double(index) * 0.6))
-                }
-            }
-        }
-        .accessibilityLabel("NOVA is thinking")
-    }
-}

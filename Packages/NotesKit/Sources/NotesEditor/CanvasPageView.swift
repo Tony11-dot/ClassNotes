@@ -224,20 +224,6 @@ public final class ActiveCanvasTracker {
         return bounds
     }
 
-    /// Wipe a page's ink. Routed through `replace()` for the same reason
-    /// `setDrawing` is — see its doc.
-    public func clearDrawing(for pageID: UUID) {
-        guard let canvas = canvases[pageID]?.view as? PageCanvasView,
-              let coordinator = canvas.delegate as? CanvasPageView.Coordinator else {
-            canvases[pageID]?.view?.drawing = PKDrawing()
-            return
-        }
-        coordinator.guardedShapeStroke = nil
-        coordinator.processedStrokeCount = 0
-        coordinator.replace(PKDrawing(), on: canvas, allowsFewerStrokes: true)
-        coordinator.scheduleSave()
-    }
-
     /// Immediately writes every live page's most recent ink to disk, bypassing
     /// the normal save debounce.
     ///

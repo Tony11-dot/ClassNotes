@@ -39,10 +39,6 @@ public struct ICloudDrive: CloudDrive {
 
     public init() {}
 
-    /// Whether this device is signed in to iCloud at all. Cheap; safe on the
-    /// main actor.
-    public static var isSignedIn: Bool { FileManager.default.ubiquityIdentityToken != nil }
-
     public func folder() async -> URL? {
         // Can block while iCloud sets the container up: never on the main actor.
         await Task.detached(priority: .utility) {

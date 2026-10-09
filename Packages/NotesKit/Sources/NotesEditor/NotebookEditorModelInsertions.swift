@@ -105,17 +105,6 @@ extension NotebookEditorModel {
         ), to: pageID)
     }
 
-    /// Drops a tappable link chip on the page.
-    public func insertLink(_ url: URL, displayName: String? = nil) async {
-        guard let pageID = existingTargetPageID else { return }
-        let (x, y) = center(width: 280, height: 60, on: pageID)
-        await append(PageElement(
-            kind: .link, x: x, y: y, width: 280, height: 60,
-            displayName: displayName ?? url.host() ?? url.absoluteString,
-            urlString: url.absoluteString
-        ), to: pageID)
-    }
-
     public func insertVoice(fileURL: URL, duration: TimeInterval) async {
         guard let pageID = existingTargetPageID,
               let data = try? Data(contentsOf: fileURL),

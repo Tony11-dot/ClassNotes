@@ -56,6 +56,10 @@ public enum BrandName {
 /// `ClassMateLogo` (one blue source recoloured `srcIn` → the theme primary).
 /// Sized by height; the width follows the artwork's aspect ratio. Used at the
 /// top of the login card, mirroring ClassMate's `ClassMateLogo(height: 54)`.
+///
+/// The asset is cut for the LARGEST place it is drawn — 88 pt tall, the iPad
+/// library title — at every scale. Drawing it bigger than that stretches the
+/// pixels, and the thin wordmark is the first thing to go soft.
 public struct BrandLockup: View {
     @Environment(\.theme) private var theme
     let height: CGFloat

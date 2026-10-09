@@ -18,7 +18,6 @@
 
 /* Begin PBXFileReference section */
 		AA0000000000000000000006 /* ClassNotes.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ClassNotes.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		AA0000000000000000000040 /* Secrets.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Secrets.xcconfig; path = Config/Secrets.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -51,7 +50,6 @@
 			isa = PBXGroup;
 			children = (
 				AA0000000000000000000003 /* App */,
-				AA0000000000000000000040 /* Secrets.xcconfig */,
 				AA0000000000000000000004 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -219,7 +217,6 @@
 		};
 		AA000000000000000000000E /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = AA0000000000000000000040 /* Secrets.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = Config/ClassNotes.entitlements;
 				CODE_SIGN_STYLE = Automatic;
@@ -254,7 +251,6 @@
 		};
 		AA000000000000000000000F /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = AA0000000000000000000040 /* Secrets.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = Config/ClassNotes.entitlements;
 				CODE_SIGN_STYLE = Automatic;

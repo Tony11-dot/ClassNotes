@@ -59,14 +59,6 @@ public enum TapePattern: String, CaseIterable, Sendable, Codable, Identifiable {
         case .gradient: "Fade"
         }
     }
-
-    /// Patterns whose motif is a repeated glyph rather than a stroke/fill.
-    public var isGlyphPattern: Bool {
-        switch self {
-        case .hearts, .stars, .confetti: true
-        default: false
-        }
-    }
 }
 
 /// Geometry rules shared by the tape tool and the tape renderer, kept pure so
