@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>CMCloudSync</key>
-	<false/>
+	<true/>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>SUPPORT_AI_BASE_URL</key>
