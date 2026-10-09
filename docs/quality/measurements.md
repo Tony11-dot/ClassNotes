@@ -220,14 +220,58 @@ window resized to a random width from 320 to 2,560 points at a random zoom.
 What a resize looks like on screen (no layout corruption, 300 ms to settle,
 §80) needs a device; it is listed below.
 
-## 9. Unmeasured: needs a hand on the device
+## 9. On device
+
+- **Device.** iPad Air 11-inch (M4), iPadOS 27.0, 256 GB (the high end
+  chosen in D-002).
+- **Build.** 1.5 (82), Release configuration, installed as a separate
+  development copy (bundle `com.classmate.notes.devlab`, iCloud entitlement
+  removed) so the installed app and its library were never touched.
+- **Library.** 121 notebooks, 1,260 pages: 120 eight-page notebooks of ink
+  and one 300-page notebook, copied in as packages and adopted by the app's
+  own launch reconciliation on the first run.
+- **Tools.** `xctrace record` with the App Launch and Activity Monitor
+  templates, driven from the Mac; tables exported with `xctrace export`.
+
+**Launch** (App Launch template, five runs). Each run kills the app first,
+so the process starts from nothing. The device's file and shared-library
+caches stay warm: iOS has no cold start short of a reboot.
+
+| Measure | Median | Range |
+|---|---|---|
+| Process start → first frame drawn | 162 ms | 156–172 ms |
+| Process start → foreground and active | 319 ms | 242–336 ms |
+| of which system and runtime initialisation | 15 ms | 14–18 ms |
+| of which UIKit launch, scene connection and first frame | 108 ms | 102–111 ms |
+
+After the first frame, the designed launch scene plays for 2.6 s
+(`LaunchScene.json`, 156 frames at 60 fps) and fades out over 0.3 s. The
+library is built underneath it, but touches reach the library only after
+the scene. That puts the library about 2.8 s from a tap on the icon. The
+wait is a design choice, not launch cost; the system launch is 0.3 s of it.
+
+**Memory** (Activity Monitor template, physical footprint, sampled about once
+a second).
+
+| Moment | Footprint |
+|---|---|
+| While the launch scene plays | 158–160 MB |
+| Library on screen, settled (121 notebooks, 1,260 pages) | 52 MB |
+| Library idle for three minutes | 52 MB, flat (no growth, 0% CPU) |
+
+The launch scene costs about 105 MB while it plays: the recoloured Lottie
+scene and its retinted monogram. That memory is given back within a second
+of the scene ending. It is well clear of any memory limit, but it is the
+largest single allocation in a normal launch.
+
+## 10. Unmeasured: needs a hand on the device
 
 | Metric | Why it's unmeasured | How to measure it |
 |---|---|---|
 | Pencil-to-pixel latency | Belongs to PencilKit and the display; the simulator has no Pencil | Instruments on a device; or a high-speed camera |
 | Frame rate while writing, scrolling and zooming | Needs someone writing | Instruments → Animation Hitches |
-| Launch to interactive | Ready to run: a devlab copy and a 1,260-page library are on the iPad Air (M4); waits for the iPad to be unlocked | Instruments → App Launch |
-| Device memory ceiling on large notebooks | Same | Instruments → Activity Monitor, with the 300-page notebook |
+| Device memory ceiling on large notebooks | Needs a hand to open and scroll the 300-page notebook while recording | Instruments → Activity Monitor, with the 300-page notebook |
+| Launch on the low-end iPad (A16) | Not borrowed yet (D-002) | Instruments → App Launch, as §9 |
 | Battery during a 1-hour session | Device only | Xcode Energy Log |
 | Layout after rotation and window resize (§80) | Needs a device and a hand moving the window | Instruments → Animation Hitches during rotation; screen recording |
 | Crash-free rate | Needs time in the field | Support → Diagnostics on each device (D-004), App Store Connect → Crashes |

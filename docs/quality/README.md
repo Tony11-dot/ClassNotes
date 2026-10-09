@@ -66,10 +66,11 @@ Core Graphics) rather than adding a dependency.
   The work on our side is to keep the main thread free; see measurements.md.
 - **Palm rejection** is PencilKit's (`drawingPolicy = .pencilOnly`) plus our
   hit-testing. It can only be verified on a real device with a real hand.
-- **End-to-end latency (ms), FPS, battery, and launch-to-interactive time**
-  need a physical iPad with Instruments. Nothing in the simulator measures
-  them. The benchmarks here measure the parts the app controls: storage, search
-  and rendering on the CPU.
+- **End-to-end latency (ms), FPS and battery** need a physical iPad with
+  Instruments. Nothing in the simulator measures them. The benchmarks here
+  measure the parts the app controls: storage, search and rendering on the
+  CPU. Launch time and library memory have been measured on the iPad Air (M4)
+  (measurements.md §9).
 - **Hover** needs Apple Pencil 2 or Pro on an M2-or-later iPad Pro or an M2/M3
   iPad Air. **Squeeze and barrel roll** need Apple Pencil Pro.
 - **PDFs imported before 1.6** stay rasterised: the original PDF wasn't kept,
@@ -126,6 +127,7 @@ All eight were decided in round 4, on the recommendations in registers.md.
 | Criterion | Status | Why / mitigation |
 |---|---|---|
 | Pencil latency, FPS, zoom FPS (§55, 56, 63) | **unmeasured** | Needs a device and Instruments. Signposts are added this round so it can be measured |
+| Launch time, library memory (§52) | **measured** on the iPad Air (M4) | 162 ms to first frame and 319 ms to active (median of 5); 52 MB with a 1,260-page library. The designed 2.6 s launch scene comes on top (measurements.md §9). Low-end A16 still to borrow |
 | Crash-free ≥ 99.8% (A3) | **measurable** | MetricKit reports on each device (D-004) plus App Store Connect's crash counts. Needs time in the field |
 | PDF search, vector PDF zoom, PDF export of annotations over the original vector (§16, 66, 67) | **met** for PDFs imported from 1.6 | D-006; earlier imports stay rasterised |
 | Sync conflicts (§27, 28, 71, 72) | **met in tests**, on in the build | Keep-both on conflict, never replaced under an open editor, replaced copies kept; two-device and torture tests. Still needs a check on two real iPads |
