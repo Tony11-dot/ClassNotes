@@ -39,6 +39,7 @@ struct ClassNotesApp: App {
                 .onChange(of: scenePhase) { _, phase in
                     guard phase == .active else { return }
                     Task { await services.refreshRemoteLibrary() }
+                    Task { await services.cloudSync.syncNow() }
                 }
         }
         .modelContainer(container)

@@ -2,8 +2,13 @@ import Foundation
 import Observation
 
 /// The one source of truth for sign-in state. Holds the ClassNotes session token
-/// (Keychain) and the cached account; the app gates the library behind
-/// `state == .authenticated`.
+/// (Keychain) and the cached account.
+///
+/// The library does NOT need an account (`libraryIsOpen`, D-001): an account
+/// adds the ClassMate mirror, NOVA and settings sync, and nothing else. A
+/// device that chose to work without one, or whose session the server stopped
+/// honouring, keeps its notebooks. Locking a student out of their own lecture
+/// notes because a token expired was the failure this exists to prevent.
 ///
 /// These are ClassNotes' OWN accounts (`/classnotes/auth/*`), not ClassMate
 /// school accounts. The app used to sign in with the latter purely because that
@@ -26,9 +31,26 @@ public final class AuthService {
     public private(set) var state: State = .loading
     public private(set) var account: ClassNotesAccount?
     public private(set) var lastError: String?
+    /// The device uses ClassNotes without an account. Set by "Continue
+    /// without an account", and by any sign-out the user didn't ask for (a
+    /// rejected session, a deleted account), so the notebooks stay reachable.
+    public private(set) var worksWithoutAccount: Bool
+    /// Said once when the device was signed out without asking: what
+    /// happened, that the notebooks are safe, and what signing in brings back.
+    public var signedOutNotice: LibraryNotice?
+    /// Runs after every successful sign-in or sign-up, so the account's
+    /// library and settings sync without waiting for the next launch.
+    @ObservationIgnored public var onSignIn: (@MainActor () -> Void)?
+
+    /// Whether the library is shown: signed in, or working without an account.
+    public var libraryIsOpen: Bool {
+        state == .authenticated || (state == .signedOut && worksWithoutAccount)
+    }
 
     private let client: ClassNotesAuthClient
     private let keychain: any SecretStore
+    private let defaults: UserDefaults
+    private static let worksWithoutAccountKey = "worksWithoutAccount.v1"
     /// v2 because v1 cached a `ClassMateUser`. A stale v1 blob is simply left
     /// behind rather than migrated: it described a different account space, and
     /// decoding it into a ClassNotes account would invent an id that names
@@ -38,11 +60,14 @@ public final class AuthService {
 
     public init(
         client: ClassNotesAuthClient = ClassNotesAuthClient(),
-        keychain: any SecretStore = KeychainStore()
+        keychain: any SecretStore = KeychainStore(),
+        defaults: UserDefaults = .standard
     ) {
         self.client = client
         self.keychain = keychain
-        if let data = UserDefaults.standard.data(forKey: profileDefaultsKey),
+        self.defaults = defaults
+        worksWithoutAccount = defaults.bool(forKey: Self.worksWithoutAccountKey)
+        if let data = defaults.data(forKey: profileDefaultsKey),
            let cached = try? JSONDecoder().decode(ClassNotesAccount.self, from: data) {
             account = cached
         }
@@ -66,8 +91,9 @@ public final class AuthService {
             state = .authenticated
         } catch APIError.notAuthenticated {
             // The token is for an account that is gone, or predates a password
-            // change. Either way it will never work again.
-            signOutLocally()
+            // change. Either way it will never work again — but the notebooks
+            // on this device are still the user's, so the library stays open.
+            signOutLocally(keepingLibrary: .sessionEnded)
         } catch {
             // A network hiccup is NOT a signed-out state: the notebooks are on
             // disk and the editor works offline, so a cached session stays
@@ -189,7 +215,7 @@ public final class AuthService {
         guard let token = keychain.get(.authToken) else { return false }
         do {
             try await client.deleteAccount(password: password, token: token)
-            signOutLocally()
+            signOutLocally(keepingLibrary: .accountDeleted)
             return true
         } catch APIError.invalidCredentials {
             lastError = "Incorrect password."
@@ -214,28 +240,64 @@ public final class AuthService {
             ?? .init(sent: false, message: "Couldn't send the reset link. Check your connection and try again.")
     }
 
+    /// Signing out on purpose shows the sign-in screen, which offers to carry
+    /// on without an account.
     public func signOut() {
-        signOutLocally()
+        signOutLocally(keepingLibrary: nil)
+    }
+
+    /// Opens the library with no account. The notebooks live on the device;
+    /// signing in later adds sync and NOVA without changing them.
+    public func continueWithoutAccount() {
+        lastError = nil
+        setWorksWithoutAccount(true)
     }
 
     private func adopt(_ session: ClassNotesAuthClient.Session) {
         keychain.set(session.token, for: .authToken)
         account = session.account
         cache(session.account)
+        signedOutNotice = nil
         state = .authenticated
+        onSignIn?()
     }
 
-    private func signOutLocally() {
+    /// Why the device was signed out without asking.
+    enum UnaskedSignOut {
+        case sessionEnded, accountDeleted
+    }
+
+    /// `keepingLibrary`: the sign-out wasn't the user's choice, so the
+    /// library stays open and they are told why.
+    private func signOutLocally(keepingLibrary reason: UnaskedSignOut?) {
         keychain.remove(.authToken)
-        UserDefaults.standard.removeObject(forKey: profileDefaultsKey)
-        UserDefaults.standard.removeObject(forKey: legacyProfileDefaultsKey)
+        defaults.removeObject(forKey: profileDefaultsKey)
+        defaults.removeObject(forKey: legacyProfileDefaultsKey)
         account = nil
+        switch reason {
+        case .sessionEnded:
+            setWorksWithoutAccount(true)
+            signedOutNotice = LibraryNotice(
+                title: "You've been signed out",
+                message: "Your notebooks are still here on this device. Sign in again in "
+                    + "Settings to sync them and use NOVA."
+            )
+        case .accountDeleted:
+            setWorksWithoutAccount(true)
+        case nil:
+            setWorksWithoutAccount(false)
+        }
         state = .signedOut
+    }
+
+    private func setWorksWithoutAccount(_ value: Bool) {
+        worksWithoutAccount = value
+        defaults.set(value, forKey: Self.worksWithoutAccountKey)
     }
 
     private func cache(_ profile: ClassNotesAccount) {
         if let data = try? JSONEncoder().encode(profile) {
-            UserDefaults.standard.set(data, forKey: profileDefaultsKey)
+            defaults.set(data, forKey: profileDefaultsKey)
         }
     }
 }

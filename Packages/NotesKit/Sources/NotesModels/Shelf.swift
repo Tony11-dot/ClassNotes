@@ -12,6 +12,10 @@ public final class Shelf {
     public var symbolName: String
     public var sortIndex: Int
     public var createdAt: Date
+    /// The shelf this one sits inside (`nil` = the top of the library). One
+    /// parent each; `ShelfTree` keeps a shelf from going inside itself.
+    /// Local to this device: the ClassMate tab shows shelves flat.
+    public var parentID: UUID?
 
     public init(
         id: UUID = UUID(),
@@ -19,7 +23,8 @@ public final class Shelf {
         colorHex: String,
         symbolName: String = "bag",
         sortIndex: Int = 0,
-        createdAt: Date = .now
+        createdAt: Date = .now,
+        parentID: UUID? = nil
     ) {
         self.id = id
         self.name = name
@@ -27,6 +32,7 @@ public final class Shelf {
         self.symbolName = symbolName
         self.sortIndex = sortIndex
         self.createdAt = createdAt
+        self.parentID = parentID
     }
 }
 

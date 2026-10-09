@@ -11,6 +11,11 @@ import UIKit
 /// library, or a document scan. Every imported page is rendered to a PNG in the
 /// package's `media/` folder and set as a page background, so the full tool set
 /// works over it — the import becomes real paper, not a read-only attachment.
+///
+/// A PDF is also kept whole, once, and each page records which of its pages it
+/// is (`PageRecord.backgroundPDF`, manifest v9): the page is then drawn live
+/// from the PDF, sharp at any zoom, and searched by the PDF's own text. The PNG
+/// stays as the thumbnail and as what an older build shows.
 extension DocumentStore {
 
     public enum ImportError: Error, Sendable {
@@ -46,16 +51,31 @@ extension DocumentStore {
     ) async throws -> ImportResult {
         let span = Perf.begin("PDF import")
         defer { Perf.end("PDF import", span) }
-        guard let pdf = PDFDocument(data: data), pdf.pageCount > 0 else {
+        guard let provider = CGDataProvider(data: data as CFData),
+              let pdf = CGPDFDocument(provider), pdf.numberOfPages > 0, !pdf.isEncrypted || pdf.isUnlocked
+        else {
             throw ImportError.unreadablePDF
         }
         let pageStyle = try await importStyle(style, notebook: notebook)
-        let source = PageSource(count: pdf.pageCount) { number in
+        // The whole PDF, once, beside the pages that come from it.
+        let pdfName = "\(UUID().uuidString).pdf"
+        let pdfURL = mediaURL(notebook: notebook, filename: pdfName)
+        try FileManager.default.createDirectory(at: mediaDirectory(for: notebook), withIntermediateDirectories: true)
+        try data.write(to: pdfURL, options: .atomic)
+        let source = PageSource(count: pdf.numberOfPages) { number in
             autoreleasepool {
-                pdf.page(at: number).flatMap { Self.renderPDFPage($0, fitting: pageStyle.logicalSize) }
+                // CGPDFDocument pages are numbered from 1.
+                pdf.page(at: number + 1).flatMap { Self.renderPDFPage($0, fitting: pageStyle.logicalSize) }
             }
+        } background: { number in
+            PDFBackground(filename: pdfName, pageIndex: number)
         }
-        return try await importPages(source, notebook: notebook, at: index, style: pageStyle, progress: progress)
+        do {
+            return try await importPages(source, notebook: notebook, at: index, style: pageStyle, progress: progress)
+        } catch {
+            try? FileManager.default.removeItem(at: pdfURL)
+            throw error
+        }
     }
 
     /// Turns images (a photo pick, or the pages of a document scan) into
@@ -82,6 +102,7 @@ extension DocumentStore {
     private struct PageSource {
         let count: Int
         let render: (Int) -> Data?
+        var background: (Int) -> PDFBackground? = { _ in nil }
     }
 
     /// The shared loop: render, write, repeat — then one manifest write.
@@ -106,7 +127,9 @@ extension DocumentStore {
                 let url = mediaURL(notebook: notebook, filename: filename)
                 try png.write(to: url, options: .atomic)
                 written.append(url)
-                newPages.append(style.makePage(backgroundPayloadFilename: filename))
+                newPages.append(style.makePage(
+                    backgroundPayloadFilename: filename, backgroundPDF: source.background(number)
+                ))
                 progress?(number + 1, total)
             }
             guard !newPages.isEmpty else { throw ImportError.unreadablePDF }
@@ -160,14 +183,11 @@ extension DocumentStore {
     }
 
     /// Renders one PDF page into a `target`-sized PNG (white paper, aspect-fit,
-    /// centered) in the fixed logical page space.
-    private nonisolated static func renderPDFPage(_ page: PDFPage, fitting target: CGSize) -> Data? {
-        let pageRect = page.bounds(for: .mediaBox)
-        guard pageRect.width > 0, pageRect.height > 0 else { return nil }
-        let scale = min(target.width / pageRect.width, target.height / pageRect.height)
-        let drawn = CGSize(width: pageRect.width * scale, height: pageRect.height * scale)
-        let origin = CGPoint(x: (target.width - drawn.width) / 2, y: (target.height - drawn.height) / 2)
-
+    /// centered) in the fixed logical page space — placed by `PDFPageFit`,
+    /// exactly where the live drawing puts it.
+    private nonisolated static func renderPDFPage(_ page: CGPDFPage, fitting target: CGSize) -> Data? {
+        let box = page.getBoxRect(.mediaBox)
+        guard box.width > 0, box.height > 0 else { return nil }
         let format = UIGraphicsImageRendererFormat.default()
         format.scale = 2
         format.opaque = true
@@ -175,14 +195,7 @@ extension DocumentStore {
         let image = renderer.image { ctx in
             UIColor.white.setFill()
             ctx.fill(CGRect(origin: .zero, size: target))
-            let cg = ctx.cgContext
-            cg.saveGState()
-            // Flip into PDF (bottom-left origin) space, then place + scale.
-            cg.translateBy(x: origin.x, y: origin.y + drawn.height)
-            cg.scaleBy(x: scale, y: -scale)
-            cg.translateBy(x: -pageRect.minX, y: -pageRect.minY)
-            page.draw(with: .mediaBox, to: cg)
-            cg.restoreGState()
+            PDFPageDrawing.draw(page, in: CGRect(origin: .zero, size: target), context: ctx.cgContext)
         }
         return image.pngData()
     }

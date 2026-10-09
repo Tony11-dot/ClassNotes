@@ -1,6 +1,7 @@
 import Foundation
 import ImageIO
 import NotesModels
+import PDFKit
 import PencilKit
 #if canImport(UIKit)
 import UIKit
@@ -129,11 +130,25 @@ public actor SearchIndexer {
     /// single word in it. Read with the same Vision pass as handwriting, from
     /// an image decoded straight to a bounded size.
     private func recognizeBackground(page: PageRecord, notebook: UUID, language: String) async -> String {
+        // A page from a PDF with a text layer is read from the PDF itself:
+        // exact words, no recognition. A scanned PDF has none, and is read
+        // like any other picture.
+        if let pdf = page.backgroundPDF,
+           let text = Self.pdfText(at: store.mediaURL(notebook: notebook, filename: pdf.filename), page: pdf.pageIndex) {
+            return text
+        }
         guard let filename = page.backgroundPayloadFilename,
               let image = Self.backgroundImage(at: store.mediaURL(notebook: notebook, filename: filename))
         else { return "" }
         guard let lines = try? await ocr.recognize(in: image, languages: [language]) else { return "" }
         return OCRService.assemble(lines)
+    }
+
+    /// The text layer of one PDF page, or nil when it has none worth reading.
+    static func pdfText(at url: URL, page index: Int) -> String? {
+        guard let text = PDFDocument(url: url)?.page(at: index)?.string?
+            .trimmingCharacters(in: .whitespacesAndNewlines), text.count >= 3 else { return nil }
+        return text
     }
 
     static func backgroundImage(at url: URL) -> UIImage? {

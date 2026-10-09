@@ -330,16 +330,8 @@ public final class NotebookEditorModel {
               let pageIndex = current.pages.firstIndex(where: { $0.id == pageID }),
               let source = current.pages[pageIndex].elements.first(where: { $0.id == elementID })
         else { return }
-        var copy = source
+        var copy = source.moved(by: offset)
         copy.id = UUID()
-        copy.x += offset.width
-        copy.y += offset.height
-        copy.points = source.points.map {
-            PagePoint(x: $0.x + offset.width, y: $0.y + offset.height)
-        }
-        copy.holes = source.holes.map { ring in
-            ring.map { PagePoint(x: $0.x + offset.width, y: $0.y + offset.height) }
-        }
         current.pages[pageIndex].elements.append(copy)
         manifest = current
         await saveElements(
@@ -354,18 +346,10 @@ public final class NotebookEditorModel {
               let elementIndex = current.pages[pageIndex].elements
                 .firstIndex(where: { $0.id == elementID })
         else { return }
-        var element = current.pages[pageIndex].elements[elementIndex]
-        element.x += offset.width
-        element.y += offset.height
-        // Tape and fills are drawn from their own point list, in page space —
-        // moving the frame without moving the path leaves the colour behind.
-        element.points = element.points.map {
-            PagePoint(x: $0.x + offset.width, y: $0.y + offset.height)
-        }
-        element.holes = element.holes.map { ring in
-            ring.map { PagePoint(x: $0.x + offset.width, y: $0.y + offset.height) }
-        }
-        current.pages[pageIndex].elements[elementIndex] = element
+        // A fill's outline moves with it; tape's path is relative to its frame
+        // and moves by itself (`PageElement.moved`).
+        current.pages[pageIndex].elements[elementIndex] =
+            current.pages[pageIndex].elements[elementIndex].moved(by: offset)
         manifest = current
         await saveElements(
             current.pages[pageIndex].elements, notebook: notebookID, page: pageID
@@ -381,16 +365,8 @@ public final class NotebookEditorModel {
               let elementIndex = current.pages[pageIndex].elements
                 .firstIndex(where: { $0.id == elementID })
         else { return }
-        var element = current.pages[pageIndex].elements[elementIndex]
-        let frame = CGRect(x: element.x, y: element.y, width: element.width, height: element.height)
-            .applying(transform)
-        element.x = frame.minX
-        element.y = frame.minY
-        element.width = frame.width
-        element.height = frame.height
-        element.points = element.points.map { PagePoint($0.cgPoint.applying(transform)) }
-        element.holes = element.holes.map { ring in ring.map { PagePoint($0.cgPoint.applying(transform)) } }
-        current.pages[pageIndex].elements[elementIndex] = element
+        current.pages[pageIndex].elements[elementIndex] =
+            current.pages[pageIndex].elements[elementIndex].transformed(by: transform)
         manifest = current
         await saveElements(
             current.pages[pageIndex].elements, notebook: notebookID, page: pageID

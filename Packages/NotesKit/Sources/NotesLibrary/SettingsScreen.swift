@@ -34,6 +34,7 @@ public struct SettingsScreen: View {
                 customThemesSection
                 paperSection
                 PencilGestureSection()
+                if services.cloudSync.isSupported { CloudSyncSection() }
                 NovaPrivacySection()
                 AboutSettingsSection { helpSheet = $0 }
                 #if DEBUG

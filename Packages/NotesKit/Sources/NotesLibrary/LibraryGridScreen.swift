@@ -38,6 +38,12 @@ public struct LibraryGridScreen<Destination: View>: View {
     @State var confirmBulkDelete = false
     @State var sharedPDF: SharedFile?
     @State var exporting = false
+    /// "New shelf inside" was chosen on this shelf.
+    @State var newShelfParent: Shelf?
+    /// The notebook whose tags are being edited.
+    @State var tagTarget: Notebook?
+    /// The chip a dragged cover is over, so it can light up.
+    @State var dropTarget: String?
 
     public init(
         addChoice: Binding<AddContentChoice?>,
@@ -49,12 +55,13 @@ public struct LibraryGridScreen<Destination: View>: View {
         self.destination = destination
     }
 
-    /// What the shelf bar is filtering by. Favourites is a filter, not a shelf —
-    /// a notebook can be starred and still live on a shelf.
+    /// What the shelf bar is filtering by. Favourites and tags are filters, not
+    /// shelves — a notebook can be starred and tagged and still live on a shelf.
     enum ShelfFilter: Hashable {
         case all
         case favorites
         case shelf(UUID)
+        case tag(String)
     }
 
     /// Everything in the library: never anything in the trash.
@@ -69,7 +76,11 @@ public struct LibraryGridScreen<Destination: View>: View {
         case .favorites:
             return liveNotebooks.filter(\.isFavorite)
         case .shelf(let id):
-            return liveNotebooks.filter { $0.shelfID == id }
+            // A shelf shows what is in it AND in the shelves inside it.
+            let shelves = shelfTree.subtree(of: id)
+            return liveNotebooks.filter { $0.shelfID.map(shelves.contains) ?? false }
+        case .tag(let tag):
+            return liveNotebooks.filter { NotebookTags.contains(tag, in: $0.tags) }
         }
     }
 
@@ -78,7 +89,7 @@ public struct LibraryGridScreen<Destination: View>: View {
     public var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                if !shelves.isEmpty || favoritesCount > 0 {
+                if !shelves.isEmpty || favoritesCount > 0 || !allTags.isEmpty {
                     shelfBar
                 }
                 Group {
@@ -143,6 +154,18 @@ public struct LibraryGridScreen<Destination: View>: View {
             showNewShelf = true
         }
         .sheet(isPresented: $showNewShelf) { NewShelfSheet() }
+        .sheet(item: $newShelfParent) { parent in
+            NewShelfSheet(parent: (parent.id, parent.name))
+        }
+        .sheet(item: $tagTarget) { notebook in
+            NotebookTagsSheet(notebook: notebook, suggestions: allTags)
+        }
+        // A tag taken off its last notebook no longer exists to filter by.
+        .onChange(of: allTags) { _, tags in
+            if case .tag(let tag) = selectedShelf, !NotebookTags.contains(tag, in: tags) {
+                selectedShelf = .all
+            }
+        }
         .sheet(item: $sharedPDF) { file in
             ShareSheet(items: [file.url])
         }

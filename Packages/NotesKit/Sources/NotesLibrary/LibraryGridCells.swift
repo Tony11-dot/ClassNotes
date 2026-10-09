@@ -4,75 +4,13 @@ import NotesModels
 import NotesServices
 import SwiftUI
 
-/// The grid's cells: the shelf bar across the top, and one notebook's cover with
-/// everything you can do to it.
+/// One notebook's cover in the grid, with everything you can do to it. The
+/// shelf bar across the top is `LibraryShelfBar.swift`.
 ///
 /// Split out of `LibraryGridScreen` so neither file is the 400-line screen that
 /// nobody wants to open. Members these use are internal rather than private for
 /// exactly that reason — `private` in Swift is file-scoped.
 extension LibraryGridScreen {
-    var shelfBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                shelfChip(
-                    title: "All", symbol: "square.grid.2x2", color: theme.accent,
-                    isSelected: selectedShelf == .all
-                ) {
-                    selectedShelf = .all
-                }
-                if favoritesCount > 0 {
-                    shelfChip(
-                        title: "Favourites", symbol: "star.fill", color: theme.accent,
-                        isSelected: selectedShelf == .favorites
-                    ) {
-                        selectedShelf = .favorites
-                    }
-                }
-                ForEach(shelves) { shelf in
-                    shelfChip(
-                        title: shelf.name,
-                        symbol: shelf.symbolName,
-                        color: ThemeColor(hex: shelf.colorHex) ?? theme.accent,
-                        isSelected: selectedShelf == .shelf(shelf.id)
-                    ) {
-                        selectedShelf = .shelf(shelf.id)
-                    }
-                    .contextMenu {
-                        Button(role: .destructive) {
-                            if selectedShelf == .shelf(shelf.id) { selectedShelf = .all }
-                            try? services.repository.deleteShelf(shelf)
-                        } label: {
-                            Label("Delete shelf", systemImage: "trash")
-                        }
-                    }
-                }
-            }
-            .padding(.horizontal, 28)
-            .padding(.vertical, 10)
-        }
-    }
-
-    func shelfChip(
-        title: String,
-        symbol: String,
-        color: ThemeColor,
-        isSelected: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: symbol)
-                .font(.dsSubheadline.weight(.medium))
-                .foregroundStyle(isSelected ? theme.contrastingInk(on: color).color : theme.ink.color)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(
-                    isSelected ? color.color : theme.surfaceRaised.color,
-                    in: Capsule()
-                )
-        }
-        .buttonStyle(.plain)
-    }
-
     func coverCell(_ notebook: Notebook) -> some View {
         Button {
             // While selecting, a tap picks up and puts down instead of opening.
@@ -125,54 +63,74 @@ extension LibraryGridScreen {
         }
         .buttonStyle(.plain)
         .librarySelectable(isActive: selection.isActive, isSelected: selection.contains(notebook.id))
-        .contextMenu {
+        // Drag a cover onto a shelf or a tag in the bar to file it there.
+        .draggable(notebook.id.uuidString) {
+            NotebookCoverTile(notebook: notebook)
+                .frame(width: 110)
+        }
+        .contextMenu { coverMenu(notebook) }
+    }
+
+    /// Everything you can do to one notebook, from its cover.
+    @ViewBuilder
+    private func coverMenu(_ notebook: Notebook) -> some View {
+        Button {
+            selection.begin(with: notebook.id)
+        } label: {
+            Label("Select", systemImage: "checkmark.circle")
+        }
+        Button {
+            try? services.repository.toggleFavorite(notebook)
+        } label: {
+            Label(
+                notebook.isFavorite ? "Remove from favourites" : "Add to favourites",
+                systemImage: notebook.isFavorite ? "star.slash" : "star"
+            )
+        }
+        Button {
+            renameText = notebook.title
+            renameTarget = notebook
+        } label: {
+            Label("Rename", systemImage: "pencil")
+        }
+        Button {
+            exportPDF(notebook)
+        } label: {
+            Label("Export as PDF", systemImage: "square.and.arrow.up")
+        }
+        if !notebook.isRemoteOnly {
             Button {
-                selection.begin(with: notebook.id)
-            } label: {
-                Label("Select", systemImage: "checkmark.circle")
-            }
-            Button {
-                try? services.repository.toggleFavorite(notebook)
+                try? services.repository.setViewOnly(!notebook.isViewOnly, for: notebook)
             } label: {
                 Label(
-                    notebook.isFavorite ? "Remove from favourites" : "Add to favourites",
-                    systemImage: notebook.isFavorite ? "star.slash" : "star"
+                    notebook.isViewOnly ? "Make Editable" : "View Only",
+                    systemImage: notebook.isViewOnly ? "pencil" : "eye"
                 )
             }
-            Button {
-                renameText = notebook.title
-                renameTarget = notebook
-            } label: {
-                Label("Rename", systemImage: "pencil")
+        }
+        organiseMenu(notebook)
+    }
+
+    /// Where it's filed, its tags, and deleting it.
+    @ViewBuilder
+    private func organiseMenu(_ notebook: Notebook) -> some View {
+        Menu {
+            Button("None") { services.repository.assign(notebook, toShelf: nil) }
+            ForEach(shelves) { shelf in
+                Button(shelfPathName(shelf.id)) { services.repository.assign(notebook, toShelf: shelf.id) }
             }
-            Button {
-                exportPDF(notebook)
-            } label: {
-                Label("Export as PDF", systemImage: "square.and.arrow.up")
-            }
-            if !notebook.isRemoteOnly {
-                Button {
-                    try? services.repository.setViewOnly(!notebook.isViewOnly, for: notebook)
-                } label: {
-                    Label(
-                        notebook.isViewOnly ? "Make Editable" : "View Only",
-                        systemImage: notebook.isViewOnly ? "pencil" : "eye"
-                    )
-                }
-            }
-            Menu {
-                Button("None") { services.repository.assign(notebook, toShelf: nil) }
-                ForEach(shelves) { shelf in
-                    Button(shelf.name) { services.repository.assign(notebook, toShelf: shelf.id) }
-                }
-            } label: {
-                Label("Move to shelf", systemImage: "tray.full")
-            }
-            Button(role: .destructive) {
-                deleteTarget = notebook
-            } label: {
-                Label("Delete", systemImage: "trash")
-            }
+        } label: {
+            Label("Move to shelf", systemImage: "tray.full")
+        }
+        Button {
+            tagTarget = notebook
+        } label: {
+            Label(notebook.tags.isEmpty ? "Add tags" : "Tags", systemImage: "tag")
+        }
+        Button(role: .destructive) {
+            deleteTarget = notebook
+        } label: {
+            Label("Delete", systemImage: "trash")
         }
     }
 }

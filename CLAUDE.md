@@ -37,7 +37,8 @@ Universal app, Swift 6 (strict concurrency), SwiftUI-first, Liquid Glass design 
   parity test pins the Swift code to it.
 - Documents are packages on disk (`<uuid>.cmnote/` with `manifest.json` +
   `pages/*.drawing`); SwiftData holds metadata + settings + custom themes only.
-  Designed for iCloud sync later; don't build sync yet.
+  iCloud sync (`NotebookSync`, round 4) carries copies of the packages between
+  devices; the local package stays the store.
 - Whoever creates a `ModelContainer` must RETAIN it — `ModelContext` does not,
   and a deallocated container traps on the next store operation. `AppServices`
   owns the app's; tests hold theirs in a harness. Never write
@@ -55,8 +56,8 @@ Universal app, Swift 6 (strict concurrency), SwiftUI-first, Liquid Glass design 
   `/classnotes/auth/*` (`register`, `login`, `me`, `PATCH me`, `change-password`,
   `DELETE me`, `forgot-password`), base URL
   `pacific-enchantment-production-7a80.up.railway.app` (override via
-  `CM_API_BASE_URL` env or `CMApiBaseURL` Info.plist key). The app gates the
-  library behind `AuthService.state == .authenticated`.
+  `CM_API_BASE_URL` env or `CMApiBaseURL` Info.plist key). The library does
+  NOT need an account (`AuthService.libraryIsOpen`, round 4).
   Sign-in used to be ClassMate's school accounts, purely because that backend
   already authenticated the library sync — which meant somebody who only wanted a
   notebook had to be enrolled in a school platform to open one. Replacing it cost
@@ -327,7 +328,8 @@ wheel; two-finger ruler, media/file drop, voice-note bubbles;
 shelves/collections; page content (renders + attachments) synced to the ClassMate
 ClassNotes tab, where pages zoom and their voice notes, files and links work.
 
-Later: iCloud sync; generating a PERSONAL font from handwriting samples (the hard
+Later: turning iCloud sync on (built, gated on the iCloud container);
+generating a PERSONAL font from handwriting samples (the hard
 ML feature — distinct from the shipped handwriting→text) stays a premium stub.
 
 ## Architecture invariants (tools added round 5)
@@ -807,3 +809,68 @@ pricing changes go through its change-control list first.
   `pageContext` (the server labels that field "the page the student is looking
   at" and has its own identity), and clips `text` and `pageContext` to the
   server's limits; over them was a 400.
+
+## Architecture invariants (quality round 4: every open decision)
+
+- An account is OPTIONAL (D-001). `AuthService.libraryIsOpen` decides the
+  root, not `state == .authenticated`: "Continue without an account" sets
+  `worksWithoutAccount`, and so does every sign-out the user didn't ask for (a
+  rejected session, a deleted account) — locking a student out of their own
+  notes because a token expired is the failure this prevents. Signing in
+  mid-session runs the account sync at once (`onSignIn`). The root keeps ONE
+  branch for the library with or without an account, so signing in from
+  Settings doesn't rebuild the library under the sheet.
+- Element geometry has ONE home: `PageElement.moved/transformed/rotated/
+  recoloured` (NotesModels). A fill's `points` are PAGE space; tape's are
+  relative to its own frame (`pathIsInPageSpace`). Every move used to shift
+  both, which put a moved tape strip twice as far as the finger went.
+- Lasso turn: ink and page-space paths turn exactly; a box (text, photo, plot,
+  rectangle tape) keeps its size and turns about its centre via
+  `PageElement.rotation`, which every renderer applies (the lasso snapshot
+  included). Whole-selection edits go through `editSelection`: one manifest
+  write, one undo step with ink AND elements, and the selection re-keyed.
+  `LassoCatch.edits` counts edits so the view drops its live preview even
+  when the outline didn't change.
+- Shelves nest (`Shelf.parentID`, `ShelfTree`): a shelf shows what's in it and
+  in every shelf inside it; a shelf can never go inside itself; deleting one
+  moves its contents UP a level, never off every shelf. Tags are a string list
+  on the notebook, compared without case (`NotebookTags`), searched with the
+  title, and carried in `info.json` so a rebuilt library keeps them.
+- Every change to what the library knows about a notebook (title, shelf,
+  tags, favourite, view-only, trash, restore) calls `revise` to stamp
+  `metadataRevisedAt`. iCloud sync reconciles descriptions newest-wins on that
+  stamp — NOT on `updatedAt`, which moves on every open.
+- PDFs are drawn LIVE from the stored PDF (manifest v9, `backgroundPDF`): one
+  PDF per import in `media/`, shared by its pages, removed only when no live
+  or deleted page uses it (`mediaFilenames`). The PNG made at import stays as
+  the thumbnail and for older builds. `PDFPageFit` is the one placement rule
+  (aspect-fit, centred, `/Rotate` honoured) for the import PNG, the live
+  tiles, the export and the tests, so they line up exactly. Tiles draw with
+  Core Graphics on background threads (`PDFTileDrawer`, never PDFKit there).
+  Search reads the PDF's own text layer; a scanned PDF without one falls back
+  to Vision.
+- Diagnostics are MetricKit, kept on the device (`DiagnosticsLog`, 90 days,
+  120 payloads), shared only by the user from Support. Never send them
+  anywhere automatically: that would be data collection with a privacy-label
+  entry.
+- iCloud sync (`NotebookSync`, D-003) uses iCloud Drive as a MAILBOX, never as
+  the store: the local package stays the source of truth with all its safety
+  machinery. Per notebook, content fingerprints are compared with the last
+  agreed state (`SyncLedger`): changed here → up, file by file
+  (`PackageFiles.mirror`); changed there → down, validated, the replaced
+  notebook kept (two per notebook, 30 days); changed in both → KEEP BOTH (the
+  other device's version becomes "<title> (other device)"). Never merge ink,
+  never last-writer-wins on content. A notebook open in the editor is never
+  replaced: `DocumentStore.beginEditing` runs on the store actor BEFORE the
+  editor loads, so a replacement either lands first or is refused. Removals
+  only move things to a trash. This device's own files (search index,
+  recovery copies) never travel. The whole thing runs in tests against a
+  plain folder (`FolderDrive`) as two devices; keep `CloudSyncTests` and
+  `CloudSyncTortureTests` green.
+- iCloud sync is OFF in the build (`CMCloudSync` = false in Info.plist) until
+  the iCloud container exists on the App ID — the entitlements file was never
+  wired into the build. Don't show the switch while it can't work.
+- NOVA citations are read in every form the live model writes
+  (`NovaReply.citedPages`); when the model changes, re-run the live
+  evaluation (`CLASSNOTES_LIVE_EVAL=1`, `NovaLiveEvalTests`) and record the
+  numbers in docs/quality/measurements.md.

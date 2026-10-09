@@ -460,6 +460,16 @@ extension EditorScreen {
     /// not a mark on the page, so a picture of one would be a picture of an icon.
     private func draw(_ element: PageElement, in context: CGContext, page: PageRecord) {
         let frame = CGRect(x: element.x, y: element.y, width: element.width, height: element.height)
+        // A turned box is drawn turned, about its own centre, as the page draws
+        // it. A fill's outline is already where it lies.
+        let turned = element.rotation != 0 && element.kind != .fill
+        if turned {
+            context.saveGState()
+            context.translateBy(x: frame.midX, y: frame.midY)
+            context.rotate(by: element.rotation * .pi / 180)
+            context.translateBy(x: -frame.midX, y: -frame.midY)
+        }
+        defer { if turned { context.restoreGState() } }
         switch element.kind {
         case .image:
             guard let filename = element.payloadFilename else { break }
@@ -547,86 +557,5 @@ extension EditorScreen {
         let longest = max(size.width, size.height)
         guard longest > 0 else { return 1 }
         return min(3, max(1, 2400 / longest))
-    }
-
-    @MainActor
-    func moveSelection(by offset: CGSize) async {
-        guard let selection = lassoSelection, offset != .zero else { return }
-        let elementsBefore = model.page(selection.pageID)?.elements ?? []
-        var drawingBefore: PKDrawing?
-        var drawingAfter: PKDrawing?
-        var movedKeys: [StrokeKey] = []
-        if !selection.caught.strokes.isEmpty,
-           let drawing = tracker.drawing(for: selection.pageID) {
-            drawingBefore = drawing
-            let moving = Set(selection.caught.strokeIndices(in: drawing))
-            let strokes = drawing.strokes.enumerated().map { index, stroke -> PKStroke in
-                guard moving.contains(index) else { return stroke }
-                var moved = stroke
-                moved.transform = stroke.transform.concatenating(
-                    CGAffineTransform(translationX: offset.width, y: offset.height)
-                )
-                movedKeys.append(StrokeKey(moved))
-                return moved
-            }
-            let after = PKDrawing(strokes: strokes)
-            drawingAfter = after
-            tracker.setDrawing(after, for: selection.pageID)
-        }
-        await model.moveElements(selection.caught.elementIDs, on: selection.pageID, by: offset)
-        let elementsAfter = model.page(selection.pageID)?.elements ?? []
-        tracker.registerElementStep(
-            pageID: selection.pageID, drawingBefore: drawingBefore, drawingAfter: drawingAfter,
-            elementsBefore: elementsBefore, elementsAfter: elementsAfter, named: "Move Selection"
-        )
-        // Moving changed each stroke's placement, which is part of its key —
-        // the selection follows the ink it is holding.
-        if !selection.caught.strokes.isEmpty { lassoSelection?.caught.strokes = movedKeys }
-        lassoSelection?.caught.bounds = selection.caught.bounds
-            .offsetBy(dx: offset.width, dy: offset.height)
-    }
-
-    /// Scales the whole catch — ink AND elements — to fit a new box, the same
-    /// way `moveSelection` translates the whole catch rather than just
-    /// redrawing the marching-ants outline around it. Top-left anchored, same
-    /// as the corner handle that drove it.
-    @MainActor
-    func resizeSelection(to newBounds: CGRect) async {
-        guard let selection = lassoSelection else { return }
-        let old = selection.caught.bounds
-        guard old.width > 0, old.height > 0, newBounds.width > 0, newBounds.height > 0 else { return }
-        let transform = CGAffineTransform(translationX: -old.minX, y: -old.minY)
-            .concatenating(CGAffineTransform(scaleX: newBounds.width / old.width, y: newBounds.height / old.height))
-            .concatenating(CGAffineTransform(translationX: newBounds.minX, y: newBounds.minY))
-
-        let elementsBefore = model.page(selection.pageID)?.elements ?? []
-        var drawingBefore: PKDrawing?
-        var drawingAfter: PKDrawing?
-        var resizedKeys: [StrokeKey] = []
-        if !selection.caught.strokes.isEmpty,
-           let drawing = tracker.drawing(for: selection.pageID) {
-            drawingBefore = drawing
-            let resizing = Set(selection.caught.strokeIndices(in: drawing))
-            let strokes = drawing.strokes.enumerated().map { index, stroke -> PKStroke in
-                guard resizing.contains(index) else { return stroke }
-                var scaled = stroke
-                scaled.transform = stroke.transform.concatenating(transform)
-                resizedKeys.append(StrokeKey(scaled))
-                return scaled
-            }
-            let after = PKDrawing(strokes: strokes)
-            drawingAfter = after
-            tracker.setDrawing(after, for: selection.pageID)
-        }
-        await model.transformElements(
-            selection.caught.elementIDs, on: selection.pageID, by: transform
-        )
-        let elementsAfter = model.page(selection.pageID)?.elements ?? []
-        tracker.registerElementStep(
-            pageID: selection.pageID, drawingBefore: drawingBefore, drawingAfter: drawingAfter,
-            elementsBefore: elementsBefore, elementsAfter: elementsAfter, named: "Resize Selection"
-        )
-        if !selection.caught.strokes.isEmpty { lassoSelection?.caught.strokes = resizedKeys }
-        lassoSelection?.caught.bounds = newBounds
     }
 }

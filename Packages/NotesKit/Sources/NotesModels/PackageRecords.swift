@@ -86,13 +86,19 @@ public struct NotebookInfo: Codable, Sendable, Equatable {
     public var createdAt: Date
     public var updatedAt: Date
     public var deletedAt: Date?
+    /// Absent in descriptions written before tags existed.
+    public var tags: [String]?
+    /// `Notebook.metadataRevisedAt`; absent before iCloud sync.
+    public var revisedAt: Date?
 
     public init(
         id: UUID, title: String, kind: String, coverColorHex: String, coverDesign: String,
         showsCover: Bool, defaultTemplate: String, pageSize: String, orientation: String,
         paperColorHex: String?, lineColorHex: String?, lineSpacingSteps: Int,
         shelfID: UUID?, shelfName: String?, shelfColorHex: String?, shelfSymbol: String?,
-        isFavorite: Bool, isViewOnly: Bool, createdAt: Date, updatedAt: Date, deletedAt: Date?
+        isFavorite: Bool, isViewOnly: Bool, createdAt: Date, updatedAt: Date, deletedAt: Date?,
+        tags: [String]? = nil,
+        revisedAt: Date? = nil
     ) {
         self.version = Self.currentVersion
         self.id = id
@@ -116,13 +122,15 @@ public struct NotebookInfo: Codable, Sendable, Equatable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.deletedAt = deletedAt
+        self.tags = tags
+        self.revisedAt = revisedAt
     }
 
     private enum CodingKeys: String, CodingKey {
         case version, id, title, kind, coverColorHex, coverDesign, showsCover
         case defaultTemplate, pageSize, orientation, paperColorHex, lineColorHex
         case lineSpacingSteps, shelfID, shelfName, shelfColorHex, shelfSymbol
-        case isFavorite, isViewOnly, createdAt, updatedAt, deletedAt
+        case isFavorite, isViewOnly, createdAt, updatedAt, deletedAt, tags, revisedAt
     }
 
     /// Total apart from the id: this file exists to recover a notebook, so a
@@ -151,6 +159,8 @@ public struct NotebookInfo: Codable, Sendable, Equatable {
         createdAt = (try? c.decode(Date.self, forKey: .createdAt)) ?? .now
         updatedAt = (try? c.decode(Date.self, forKey: .updatedAt)) ?? createdAt
         deletedAt = try? c.decodeIfPresent(Date.self, forKey: .deletedAt)
+        tags = try? c.decodeIfPresent([String].self, forKey: .tags)
+        revisedAt = try? c.decodeIfPresent(Date.self, forKey: .revisedAt)
     }
 }
 
@@ -166,7 +176,9 @@ public extension Notebook {
             lineColorHex: lineColorHex, lineSpacingSteps: lineSpacingSteps,
             shelfID: shelfID, shelfName: shelf?.name, shelfColorHex: shelf?.colorHex,
             shelfSymbol: shelf?.symbolName, isFavorite: isFavorite, isViewOnly: isViewOnly,
-            createdAt: createdAt, updatedAt: updatedAt, deletedAt: deletedAt
+            createdAt: createdAt, updatedAt: updatedAt, deletedAt: deletedAt,
+            tags: tags.isEmpty ? nil : tags,
+            revisedAt: metadataRevisedAt
         )
     }
 
@@ -192,5 +204,7 @@ public extension Notebook {
         isFavorite = info.isFavorite
         isViewOnly = info.isViewOnly
         deletedAt = info.deletedAt
+        tags = info.tags ?? []
+        metadataRevisedAt = info.revisedAt ?? info.updatedAt
     }
 }

@@ -9,9 +9,16 @@ import SwiftUI
 /// own, created in `SignUpScreen`. It used to be a ClassMate school account,
 /// which is why this screen used to ask for an "email or username": ClassMate
 /// has both. ClassNotes has one identifier, the email, so that is all it asks.
+///
+/// An account is optional (D-001). As the first screen it offers "Continue
+/// without an account"; opened from Settings (`asSheet`) it closes itself once
+/// signed in.
 public struct LoginScreen: View {
     @Environment(AppServices.self) private var services
     @Environment(\.theme) private var theme
+    @Environment(\.dismiss) private var dismiss
+
+    private let asSheet: Bool
 
     @State private var email = ""
     @State private var password = ""
@@ -22,10 +29,12 @@ public struct LoginScreen: View {
 
     private enum Field { case email, password }
 
-    public init() {}
+    public init(asSheet: Bool = false) {
+        self.asSheet = asSheet
+    }
 
     public var body: some View {
-        ZStack {
+        ZStack(alignment: .topLeading) {
             AmbientBackground(seed: 5)
             GeometryReader { geo in
                 ScrollView {
@@ -39,6 +48,19 @@ public struct LoginScreen: View {
                 }
                 .scrollDismissesKeyboard(.interactively)
             }
+            if asSheet {
+                Button { dismiss() } label: {
+                    Image(systemName: "xmark")
+                        .font(.dsHeadline)
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.glass)
+                .padding(16)
+                .accessibilityLabel("Close")
+            }
+        }
+        .onChange(of: services.auth.state) { _, state in
+            if asSheet, state == .authenticated { dismiss() }
         }
         .fullScreenCover(isPresented: $showForgot) {
             ForgotPasswordScreen(prefill: email)
@@ -51,12 +73,15 @@ public struct LoginScreen: View {
             BrandLockup(height: 54)
                 .padding(.bottom, 4)
             VStack(spacing: 4) {
-                Text("Welcome back")
+                Text(asSheet ? "Sign in" : "Welcome back")
                     .font(.dsTitle2.weight(.bold))
                     .foregroundStyle(theme.ink.color)
-                Text("Sign in to your ClassNotes account.")
+                Text(asSheet
+                     ? "Sign in to sync your notebooks and use NOVA."
+                     : "Sign in to your ClassNotes account.")
                     .font(.dsSubheadline)
                     .foregroundStyle(theme.inkSecondary.color)
+                    .multilineTextAlignment(.center)
             }
 
             field(
@@ -121,6 +146,22 @@ public struct LoginScreen: View {
                     .buttonStyle(.plain)
             }
             .font(.dsSubheadline)
+
+            if !asSheet {
+                VStack(spacing: 4) {
+                    Button("Continue without an account") {
+                        services.auth.continueWithoutAccount()
+                    }
+                    .font(.dsSubheadline.weight(.semibold))
+                    .foregroundStyle(theme.accent.color)
+                    .frame(minHeight: 44)
+                    Text("Your notebooks stay on this device. Sign in any time to sync them and use NOVA.")
+                        .font(.dsCaption)
+                        .foregroundStyle(theme.inkSecondary.color)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(.top, 4)
+            }
         }
         .padding(28)
         .background(

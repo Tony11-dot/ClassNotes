@@ -25,19 +25,39 @@ extension NovaReply {
         return cited.isEmpty ? nil : .notes(pages: cited)
     }
 
-    /// Page numbers cited in brackets, in the order first cited.
+    /// Page numbers cited, in the order first cited.
+    ///
+    /// Read as the model actually writes them, which the live evaluation
+    /// (`NovaLiveEvalTests`) showed is not only "(p. 2)": it also writes
+    /// "【p. 1】" and "【Page 3】" (its own citation brackets), "[p. 4]",
+    /// "(see p. 3)", and, asked to go through a page, a heading "### Page 1"
+    /// or a bold "**Page 1 – …**" line.
+    /// Reading only the first form left one answer in five that DID cite its
+    /// page unlabelled.
     static func citedPages(in answer: String) -> [Int] {
-        let pattern = #"\((?:pp?|pg|pages?)\.?\s*([0-9][0-9\s,–\-&and]*)\)"#
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
-            return []
-        }
-        let range = NSRange(answer.startIndex..., in: answer)
         var pages: [Int] = []
-        for match in regex.matches(in: answer, range: range) {
-            guard let list = Range(match.range(at: 1), in: answer) else { continue }
-            pages += NovaGrounding.pageReferences(in: "pages " + answer[list])
+        let range = NSRange(answer.startIndex..., in: answer)
+        for regex in [bracketed, heading] {
+            for match in regex.matches(in: answer, range: range) {
+                guard let list = Range(match.range(at: 1), in: answer) else { continue }
+                pages += NovaGrounding.pageReferences(in: "pages " + answer[list])
+            }
         }
         var seen = Set<Int>()
         return pages.filter { seen.insert($0).inserted }
     }
+
+    // swiftlint:disable force_try
+    /// "(p. 2)", "[pp. 3–4]", "【Page 3】", "(see p. 3)", "(from pages 2 and 5)".
+    private static let bracketed = try! NSRegularExpression(
+        pattern: #"[(\[【〔]\s*(?:(?:see|from|on|cf\.?)\s+)?(?:pp?|pg|pages?)\.?\s*([0-9][0-9\s,–\-&and]*)[)\]】〕]"#,
+        options: [.caseInsensitive]
+    )
+    /// A Markdown heading, or a bold opening line, that names the page it
+    /// covers: "### Page 1 – …", "**Page 1 – …**".
+    private static let heading = try! NSRegularExpression(
+        pattern: #"(?m)^\s{0,3}(?:#{1,6}\s*|\*\*\s*)(?:pp?\.|pages?)\s*([0-9][0-9\s,–\-&and]*?)(?=\s*(?::|\s[–—-]|$))"#,
+        options: [.caseInsensitive]
+    )
+    // swiftlint:enable force_try
 }

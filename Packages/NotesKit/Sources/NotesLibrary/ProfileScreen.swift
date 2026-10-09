@@ -94,6 +94,11 @@ public struct ProfileScreen: View {
             } message: {
                 Text("Your notebooks stay on this device. You'll need to sign in again to sync.")
             }
+            // Deleting the account leaves the library open (the notebooks are
+            // the user's own files), so the profile closes itself.
+            .onChange(of: services.auth.state) { _, state in
+                if state == .signedOut { dismiss() }
+            }
         }
     }
 
@@ -250,8 +255,8 @@ struct DeleteAccountSheet: View {
             Task {
                 let deleted = await services.auth.deleteAccount(password: password)
                 busy = false
-                // On success the auth state flips to `.signedOut` and the root
-                // routes back to sign-in; there is no screen left to dismiss to.
+                // On success the auth state flips to `.signedOut`; the library
+                // stays open and the profile closes itself, this sheet with it.
                 if !deleted { error = services.auth.lastError ?? "Couldn't delete your account." }
             }
         }

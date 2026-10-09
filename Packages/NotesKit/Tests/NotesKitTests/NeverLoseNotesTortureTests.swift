@@ -1,6 +1,7 @@
 import Foundation
 import NotesModels
 import Testing
+import UIKit
 @testable import NotesServices
 
 /// A deterministic generator, so a failing run can be replayed from its seed.
@@ -76,11 +77,22 @@ struct NeverLoseNotesTortureTests {
             let op: String
 
             switch roll {
-            case 0..<26:
+            case 0..<24:
                 op = "write"
                 try await store.savePageData(bytes, notebook: id, page: page)
                 model.ink[page] = bytes
                 model.staged[page] = nil
+
+            case 24..<26:
+                // A page from a PDF (manifest v9): its PDF is shared media that
+                // must outlive every page, live or deleted, that draws from it.
+                op = "import pdf"
+                guard model.live.count < 24 else { continue }
+                let index = Int.random(in: 0...model.live.count, using: &rng)
+                let result = try await store.importPDF(data: Self.onePagePDF, notebook: id, at: index)
+                let added = try #require(result.firstPageID)
+                model.live.insert(added, at: index)
+                model.known.insert(added)
 
             case 26..<31:
                 // A slow save finishing after a newer one must not win.
@@ -226,6 +238,13 @@ struct NeverLoseNotesTortureTests {
         print("TORTURE seed=\(seed) steps=750 ops=\(counts.sorted { $0.key < $1.key })")
     }
 
+    private static let onePagePDF: Data = UIGraphicsPDFRenderer(
+        bounds: CGRect(x: 0, y: 0, width: 200, height: 260)
+    ).pdfData { context in
+        context.beginPage()
+        ("handout" as NSString).draw(at: CGPoint(x: 20, y: 20), withAttributes: [:])
+    }
+
     /// Every invariant, against the store as it stands.
     private func check(
         store: DocumentStore, notebook id: UUID, model: inout Model, damaged: Bool, context: String
@@ -271,7 +290,15 @@ struct NeverLoseNotesTortureTests {
             #expect(onPage == model.visible(page), "ink on a live page — \(context)")
         }
 
-        let trashedIDs = Set(await store.trashedPages(notebook: id).map(\.id))
+        // Shared media is never removed while a page, live or deleted, uses it.
+        let trashedRecords = await store.trashedPages(notebook: id)
+        for record in manifest.pages + trashedRecords.map(\.page) {
+            guard let pdf = record.backgroundPDF else { continue }
+            let url = await store.mediaURL(notebook: id, filename: pdf.filename)
+            #expect(FileManager.default.fileExists(atPath: url.path), "a page's PDF is gone — \(context)")
+        }
+
+        let trashedIDs = Set(trashedRecords.map(\.id))
         #expect(trashedIDs == Set(model.trashed.map(\.id)), "Recently Deleted — \(context)")
         for page in model.trashed.map(\.id) {
             let url = await store.trashedPageURL(notebook: id, page: page)

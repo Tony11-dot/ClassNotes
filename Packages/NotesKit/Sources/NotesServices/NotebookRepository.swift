@@ -62,7 +62,7 @@ public final class NotebookRepository {
     /// out — searching turns up things you can open, and you can't open those.
     public func searchTargets() -> [SearchTarget] {
         let all = (try? context.fetch(FetchDescriptor<Notebook>())) ?? []
-        return all.filter { !$0.isTrashed }.map { SearchTarget(id: $0.id, title: $0.title) }
+        return all.filter { !$0.isTrashed }.map { SearchTarget(id: $0.id, title: $0.title, tags: $0.tags) }
     }
 
     public func canCreateNotebook(currentCount: Int) -> Bool {
@@ -233,6 +233,7 @@ public final class NotebookRepository {
         guard !trimmed.isEmpty else { return }
         notebook.title = trimmed
         notebook.updatedAt = .now
+        revise([notebook])
         try context.save()
         mirrorInfoSoon([notebook])
         sync?.pushNotebook(snapshot(notebook))
@@ -245,6 +246,7 @@ public final class NotebookRepository {
     /// of a rename/reshelve push.
     public func setViewOnly(_ isViewOnly: Bool, for notebook: Notebook) throws {
         notebook.isViewOnly = isViewOnly
+        revise([notebook])
         try context.save()
         mirrorInfoSoon([notebook])
     }
@@ -287,6 +289,7 @@ public final class NotebookRepository {
             notebook.shelfID = shelfID
             notebook.updatedAt = .now
         }
+        revise(notebooks)
         try context.save()
         mirrorInfoSoon(notebooks)
         for notebook in notebooks {
@@ -303,14 +306,18 @@ public final class NotebookRepository {
 
     // MARK: - Shelves (bags / collections)
 
+    /// `parentID`: the shelf it goes inside (nil: the top of the library).
     @discardableResult
-    public func createShelf(name: String, colorHex: String, symbolName: String) throws -> Shelf {
+    public func createShelf(
+        name: String, colorHex: String, symbolName: String, parentID: UUID? = nil
+    ) throws -> Shelf {
         let count = (try? context.fetchCount(FetchDescriptor<Shelf>())) ?? 0
         let shelf = Shelf(
             name: name.isEmpty ? "Shelf" : name,
             colorHex: colorHex,
             symbolName: symbolName,
-            sortIndex: count
+            sortIndex: count,
+            parentID: parentID
         )
         context.insert(shelf)
         try context.save()
@@ -318,18 +325,24 @@ public final class NotebookRepository {
         return shelf
     }
 
+    /// Deletes a shelf and nothing in it: its notebooks and the shelves inside
+    /// it move up a level, into its parent (or onto no shelf at the top).
     public func deleteShelf(_ shelf: Shelf) throws {
         let shelfID = shelf.id
+        let shelves = (try? context.fetch(FetchDescriptor<Shelf>())) ?? []
+        let parentID = ShelfTree(shelves.map { ($0.id, $0.parentID) }).parent(of: shelfID)
+        for child in shelves where child.parentID == shelfID { child.parentID = parentID }
         // Fetch-all-then-filter (predicate machinery is overkill for a tiny set
         // and traps on hostless test runners).
         let all = (try? context.fetch(FetchDescriptor<Notebook>())) ?? []
         let unfiled = all.filter { $0.shelfID == shelfID }
-        for notebook in unfiled { notebook.shelfID = nil }
+        for notebook in unfiled { notebook.shelfID = parentID }
+        revise(unfiled)
         context.delete(shelf)
         try context.save()
         mirrorInfoSoon(unfiled)
-        // Delete the shelf, then re-push the notebooks it un-filed so their
-        // `shelfId` clears on the backend too.
+        // Delete the shelf, then re-push the notebooks it moved so their
+        // `shelfId` changes on the backend too.
         sync?.deleteShelf(id: shelfID)
         for notebook in unfiled { sync?.pushNotebook(snapshot(notebook)) }
     }
@@ -364,7 +377,10 @@ public final class NotebookRepository {
                 applied.append(raw)
                 continue
             }
-            if notebook.deletedAt == nil { notebook.deletedAt = .now }
+            if notebook.deletedAt == nil {
+                notebook.deletedAt = .now
+                revise([notebook])
+            }
             touched.append(notebook)
             applied.append(raw)
         }
@@ -380,6 +396,7 @@ public final class NotebookRepository {
             if !edit.coverColorHex.isEmpty { notebook.coverColorHex = edit.coverColorHex }
             // A missing shelfId means unfiled — that's a real change, not "unknown".
             notebook.shelfID = edit.shelfId.flatMap(UUID.init(uuidString:))
+            revise([notebook])
             touched.append(notebook)
             applied.append(edit.id)
         }
@@ -456,6 +473,7 @@ public final class NotebookRepository {
     public func assign(_ notebook: Notebook, toShelf shelfID: UUID?) {
         notebook.shelfID = shelfID
         notebook.updatedAt = .now
+        revise([notebook])
         try? context.save()
         mirrorInfoSoon([notebook])
         sync?.pushNotebook(snapshot(notebook))

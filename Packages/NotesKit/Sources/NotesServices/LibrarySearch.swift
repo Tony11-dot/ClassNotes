@@ -35,10 +35,13 @@ public struct NotebookSearchResult: Sendable, Identifiable, Equatable {
 public struct SearchTarget: Sendable, Equatable, Identifiable {
     public let id: UUID
     public let title: String
+    /// Searched with the title: a notebook tagged "exam" is found by "exam".
+    public let tags: [String]
 
-    public init(id: UUID, title: String) {
+    public init(id: UUID, title: String, tags: [String] = []) {
         self.id = id
         self.title = title
+        self.tags = tags
     }
 }
 
@@ -57,7 +60,9 @@ public extension SearchIndexer {
 
         var results: [NotebookSearchResult] = []
         for target in targets {
-            let matchesTitle = NoteSearch.matches(terms, in: target.title)
+            let matchesTitle = NoteSearch.matches(
+                terms, in: ([target.title] + target.tags).joined(separator: " ")
+            )
             let index = await store.preparedSearchIndex(for: target.id)
             let hits = NoteSearch.search(query, in: index)
             guard matchesTitle || !hits.isEmpty else { continue }

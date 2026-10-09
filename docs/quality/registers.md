@@ -22,7 +22,10 @@ item below updates this file in the same commit.
 compatible with App Store distribution and needs no source disclosure. There
 are no other third-party components.
 
-## Open-decision register
+## Decision register
+
+All eight were decided in round 4 (2026-10-09) on the recommendations below;
+each records its outcome under **Decided**.
 
 **D-001: Account required for core note taking?**
 
@@ -41,12 +44,17 @@ are no other third-party components.
 - Impact if unresolved: a student whose session is rejected cannot open their
   own lecture notes until they are online and signed in.
 - Not changed silently: the gate is a product decision.
+- **Decided: (b).** The library opens without an account; a rejected session
+  or a deleted account keeps it open (CC-010).
 
 **D-002: Reference hardware for the performance gates.**
 
 - Recommended: low end is iPad (A16) with Apple Pencil (USB-C); high end is
   iPad Pro (M5) with Apple Pencil Pro.
 - Impact if unresolved: no §52 number can be claimed as passed.
+- **Decided:** the iPad Air 11-inch (M4) the owner develops on is the high
+  end measured (measurements.md, "On device"). The A16 low end is still to
+  borrow.
 
 **D-003: Content sync.**
 
@@ -60,6 +68,10 @@ are no other third-party components.
 - Required before building it: a stroke-level merge or a "keep both" conflict
   UI. Last-writer-wins is never acceptable for ink.
 - Impact: §27, 28, 71 and 72 can't be tested until this exists.
+- **Decided: iCloud Drive, as a transport only.** Packages stay on the
+  device as the store; a copy travels through the app's iCloud container.
+  Changed on both devices → both kept. Built and tested (CC-014); switched off
+  in the build until the iCloud container exists (R-25).
 
 **D-004: Telemetry.**
 
@@ -70,6 +82,8 @@ are no other third-party components.
 - Recommended: **(a)** first. It needs no new dependency and no privacy-label
   change if payloads stay on device or go to our own API without note content.
 - Impact if unresolved: the crash-free rate (A3) cannot be measured.
+- **Decided: (a).** MetricKit, kept on the device, shared by the user
+  (CC-013). No privacy-label change: nothing is collected by us.
 
 **D-005: Free-tier limits.**
 
@@ -77,6 +91,8 @@ are no other third-party components.
   taking becomes inaccessible when a subscription lapses.
 - Recommended: any cap limits *creating* notebooks, never *opening* them. That
   is already how it is wired.
+- **Decided:** uncapped; the rule above stands and is pinned by
+  `EntitlementTests`.
 
 **D-006: PDF engine.**
 
@@ -89,18 +105,24 @@ are no other third-party components.
 - Recommended: **(b)**, as a manifest v9 feature with v8 documents left as they
   are.
 - Impact: blocks §16, 64 (PDF text), 66 and 67 at full strength.
+- **Decided: (b)** as manifest v9 (CC-011).
 
 **D-007: Folders and tags.**
 
 - Today: flat shelves plus favourites.
 - Recommended: nested shelves with a single parent, plus tags as a SwiftData
   relation. Drag a notebook onto a shelf.
+- **Decided:** nested shelves (one parent) and tags, stored as a string list
+  on the notebook rather than a relation (a tag has no properties of its own
+  yet). Drag onto a shelf, a tag or All (CC-012).
 
 **D-008: Lasso rotate and recolour.**
 
 - Needs a selection-transform model (rotation per element, recolouring of
   `PKInk`).
 - Recommended: recolour first. It is cheap and is the most requested.
+- **Decided: both.** No format change was needed: `PageElement.rotation`
+  already existed and every renderer applied it; nothing had ever set it.
 
 ## Risk register
 
@@ -127,6 +149,11 @@ are no other third-party components.
 | R-19 | NOVA's own style prompt sent as `pageContext`, which the server labels "the page the student is looking at" | high | low | The identity prompt is excluded from page context | fixed (tested) |
 | R-20 | A question or page context over 6,000 characters is refused by the server (400), shown as "NOVA couldn't respond" | med | low | Both are cut to fit, measured in UTF-16 as the server's validator measures | fixed (tested) |
 | R-21 | The published privacy policy names Anthropic for NOVA and does not mention ClassNotes; NOVA in ClassNotes runs on Groq | high | med | Policy text must be updated by the owner (outside this repository) | **open (owner)** |
+| R-22 | Moving or resizing tape (lasso or finger) shifted its frame-relative path as if it were in page space: the strip landed twice as far as the finger went | high | low | One geometry for every element (`PageElement.moved/transformed`): page-space paths (fills) move, frame-relative ones (tape) don't | fixed (tested) |
+| R-23 | NOVA answers that cited their page in the model's own forms (【p. 1】, "(see p. 3)", a "Page 1" heading) were left unlabelled: one in five | high | low | The citation reader takes every form the live evaluation found; the display shows ordinary brackets | fixed (tested, re-measured live) |
+| R-24 | iCloud sync keeping a whole copy of every notebook it replaces could fill the device for a notebook written on elsewhere all day | med | med | Two copies per notebook, 30 days at most | fixed (tested) |
+| R-25 | The app's entitlements file was never wired into the build and the App ID has no iCloud: sync cannot run until the owner creates the container | high | med | Sync is built, tested and gated off (`CMCloudSync`); turning it on is a portal step, then a build flag | **open (owner)** |
+| R-26 | A pull racing an editor opening the same notebook could leave the editor holding the old version and later save it over the new one | low | high | The store refuses to replace a notebook registered as open, on the same actor that serves the editor's load (`beginEditing`) | fixed (tested) |
 
 ## Permission matrix
 
@@ -314,3 +341,83 @@ call NOVA.
 - Tests: `NovaConsentTests`, `NovaGroundingContextTests`,
   `NovaGroundedConversationTests`, `NovaReplySourceTests`,
   `NovaPayloadLimitTests`.
+
+**CC-010: an account is optional (D-001).**
+
+- What: the first screen offers "Continue without an account"
+  (`AuthService.worksWithoutAccount`). A session the server rejects, or an
+  account deleted in the app, signs the device out but keeps the library
+  open, with a one-time notice. Signing in later runs the account sync at
+  once (`AuthService.onSignIn`). NOVA without a session says to sign in.
+- Why: mandate §53.15; a student must never be locked out of their own notes
+  by a session expiring.
+- Auth: unchanged on the server. Privacy: less is sent (nothing until the
+  user signs in). Pricing: unchanged.
+- Rollback: older builds lock the library behind sign-in as before; local
+  notebooks are unaffected.
+- Tests: `ClassMateNetworkingTests` (five working-without-an-account tests),
+  `NovaConsentTests.noSessionNoAsk`.
+
+**CC-011: live PDF pages (manifest v9, D-006).**
+
+- What: importing a PDF keeps the PDF once in `media/`, and each page records
+  which page of it it is (`PageRecord.backgroundPDF`). The editor and the
+  zoom view draw that page live and tiled; search reads its text layer;
+  export draws the original vector page. The PNG made at import stays.
+- Format: manifest v9. The new field decodes tolerantly (a bad value costs
+  the live drawing, never the page). A v8 build ignores the field and shows
+  the PNG; the newer-manifest copy rule keeps the v9 manifest beside it.
+- Storage: the PDF is shared media, removed only when no live or deleted page
+  uses it; page transfer copies it. The storage torture test now imports PDFs
+  and checks this after every step.
+- Rollback: v8 builds keep working on v9 notebooks (PNG only).
+- Tests: `LivePDFTests`, `NeverLoseNotesTortureTests`.
+
+**CC-012: nested shelves, tags, and a metadata revision stamp (D-007, D-003).**
+
+- What: SwiftData gains `Shelf.parentID`, `Notebook.tags` and
+  `Notebook.metadataRevisedAt`, all defaulted, so lightweight migration adopts
+  existing rows. `info.json` gains `tags` and `revisedAt` (optional; older
+  descriptions read as before). Deleting a shelf moves what was in it up a
+  level instead of off every shelf.
+- Sync: shelves' nesting and tags are local to the device for the ClassMate
+  mirror (its DTO has neither).
+- Rollback: older builds ignore the new attributes and keys.
+- Tests: `ShelfTreeTests`, `NotebookTagRulesTests`, `LibraryOrganisationTests`.
+
+**CC-013: diagnostics kept on the device (D-004).**
+
+- What: a MetricKit subscriber stores daily metrics and crash, hang, CPU and
+  disk-write diagnostics in Application Support, 90 days and 120 payloads at
+  most. Support shows a 30-day summary and "Share diagnostics".
+- Privacy: payloads hold no note content and never leave the device unless
+  the user shares them. Nothing new is collected by us; no privacy-label
+  change.
+- Tests: `DiagnosticsTests`.
+
+**CC-014: iCloud notebook sync (D-003), built and switched off.**
+
+- What: `NotebookSync` reconciles each notebook with a copy in the app's
+  iCloud container by content fingerprint against the last agreed state:
+  changed here goes up (file by file), changed there comes down (validated,
+  and the replaced notebook kept), changed in both keeps both. Open notebooks
+  are never replaced (`DocumentStore.beginEditing`). Removals only ever move
+  things to a trash. Descriptions are reconciled newest-wins on
+  `metadataRevisedAt`. This device's own files (search index, recovery
+  copies) never travel.
+- Storage: the local store is unchanged and stays the source of truth.
+- Privacy: notebooks go to the user's own iCloud, which needs no privacy-label
+  entry (data not collected by the developer).
+- Switch: `CMCloudSync` in Info.plist (false). To turn on: create
+  `iCloud.com.classmate.notes` and enable iCloud Documents on the App ID,
+  set `CODE_SIGN_ENTITLEMENTS = Config/ClassNotes.entitlements`, set the flag.
+- Tests: `CloudSyncTests` (two devices, 13 scenarios), `CloudSyncTortureTests`.
+
+**CC-015: NOVA reads citations as the model writes them.**
+
+- What: `NovaReply.citedPages` also reads 【p. 1】, [p. 4], "(see p. 3)" and
+  a heading or bold line naming the page; `NovaReply.display` shows the
+  model's lenticular brackets as ordinary ones.
+- Privacy and format: unchanged.
+- Tests: `NovaReplySourceTests`, measured live (`NovaLiveEvalTests`).
+

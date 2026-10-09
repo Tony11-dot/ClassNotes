@@ -273,6 +273,10 @@ public struct EditorScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent }
         .task {
+            // First, before anything loads: iCloud sync must not replace this
+            // notebook while it's open (`DocumentStore.beginEditing`).
+            services.cloudSync.opened(notebook.id)
+            await services.documentStore.beginEditing(notebook.id)
             // The tools read and write the SAVED settings from here on, so every
             // slider the user moves outlives the editor and reaches their other
             // devices. Pencil gestures the tools can't carry out alone come back
@@ -311,6 +315,8 @@ public struct EditorScreen: View {
             Task { @MainActor in
                 await saveCoverRender()
                 services.repository.touch(notebook)
+                await services.documentStore.endEditing(notebook.id)
+                services.cloudSync.closed(notebook.id)
             }
             syncPageContent()
             // Re-read the pages that changed, so what was just written is

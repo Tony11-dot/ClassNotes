@@ -48,6 +48,13 @@ public struct SupportScreen: View {
                         full notebook, open a whiteboard, or bring in a photo, a \
                         file or a scan — then write with your Apple Pencil.
                         """)
+                    faq("Do I need an account?",
+                        """
+                        No. Tap Continue without an account and your notebooks \
+                        stay on this device. Sign in any time from Settings to \
+                        see them in ClassMate, use NOVA, and keep your settings \
+                        on every device.
+                        """)
                     faq("Can I edit on iPhone?",
                         """
                         iPhone is a read-only viewer — browse, read, zoom in, play \
@@ -63,12 +70,14 @@ public struct SupportScreen: View {
                         """)
                     faq("Where are my notes stored?",
                         """
-                        On your device, as self-contained notebook files. A \
-                        picture of each page also syncs to your ClassNotes \
-                        account so the ClassMate app can show it.
+                        On your device, as self-contained notebook files. When \
+                        you're signed in, a picture of each page also syncs to \
+                        your ClassNotes account so the ClassMate app can show it.
                         """)
                 }
                 .listRowBackground(theme.surfaceRaised.color)
+
+                DiagnosticsSection()
             }
             .scrollContentBackground(.hidden)
             .background(theme.surface.color)
@@ -114,9 +123,10 @@ public struct AboutScreen: View {
                           Your notebooks are kept on your device. Page pictures \
                           sync to your ClassNotes account so the ClassMate app \
                           can show them. No third-party trackers, no ad \
-                          networks. NOVA only sees what you send it, after you \
-                          allow it, through our servers to Groq, the AI \
-                          service that writes its replies.
+                          networks. Crash reports stay on your device unless \
+                          you share them. NOVA only sees what you send it, \
+                          after you allow it, through our servers to Groq, the \
+                          AI service that writes its replies.
                           """)
                     block("Contact",
                           "Built by the ClassMate team.\nQuestions: \(ClassMateLinks.supportEmail)")

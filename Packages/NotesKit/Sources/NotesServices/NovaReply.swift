@@ -35,7 +35,17 @@ public enum NovaReply: Sendable {
         var text = stripFences(in: raw)
         text = stripChannelMarkers(in: text)
         text = stripPreambleLines(in: text)
+        text = plainCitationBrackets(in: text)
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// "cells【p. 1】" → "cells (p. 1)". The model writes citations in its own lenticular
+    /// brackets; on a page of English notes they read as stray symbols.
+    static func plainCitationBrackets(in text: String) -> String {
+        guard text.contains("【") else { return text }
+        return text.replacingOccurrences(
+            of: #"[ \t]*【([^】\n]{1,40})】"#, with: " ($1)", options: .regularExpression
+        )
     }
 
     /// Removes every complete `<think>…</think>` block, and everything from an

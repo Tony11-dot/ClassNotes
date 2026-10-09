@@ -448,4 +448,97 @@ struct ClassMateNetworkingTests {
         #expect(revoked.state == .signedOut)
         #expect(keychain.get(.authToken) == nil)
     }
+
+    // MARK: - Working without an account (D-001)
+
+    private func isolatedDefaults() -> UserDefaults {
+        UserDefaults(suiteName: "auth-local-first-\(UUID().uuidString)")!
+    }
+
+    @Test("A first launch shows sign-in; continuing without an account opens the library, and stays open")
+    @MainActor
+    func continueWithoutAccountOpensTheLibrary() async {
+        let defaults = isolatedDefaults()
+        let keychain = InMemorySecretStore()
+        let fresh = AuthService(client: makeAuthClient { _ in (500, Data()) }, keychain: keychain, defaults: defaults)
+        await fresh.restore()
+        #expect(fresh.state == .signedOut)
+        #expect(!fresh.libraryIsOpen, "a new device is offered the choice first")
+
+        fresh.continueWithoutAccount()
+        #expect(fresh.libraryIsOpen)
+
+        let relaunched = AuthService(client: makeAuthClient { _ in (500, Data()) }, keychain: keychain, defaults: defaults)
+        await relaunched.restore()
+        #expect(relaunched.libraryIsOpen, "the choice survives a relaunch")
+        #expect(relaunched.signedOutNotice == nil)
+    }
+
+    @Test("A session the server stops honouring keeps the library open and says why")
+    @MainActor
+    func rejectedSessionKeepsTheLibraryOpen() async {
+        let defaults = isolatedDefaults()
+        let keychain = InMemorySecretStore()
+        let signedIn = AuthService(
+            client: makeAuthClient { _ in (200, Data(#"{"token":"jwt-1","account":\#(Self.accountJSON)}"#.utf8)) },
+            keychain: keychain, defaults: defaults
+        )
+        _ = await signedIn.signIn(email: "sam@x.com", password: "pw")
+
+        let revoked = AuthService(client: makeAuthClient { _ in (401, Data()) }, keychain: keychain, defaults: defaults)
+        await revoked.restore()
+        #expect(revoked.state == .signedOut)
+        #expect(keychain.get(.authToken) == nil)
+        #expect(revoked.libraryIsOpen, "a student is never locked out of their own notes")
+        #expect(revoked.signedOutNotice != nil)
+    }
+
+    @Test("Signing out on purpose shows sign-in again (which offers to carry on without one)")
+    @MainActor
+    func deliberateSignOutShowsSignIn() async {
+        let defaults = isolatedDefaults()
+        let service = AuthService(
+            client: makeAuthClient { _ in (200, Data(#"{"token":"jwt-1","account":\#(Self.accountJSON)}"#.utf8)) },
+            keychain: InMemorySecretStore(), defaults: defaults
+        )
+        service.continueWithoutAccount()
+        _ = await service.signIn(email: "sam@x.com", password: "pw")
+        #expect(service.libraryIsOpen)
+        service.signOut()
+        #expect(!service.libraryIsOpen)
+        #expect(service.signedOutNotice == nil)
+    }
+
+    @Test("Deleting the account leaves the library open: the notebooks are the user's own files")
+    @MainActor
+    func deletingTheAccountKeepsTheLibraryOpen() async {
+        let service = AuthService(
+            client: makeAuthClient { request in
+                if request.httpMethod == "DELETE" { return (200, Data("{}".utf8)) }
+                return (200, Data(#"{"token":"jwt-1","account":\#(Self.accountJSON)}"#.utf8))
+            },
+            keychain: InMemorySecretStore(), defaults: isolatedDefaults()
+        )
+        _ = await service.signIn(email: "sam@x.com", password: "pw")
+        let deleted = await service.deleteAccount(password: "pw")
+        #expect(deleted)
+        #expect(service.state == .signedOut)
+        #expect(service.libraryIsOpen)
+    }
+
+    @Test("Signing in mid-session asks the app to sync at once")
+    @MainActor
+    func signingInRunsTheSignInHook() async {
+        let service = AuthService(
+            client: makeAuthClient { _ in (200, Data(#"{"token":"jwt-1","account":\#(Self.accountJSON)}"#.utf8)) },
+            keychain: InMemorySecretStore(), defaults: isolatedDefaults()
+        )
+        service.continueWithoutAccount()
+        var syncs = 0
+        service.onSignIn = { syncs += 1 }
+        _ = await service.signIn(email: "sam@x.com", password: "pw")
+        #expect(syncs == 1)
+        _ = await service.signIn(email: "sam@x.com", password: "wrong-but-stubbed-ok")
+        #expect(syncs == 2)
+    }
 }

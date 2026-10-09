@@ -11,7 +11,7 @@ Registers (dependencies, decisions, risks, permissions, network use, change
 control) are in [registers.md](registers.md). Measured numbers are in
 [measurements.md](measurements.md).
 
-Last updated: 2026-10-09. Phase 1 is complete; see "Phase 1 outcome" below. Rounds 2 and 3 are below it.
+Last updated: 2026-10-09. Phase 1 is complete; see "Phase 1 outcome" below. Rounds 2, 3 and 4 are below it. Round 4 settled every open decision (section 6).
 
 ---
 
@@ -25,17 +25,17 @@ Last updated: 2026-10-09. Phase 1 is complete; see "Phase 1 outcome" below. Roun
 | Documents | `DocumentStore` (actor). One package per notebook, `<uuid>.cmnote/`, holding `manifest.json`, `pages/<id>.drawing`, `media/*`, `search.json` and `cover.png`. All writes are atomic (temp file + rename) |
 | Library metadata | SwiftData (`Notebook`, `Shelf`, `AppPreferences`, `CustomThemeRecord`, `NovaChat`) |
 | Write ordering | `PageInkJournal`: page saves are stamped and staged; a stale write is never applied over a newer one |
-| PDF | PDFKit **rasterises** every imported page to a 2× PNG page background at import. There is no live PDF engine and no PDF text layer |
+| PDF | The imported PDF is kept once in the package and each page is drawn **live** from it (tiled, `CATiledLayer`, Core Graphics), sharp at any zoom; search reads its text layer; export writes the original vector page. A 2× PNG per page stays as the thumbnail and for older builds (manifest v9) |
 | Search | `SearchIndexer` (actor): Vision `VNRecognizeTextRequest` over rendered ink, plus element text, cached per package in `search.json` |
 | Handwriting recognition | Apple Vision, on device and offline |
 | AI (NOVA) | `NovaBackendProvider` → ClassMate API `POST /classnotes/ai` (model key held on the server; the server calls Groq). Asks before sending anything (`NovaConsent`). Groq direct is a fallback only |
-| Auth | ClassNotes' own accounts (`/classnotes/auth/*`), token in the Keychain |
-| Sync | **Mirror only**. Notebook metadata and page *renders* (JPEG) go up to ClassMate's ClassNotes tab. Renames and deletes made in that tab come back down. There is no document content sync and no iCloud |
+| Auth | ClassNotes' own accounts (`/classnotes/auth/*`), token in the Keychain. **Optional**: the library opens without one (D-001) |
+| Sync | The ClassMate mirror (metadata and page renders up; renames and deletes down). **iCloud notebook sync** is built and tested (`NotebookSync`, D-003) and switched off in this build until the iCloud container exists (owner step, R-25) |
 | Settings sync | `PUT/GET /classnotes/settings`; the higher revision wins (no wall clock) |
 | Payments | StoreKit 2: a lifetime unlock plus an optional subscription (`EntitlementService`) |
-| Tests | Swift Testing only: 116 suites, 636 tests in NotesKit (including a 3,000-step crash/damage torture test and benchmarks), 21 in ClassMateTheme |
+| Tests | Swift Testing only: see measurements.md for the current count. Includes a 3,000-step crash/damage torture test, a two-device sync torture test, benchmarks, and the NOVA evaluation set |
 | CI/CD | fastlane run locally (`beta`, `check`, `listing`, `submit`). There is no hosted CI |
-| Crash reporting and analytics | **None**. Only Apple's own (Xcode Organizer / App Store Connect crash logs) |
+| Crash reporting and analytics | MetricKit, **on the device** (D-004): crash, hang, launch and memory reports kept locally, summarised in Support, sent only when the user shares them. No analytics, no third party |
 
 ## 2. Existing dependencies
 
@@ -46,9 +46,9 @@ PhotosUI and os.
 
 ## 3. Required new dependencies
 
-None. Every fix in this round uses Apple frameworks only. Two items need a
-product decision before any dependency is added: crash and performance
-telemetry (D-004), and a live PDF engine (D-006).
+None. Every round so far uses Apple frameworks only. Telemetry (D-004) and
+the live PDF engine (D-006) were both built on Apple frameworks (MetricKit,
+Core Graphics) rather than adding a dependency.
 
 ## 4. External services
 
@@ -72,21 +72,23 @@ telemetry (D-004), and a live PDF engine (D-006).
   and rendering on the CPU.
 - **Hover** needs Apple Pencil 2 or Pro on an M2-or-later iPad Pro or an M2/M3
   iPad Air. **Squeeze and barrel roll** need Apple Pencil Pro.
-- **PDF text search and vector-sharp PDF zoom** are not possible while PDFs are
-  rasterised at import (D-006).
+- **PDFs imported before 1.6** stay rasterised: the original PDF wasn't kept,
+  so there is nothing to draw live. Re-importing the PDF gives the live page.
 
-## 6. Open decisions (detail in registers.md)
+## 6. Decisions (detail in registers.md)
 
-| ID | Question |
-|---|---|
-| D-001 | Should core note taking require an account? Today the library is locked behind sign-in |
-| D-002 | Reference low-end and high-end iPads for the performance gates |
-| D-003 | Real content sync (iCloud vs ClassMate API) and its conflict model |
-| D-004 | Crash and performance telemetry provider (MetricKit-only vs a third party) |
-| D-005 | Free-tier limits (`freeNotebookLimit` is currently uncapped) |
-| D-006 | PDF engine: keep rasterising, or render PDF pages live with PDFKit |
-| D-007 | Folder nesting and tags (today: flat shelves plus favourites) |
-| D-008 | Rotate for lasso selections (needs a selection-transform model change) |
+All eight were decided in round 4, on the recommendations in registers.md.
+
+| ID | Question | Decided |
+|---|---|---|
+| D-001 | Should core note taking require an account? | **No.** The library opens without one; an account adds sync and NOVA |
+| D-002 | Reference iPads for the performance gates | iPad Air 11-inch (M4) measured; low end A16 iPad still to borrow |
+| D-003 | Real content sync and its conflict model | **iCloud Drive as transport, local packages stay the store, keep both on conflict.** Built; on once the iCloud container exists |
+| D-004 | Crash and performance telemetry | **MetricKit, on device**; shared by the user, no third party |
+| D-005 | Free-tier limits | **Uncapped.** Any future cap limits creating, never opening (pinned by tests) |
+| D-006 | PDF engine | **Live** from the stored PDF (manifest v9), PNG kept as fallback |
+| D-007 | Folders and tags | **Shelves inside shelves** (one parent) and **tags**; drag a cover onto either |
+| D-008 | Lasso rotate and recolour | **Both.** Ink and fills turn exactly; boxes turn about their centre |
 
 ## 7. Known technical risks (top of the risk register)
 
@@ -124,13 +126,13 @@ telemetry (D-004), and a live PDF engine (D-006).
 | Criterion | Status | Why / mitigation |
 |---|---|---|
 | Pencil latency, FPS, zoom FPS (§55, 56, 63) | **unmeasured** | Needs a device and Instruments. Signposts are added this round so it can be measured |
-| Crash-free ≥ 99.8% (A3) | **unmeasurable** | There is no telemetry (D-004). App Store Connect crash counts are the only signal |
-| PDF search, vector PDF zoom, PDF export of annotations over the original vector (§16, 66, 67) | **not supported** | PDFs are rasterised (D-006) |
-| Sync conflicts (§27, 28, 71, 72) | **not applicable yet** | There is no content sync. The only inbound channel is the rename/delete mirror, which is made non-destructive this round |
+| Crash-free ≥ 99.8% (A3) | **measurable** | MetricKit reports on each device (D-004) plus App Store Connect's crash counts. Needs time in the field |
+| PDF search, vector PDF zoom, PDF export of annotations over the original vector (§16, 66, 67) | **met** for PDFs imported from 1.6 | D-006; earlier imports stay rasterised |
+| Sync conflicts (§27, 28, 71, 72) | **met in tests**, off in the build | Keep-both on conflict, never replaced under an open editor, replaced copies kept; two-device and torture tests. Needs the iCloud container and a two-iPad check (R-25) |
 | Handwriting recognition ≥ 95% CER (§65) | **unmeasured** | Needs a labelled handwriting dataset; Vision is the engine |
-| AI context accuracy and hallucination gates (§75, 76) | **unmeasured** | Needs a curated evaluation set and server-side prompt work |
-| Folders/nesting, tags, pinned (§12) | **partial** | Shelves and favourites only (D-007) |
-| Lasso rotate, recolour, rethicken (§7) | **partial** | Move, resize, duplicate, copy, delete and Ask NOVA exist |
+| AI context accuracy and hallucination gates (§75, 76) | **measured** | Evaluation set: right page found first 96%; live model cites a right page 23/25, admits 5/5 out-of-notes questions, 0 citations to pages that don't exist (measurements.md §5) |
+| Folders/nesting, tags, pinned (§12) | **met** | Nested shelves, tags, favourites, drag to file (D-007) |
+| Lasso rotate, recolour, rethicken (§7) | **mostly met** | Rotate and recolour added (D-008); rethicken isn't offered |
 | 10,000 forced-termination device runs (§61) | **simulated** | A randomised crash-recovery torture test runs against the storage layer in-process; a device kill-loop needs a UI-test host |
 
 ## 9. Plan (phases from the mandate, in order; no phase advances past an open P0)
@@ -259,17 +261,49 @@ Also fixed along the way:
       does not mention ClassNotes (R-21); the App Store privacy label should
       list user content sent to an AI service.
 
-### Next rounds
+### Round 4: every open decision
 
-- Pencil: the device-only items above.
-- Documents: live PDF pages (D-006), folders (D-007), page drag and drop
-  between notebooks.
-- Search: a PDF's own text layer as an exact alternative to OCR, if D-006
-  moves PDFs to a live engine.
-- AI: an evaluation set for answer accuracy and citation honesty (§75–76);
-  the server prompt could carry the citation rule itself.
-- iPadOS: drag and drop of pages and notebooks; a VoiceOver pass on a device.
-- Polish and QA: long-session test on a device.
+- [x] **D-001, accounts optional.** "Continue without an account" on the
+      first screen; a session the server stops honouring, or a deleted
+      account, keeps the library open and says why; signing in later syncs at
+      once. NOVA without a session says to sign in instead of asking for
+      permission it can't use (CC-010).
+- [x] **D-008, lasso rotate and recolour.** A turn handle under the
+      selection (settles on 15° steps, with a haptic tick), and a Colour
+      button. Ink keeps its own ink type and transparency. Found and fixed on
+      the way: moving or resizing tape put it twice as far as the finger went
+      (R-22).
+- [x] **D-007, nested shelves and tags.** Shelves inside shelves, a second
+      row inside a shelf, delete moves contents up a level (nothing lost);
+      tags with a tidy-as-you-type editor, searched with titles; drag covers
+      onto shelves, tags or All (CC-012).
+- [x] **D-004, diagnostics on the device.** MetricKit's crash, hang, launch
+      and memory reports, kept 90 days, summarised in Support, shared only by
+      the user (CC-013).
+- [x] **AI (6), the evaluation set.** 30 questions over three notebooks,
+      scored offline on every run and live on demand. The live run found that
+      the model cites in forms the app didn't read (【p. 1】, "(see p. 3)",
+      a "Page 1" heading): fixed, uncited answers went from 5 to 1 in 25
+      (R-23).
+- [x] **D-006, live PDF.** Manifest v9; the storage torture test now imports
+      PDFs and checks the shared file outlives every page that uses it
+      (CC-011).
+- [x] **D-003, iCloud sync engine.** Built and tested end to end with two
+      simulated devices (11 scenario tests, a 3-seed torture test). Off in
+      this build until the iCloud container exists (CC-014, R-25).
+- [ ] **Device lab (D-002).** A devlab copy (`com.classmate.notes.devlab`,
+      its own container, never the installed app) and a 121-notebook,
+      1,260-page library are on the iPad Air; the launch and memory traces
+      run as soon as the iPad is unlocked.
+
+### What's left, and who it waits on
+
+- **Owner:** create the iCloud container and enable iCloud on the App ID
+  (R-25); the privacy policy and App Store privacy label (R-21).
+- **A hand and a Pencil:** latency, frame rate while writing, palm
+  rejection, hover and barrel roll (PencilKit supplies both for ink tools),
+  an hour-long session, battery.
+- **Two iPads:** the iCloud sync check once the container exists.
 
 ## 10. Explicitly out of scope
 

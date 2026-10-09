@@ -66,6 +66,22 @@ public final class Notebook {
     /// not being written to right now.
     public var isViewOnly: Bool = false
 
+    // MARK: Added — tags (D-007)
+
+    /// Free words the user files this notebook under, as well as (not instead
+    /// of) its one shelf. `NotebookTags` keeps them tidy and case-insensitive.
+    public var tags: [String] = []
+
+    // MARK: Added — iCloud sync (D-003)
+
+    /// When anything the library knows about this notebook last changed: its
+    /// title, cover, shelf, tags, favourite or trash state. Two devices'
+    /// copies of that metadata are reconciled by this, newest wins. Separate
+    /// from `updatedAt` because that one also moves on every open (and orders
+    /// the library), which would let merely opening a notebook undo a rename
+    /// made on another device.
+    public var metadataRevisedAt: Date = Date(timeIntervalSince1970: 0)
+
     public init(
         id: UUID = UUID(),
         title: String,

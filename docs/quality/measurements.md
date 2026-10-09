@@ -36,7 +36,7 @@ Last updated: 2026-10-09.
 | Failures injected | process crash (fresh store, staged ink lost), write cut off between backup and new manifest, manifest damaged (garbage, truncated, missing), with and without a crash |
 | Invariants | ink that reached disk is on its live page or in Recently Deleted, byte for byte; a live page shows its newest staged or written ink; no duplicate pages; no phantom pages; purged pages never return; Recently Deleted lists exactly the deleted pages; page order and elements are exact unless damage forced the one-step rollback the backup represents |
 | Bugs it found | 2, both fixed with targeted regression tests (README, "Phase 1 outcome") |
-| Unit and regression tests | 636 tests in 116 suites (NotesKit) + 21 (ClassMateTheme), all passing (round 3) |
+| Unit and regression tests | 706 tests in 129 suites (NotesKit) + 21 (ClassMateTheme), all passing (round 4) |
 
 ## 2. Storage
 
@@ -126,16 +126,72 @@ Before this round, the import ran inside the document actor. By construction,
 every ink save waited for the whole import to finish. That "before" figure was
 not measured separately.
 
-## 5. Unmeasured: needs a physical iPad and Instruments
+## 5. NOVA evaluation set (round 4)
+
+Thirty questions over three notebooks written the way recognised
+handwriting reads (`NovaEvalSet`): 25 that the notes answer (18 sharing
+words with the page, 4 naming the page, 3 paraphrased) and 5 they don't.
+
+**Retrieval** (`NovaRetrievalEvalTests`, every test run; the same with 40
+unrelated pages added to each notebook):
+
+| Style | Questions | Right page first | Every answering page found | Every answering page sent |
+|---|---|---|---|---|
+| Shares words with the page | 18 | 100% | 100% | 100% |
+| Names the page | 4 | 100% | 100% | 100% |
+| Paraphrased | 3 | 67% | 100% | 100% |
+| **All** | **25** | **96%** | **100%** | **100%** |
+
+**The live model** (`NovaLiveEvalTests`, `CLASSNOTES_LIVE_EVAL=1`, through
+the production endpoint under a throwaway account, 2026-10-09):
+
+| | Before the citation fix | After |
+|---|---|---|
+| Answerable, cites a right page | 19 / 25 | **23 / 25** |
+| Answerable, answered without a citation | 5 / 25 | 1 / 25 |
+| Answerable, called general knowledge | 1 / 25 | 1 / 25 |
+| Not in the notes, says so | 5 / 5 | **5 / 5** |
+| Citations to a page that doesn't exist | 0 | **0** |
+
+The five uncited answers had cited, in forms the app didn't read
+(【p. 1】, 【Page 3】, "(see p. 3)", a "### Page 1" heading). The one left
+cites with a bold "**Page 1 – …**" line, now read too. The one answer called
+general knowledge was the balloon question: "rubbing" is on the static page,
+but the model judged the page didn't cover balloons.
+
+Run at 8 seconds between questions: at 3.5 seconds the endpoint's 20-a-minute
+limit and the provider's own limit refused two thirds of them.
+
+## 6. iCloud sync (round 4, two simulated devices)
+
+`CloudSyncTortureTests`, three seeds, 220 random steps each (writes, new
+notebooks, editors opening and closing, syncs in any order):
+
+| Seed | Notebooks at the end | Kept-both copies | Writes that had to survive | Survived on both |
+|---|---|---|---|---|
+| 11 | 32 | 14 | 32 | 32 |
+| 12 | 31 | 6 | 31 | 31 |
+| 13 | 44 | 11 | 44 | 44 |
+
+The two libraries converged in every run. iCloud itself carrying the files
+is not measured here; that needs the container (R-25) and two iPads.
+
+## 7. Storage torture with PDF imports (round 4)
+
+The 750-step crash and damage torture test now imports PDFs (33 imports
+across the four seeds) and checks after every step that a page's PDF exists
+while any live or deleted page uses it. All four seeds pass.
+
+## 8. Unmeasured: needs a hand on the device
 
 | Metric | Why it's unmeasured | How to measure it |
 |---|---|---|
 | Pencil-to-pixel latency | Belongs to PencilKit and the display; the simulator has no Pencil | Instruments on a device; or a high-speed camera |
-| Frame rate while writing, scrolling and zooming | The simulator's GPU path is not the device's | Instruments → Animation Hitches |
-| Launch to interactive | Depends on device storage and the dyld cache | Instruments → App Launch, or the `Notebook open` signpost |
-| Device memory ceiling on large notebooks | iOS memory limits are per device | Xcode memory gauge, or Instruments → Allocations, with a 500-page notebook |
+| Frame rate while writing, scrolling and zooming | Needs someone writing | Instruments → Animation Hitches |
+| Launch to interactive | Ready to run: a devlab copy and a 1,260-page library are on the iPad Air (M4); waits for the iPad to be unlocked | Instruments → App Launch |
+| Device memory ceiling on large notebooks | Same | Instruments → Activity Monitor, with the 300-page notebook |
 | Battery during a 1-hour session | Device only | Xcode Energy Log |
-| Crash-free rate | No telemetry (D-004) | App Store Connect → Crashes, until D-004 is decided |
+| Crash-free rate | Needs time in the field | Support → Diagnostics on each device (D-004), App Store Connect → Crashes |
 
 Signposts are in place for these. They log under subsystem `app.classnotes`,
 category Points of Interest:

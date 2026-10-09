@@ -146,8 +146,10 @@ public struct PageElement: Codable, Sendable, Equatable, Identifiable {
     /// `FunctionPlotSettings.defaultBackgroundHex`) — the curve's own colour
     /// is `textColorHex`, following codeBlock's fg/bg split.
     public var colorHex: String?
-    /// For tape: the freeform / line path in logical page points, relative to the
-    /// page (not the element frame). Empty for rectangles.
+    /// For tape: the freeform / line path in logical points, relative to the
+    /// element's own frame (so moving the frame moves the strip). Empty for
+    /// rectangles. For fill: the outline in PAGE space. See
+    /// `pathIsInPageSpace`.
     public var points: [PagePoint]
     /// For fill: the rings cut OUT of `points` — shapes the flood went round
     /// (the inner circle of a ring, the cells inside a box). Page space, like

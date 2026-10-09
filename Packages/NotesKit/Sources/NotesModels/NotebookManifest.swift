@@ -14,10 +14,13 @@ public struct NotebookManifest: Codable, Sendable, Equatable {
     /// notebook can be A4 landscape with blue rules. v7 adds `PageRecord.isCover`:
     /// the notebook's cover is page one and is drawn on like any other page.
     /// v8 adds `PageRecord.isBookmarked` — a flagged page, jumped to from the page
-    /// manager. Older manifests decode fine — every added field is optional /
+    /// manager. v9 adds `PageRecord.backgroundPDF`: an imported PDF page drawn
+    /// live from the PDF itself (sharp at any zoom, real text for search),
+    /// with the v5 PNG kept beside it so an older build still shows the page.
+    /// Older manifests decode fine — every added field is optional /
     /// defaulted, and `DocumentStore.ensureCoverPage` is what gives a pre-v7
     /// notebook its cover page, exactly once.
-    public static let currentVersion = 8
+    public static let currentVersion = 9
 
     /// The version at which the cover became page one.
     ///
@@ -74,6 +77,10 @@ public struct PageRecord: Codable, Sendable, Equatable, Identifiable {
     /// An imported PDF/image page rendered to a PNG in the package's `media/`
     /// folder, shown as the page background beneath the ink. `nil` = normal paper.
     public var backgroundPayloadFilename: String?
+    /// For a page imported from a PDF (v9): which page of which PDF in
+    /// `media/`. Drawn live over the PNG, which stays as the fallback and the
+    /// thumbnail. `nil` for everything else, and for PDFs imported earlier.
+    public var backgroundPDF: PDFBackground?
     /// Paper size + direction. Pages written before v6 are `classic` portrait, so
     /// their ink keeps its original 768×1024 geometry.
     public var pageSize: PageSize
@@ -102,6 +109,7 @@ public struct PageRecord: Codable, Sendable, Equatable, Identifiable {
         margin: PageMargin = .default,
         paperColorHex: String? = nil,
         backgroundPayloadFilename: String? = nil,
+        backgroundPDF: PDFBackground? = nil,
         pageSize: PageSize = .classic,
         orientation: PageOrientation = .portrait,
         lineColorHex: String? = nil,
@@ -117,6 +125,7 @@ public struct PageRecord: Codable, Sendable, Equatable, Identifiable {
         self.margin = margin
         self.paperColorHex = paperColorHex
         self.backgroundPayloadFilename = backgroundPayloadFilename
+        self.backgroundPDF = backgroundPDF
         self.pageSize = pageSize
         self.orientation = orientation
         self.lineColorHex = lineColorHex
@@ -141,7 +150,7 @@ public struct PageRecord: Codable, Sendable, Equatable, Identifiable {
 
     private enum CodingKeys: String, CodingKey {
         case id, template, createdAt, elements, margin, paperColorHex
-        case backgroundPayloadFilename, pageSize, orientation, lineColorHex, lineSpacingSteps
+        case backgroundPayloadFilename, backgroundPDF, pageSize, orientation, lineColorHex, lineSpacingSteps
         case isCover, isBookmarked, bookmarkName
     }
 
@@ -165,6 +174,9 @@ public struct PageRecord: Codable, Sendable, Equatable, Identifiable {
         backgroundPayloadFilename = try container.decodeIfPresent(
             String.self, forKey: .backgroundPayloadFilename
         )
+        // Tolerant: a reference this build can't read costs only the live
+        // drawing, never the page — the PNG beside it still shows.
+        backgroundPDF = (try? container.decodeIfPresent(PDFBackground.self, forKey: .backgroundPDF)) ?? nil
         pageSize = try container.decodeIfPresent(PageSize.self, forKey: .pageSize) ?? .classic
         orientation = try container.decodeIfPresent(
             PageOrientation.self, forKey: .orientation
@@ -211,10 +223,13 @@ public struct PageStyle: Codable, Sendable, Equatable {
     public var logicalSize: CGSize { pageSize.size(orientation: orientation) }
 
     /// A fresh page in this style.
-    public func makePage(backgroundPayloadFilename: String? = nil) -> PageRecord {
+    public func makePage(
+        backgroundPayloadFilename: String? = nil, backgroundPDF: PDFBackground? = nil
+    ) -> PageRecord {
         PageRecord(
             template: template, margin: margin, paperColorHex: paperColorHex,
             backgroundPayloadFilename: backgroundPayloadFilename,
+            backgroundPDF: backgroundPDF,
             pageSize: pageSize, orientation: orientation,
             lineColorHex: lineColorHex, lineSpacingSteps: lineSpacingSteps
         )

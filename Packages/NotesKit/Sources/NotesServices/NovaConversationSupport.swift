@@ -32,7 +32,7 @@ extension NovaConversation {
     nonisolated static func failureMessage(for error: Error) -> String {
         switch error {
         case AIError.missingKey:
-            return "Sign in to use NOVA."
+            return "Sign in to use NOVA: tap Sign in at the top of Settings."
         case AIError.badResponse(let status) where status == 401 || status == 403:
             // A session token this backend once accepted can go stale mid-
             // session (nothing re-validates it after launch), and a stale

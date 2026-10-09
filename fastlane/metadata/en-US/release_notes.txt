@@ -1,8 +1,10 @@
-NOVA knows your notebook.
+Use ClassNotes without an account, ask NOVA about a whole notebook, organise with folders and tags, and see PDFs sharp at any zoom.
 
-- Tap Read this notebook in NOVA, then ask anything about it. Each question brings the pages that answer it, and answers show which pages they came from. Tap a page to jump straight to it.
-- When something isn't in your notes, NOVA says so and answers from general knowledge.
-- NOVA now asks before it sends anything, explains exactly what it sends, and you can change your answer in Settings.
-- Long questions no longer fail.
-- Better VoiceOver support: every page in the page manager, the sliders and voice notes now say what they are.
-- Clearer messages when restoring purchases or signing in doesn't work.
+- No account needed: tap Continue without an account and start writing. Sign in any time to sync and use NOVA. Your notebooks are never locked away if you're signed out.
+- NOVA knows your notebook: tap Read this notebook, then ask anything about it. Answers show which pages they came from; tap a page to jump to it. When something isn't in your notes, NOVA says so.
+- NOVA asks before it sends anything, explains exactly what it sends, and you can change your answer in Settings.
+- Shelves inside shelves, and tags. Drag a notebook onto a shelf or tag to file it.
+- PDFs you import now stay sharp however far you zoom, their words are searchable exactly, and they export with the original text.
+- Lasso: rotate a selection with the new handle, and recolour it in one tap.
+- Support shows crash and speed reports kept on your iPad, and you can share them with us.
+- Better VoiceOver support, clearer error messages, and a fix for tape moved with the lasso landing in the wrong place.

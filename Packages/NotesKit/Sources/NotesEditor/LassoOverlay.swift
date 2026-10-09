@@ -55,6 +55,10 @@ struct LassoCatch: Equatable {
     var loop: [CGPoint] = []
     /// The bounding box of everything caught, in page-logical points.
     var bounds: CGRect = .null
+    /// Counts the edits made to the selection (move, resize, turn, colour), so
+    /// the view can drop its live preview the moment one lands, even when the
+    /// outline didn't change (a square photo turned a quarter).
+    var edits = 0
 
     var isEmpty: Bool { strokes.isEmpty && elementIDs.isEmpty }
 
@@ -152,7 +156,7 @@ struct LassoOverlay: View {
 /// The dashes crawl — a still dashed box reads as a decoration, a crawling one
 /// reads as "this is held, and it is waiting for you".
 struct LassoSelectionView: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) var theme
 
     let selection: LassoCatch
     let displaySize: CGSize
@@ -167,6 +171,13 @@ struct LassoSelectionView: View {
     /// logical space, top-left anchored to match the single-handle pattern
     /// `PageElementsLayer`'s own resize handle already uses.
     let onResize: (CGRect) -> Void
+    /// Turns the whole catch about its centre, in radians (clockwise on
+    /// screen), once the turn handle is let go.
+    let onRotate: (CGFloat) -> Void
+    /// Paints the catch in a colour (hex).
+    let onRecolor: (String) -> Void
+    /// The colours offered for recolouring: the pen palette.
+    var palette: [String] = []
     let onDismiss: () -> Void
     /// A picture of what the selection holds, rendered once when a drag starts,
     /// so the content travels under the finger instead of an empty box moving
@@ -181,12 +192,22 @@ struct LassoSelectionView: View {
     /// same idea as `drag`, so the box grows/shrinks under the finger instead
     /// of only snapping to its new size on release.
     @State private var resizeDelta: CGSize = .zero
+    /// The live turn from the rotate handle, in radians — same idea again: the
+    /// preview turns under the finger and the ink follows on release.
+    @State var turn: CGFloat = 0
+    /// Whether the turn is resting on a 15° step, so the haptic fires once on
+    /// the way in.
+    @State var turnSettled = false
+    @State var showColors = false
 
     private static let minimumSide: CGFloat = 32
-    /// Four 44-point buttons plus the capsule's 6-point padding either side.
-    /// Derived rather than guessed, so adding a fifth action cannot quietly
+    /// How far below the outline the turn handle sits, centre to edge.
+    private static let handleDrop: CGFloat = 30
+    static let space = "lassoSelection"
+    /// Five 44-point buttons plus the capsule's 6-point padding either side.
+    /// Derived rather than guessed, so adding another action cannot quietly
     /// start pushing the bar off the right edge.
-    private static let actionCount = 4
+    private static let actionCount = 5
     private static let actionsWidth = CGFloat(actionCount) * 44 + 12
     private static let actionsHeight: CGFloat = 40
 
@@ -205,13 +226,31 @@ struct LassoSelectionView: View {
     private var liveHeight: CGFloat { max(Self.minimumSide, frame.height + resizeDelta.height) }
 
     private var actionsOrigin: CGPoint {
+        // The turn handle hangs below the outline, so a bar that has to go
+        // below goes below the handle too.
         SelectionBarPlacement.origin(
             for: CGRect(
                 x: frame.minX + drag.width, y: frame.minY + drag.height,
-                width: liveWidth, height: liveHeight
+                width: liveWidth, height: liveHeight + Self.handleDrop + 22
             ),
             barSize: CGSize(width: Self.actionsWidth, height: Self.actionsHeight),
             in: displaySize
+        )
+    }
+
+    /// The centre the selection turns about, in display points.
+    var liveCentre: CGPoint {
+        CGPoint(x: frame.minX + drag.width + liveWidth / 2, y: frame.minY + drag.height + liveHeight / 2)
+    }
+
+    /// Where the turn handle sits: below the middle of the outline, carried
+    /// round with the turn, and never off the page.
+    private var handleCentre: CGPoint {
+        let rest = CGPoint(x: liveCentre.x, y: liveCentre.y + liveHeight / 2 + Self.handleDrop)
+        let turned = rest.applying(SelectionRotation.transform(turn, about: liveCentre))
+        return CGPoint(
+            x: min(max(turned.x, 22), displaySize.width - 22),
+            y: min(max(turned.y, 22), displaySize.height - 22)
         )
     }
 
@@ -224,6 +263,7 @@ struct LassoSelectionView: View {
                     .resizable()
                     .frame(width: liveWidth, height: liveHeight)
                     .shadow(color: .black.opacity(0.18), radius: 8, y: 4)
+                    .rotationEffect(.radians(turn))
                     .offset(x: frame.minX + drag.width, y: frame.minY + drag.height)
                     .allowsHitTesting(false)
             }
@@ -238,6 +278,7 @@ struct LassoSelectionView: View {
                         .fill(theme.accent.withAlpha(0.08).color)
                 )
                 .frame(width: liveWidth, height: liveHeight)
+                .rotationEffect(.radians(turn))
                 .offset(x: frame.minX + drag.width, y: frame.minY + drag.height)
                 .gesture(
                     DragGesture()
@@ -267,16 +308,24 @@ struct LassoSelectionView: View {
                         }
                 )
 
-            resizeHandle
-                .offset(
-                    x: frame.minX + drag.width + liveWidth - 22,
-                    y: frame.minY + drag.height + liveHeight - 22
-                )
+            if turn == 0 {
+                resizeHandle
+                    .offset(
+                        x: frame.minX + drag.width + liveWidth - 22,
+                        y: frame.minY + drag.height + liveHeight - 22
+                    )
+            }
 
-            actions
-                .offset(x: actionsOrigin.x, y: actionsOrigin.y)
+            rotateHandle
+                .offset(x: handleCentre.x - 22, y: handleCentre.y - 22)
+
+            if turn == 0 {
+                actions
+                    .offset(x: actionsOrigin.x, y: actionsOrigin.y)
+            }
         }
         .frame(width: displaySize.width, height: displaySize.height)
+        .coordinateSpace(.named(Self.space))
         .onAppear {
             withAnimation(.linear(duration: 0.6).repeatForever(autoreverses: false)) {
                 phase = -24
@@ -288,17 +337,24 @@ struct LassoSelectionView: View {
         // plus the still-live `drag`/`resizeDelta` already reads as the exact
         // same on-screen box the finger left, so clearing them here changes
         // nothing the user can see.
-        .onChange(of: selection.bounds) { _, _ in
-            drag = .zero
-            resizeDelta = .zero
-            preview = nil
-            previewRequested = false
-        }
+        .onChange(of: selection.bounds) { _, _ in settle() }
+        // An edit can land without the outline moving (a square photo turned a
+        // quarter); the edit count changes either way.
+        .onChange(of: selection.edits) { _, _ in settle() }
     }
 
-    private var isAdjusting: Bool { drag != .zero || resizeDelta != .zero }
+    func settle() {
+        drag = .zero
+        resizeDelta = .zero
+        turn = 0
+        turnSettled = false
+        preview = nil
+        previewRequested = false
+    }
 
-    private func requestPreview() {
+    private var isAdjusting: Bool { drag != .zero || resizeDelta != .zero || turn != 0 }
+
+    func requestPreview() {
         guard !previewRequested else { return }
         previewRequested = true
         preview = makePreview()
@@ -354,6 +410,8 @@ struct LassoSelectionView: View {
     /// ordinary typing the moment anything else on screen took focus.
     private var actions: some View {
         HStack(spacing: 2) {
+            action("Colour", systemImage: "paintpalette", { showColors = true })
+                .popover(isPresented: $showColors) { colorPicker }
             action("Copy", systemImage: "doc.on.doc", onCopy)
                 .keyboardShortcut("c", modifiers: .command)
             action("Duplicate", systemImage: "plus.square.on.square", onDuplicate)

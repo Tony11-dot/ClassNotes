@@ -44,6 +44,12 @@ public actor DocumentStore {
     public nonisolated let journal = PageInkJournal()
     /// Decoded `search.json`s, keyed by the file version they were read from.
     var searchIndexCache: [UUID: (key: String, index: NoteSearch.PreparedIndex)] = [:]
+    /// Content fingerprints for iCloud sync, by the file stamp they were
+    /// taken at (`contentFingerprint`).
+    var fingerprintCache: [UUID: (stamp: String, fingerprint: String)] = [:]
+    /// Notebooks open in an editor right now (`beginEditing`), which iCloud
+    /// sync must not replace underneath it.
+    var editing: [UUID: Int] = [:]
 
     public init(rootURL: URL? = nil) {
         if let rootURL {
@@ -547,6 +553,7 @@ public actor DocumentStore {
     func mediaFilenames(of page: PageRecord) -> Set<String> {
         var names = Set<String>()
         if let background = page.backgroundPayloadFilename { names.insert(background) }
+        if let pdf = page.backgroundPDF?.filename { names.insert(pdf) }
         for element in page.elements {
             if let filename = element.payloadFilename { names.insert(filename) }
         }
@@ -619,7 +626,8 @@ public actor DocumentStore {
         guard let index = current.pages.firstIndex(where: { $0.id == page }) else { return current }
         let source = current.pages[index]
         var copy = source.style.makePage(
-            backgroundPayloadFilename: source.backgroundPayloadFilename
+            backgroundPayloadFilename: source.backgroundPayloadFilename,
+            backgroundPDF: source.backgroundPDF
         )
         copy.elements = source.elements
         current.pages.insert(copy, at: index + 1)

@@ -42,9 +42,7 @@ extension EditorScreen {
                     let size = focusPageSize(for: page, in: geo.size)
                     ZStack {
                         pagePaper(page)
-                        if let bg = backgroundImage(for: page) {
-                            Image(uiImage: bg).resizable().scaledToFit()
-                        }
+                        pageBackground(page)
                         canvasStack(page, displaySize: size, allowsZoom: false)
                     }
                     .frame(width: size.width, height: size.height)
@@ -431,15 +429,26 @@ extension EditorScreen {
         PagePaperView(page: page, cover: notebook.usesCoverPage ? notebook.coverPaper : nil)
     }
 
+    /// An imported page's background: the PNG made at import, and over it,
+    /// for a page from a PDF, the PDF page drawn live so it stays sharp when
+    /// zoomed (D-006).
+    @ViewBuilder
+    func pageBackground(_ page: PageRecord) -> some View {
+        if let bg = backgroundImage(for: page) {
+            Image(uiImage: bg).resizable().scaledToFit()
+        }
+        if let pdf = page.backgroundPDF {
+            PDFPageBackground(url: model.mediaURL(filename: pdf.filename), pageIndex: pdf.pageIndex)
+        }
+    }
+
     func pageView(_ page: PageRecord, width: CGFloat) -> some View {
         // Both dimensions are concrete: the page's own aspect ratio turns the
         // resolved width into a height, so nothing downstream has to guess.
         let size = pageSize(for: page, width: width)
         return ZStack {
             pagePaper(page)
-            if let bg = backgroundImage(for: page) {
-                Image(uiImage: bg).resizable().scaledToFit()
-            }
+            pageBackground(page)
             canvasStack(page, displaySize: size, allowsZoom: false)
         }
         .contentShape(Rectangle())
@@ -592,6 +601,9 @@ extension EditorScreen {
                     onCopy: { Task { await copySelection() } },
                     onMove: { offset in Task { await moveSelection(by: offset) } },
                     onResize: { bounds in Task { await resizeSelection(to: bounds) } },
+                    onRotate: { radians in Task { await rotateSelection(by: radians) } },
+                    onRecolor: { hex in Task { await recolorSelection(hex) } },
+                    palette: toolState.inkPalette(theme: theme).map(\.hexString),
                     onDismiss: { lassoSelection = nil },
                     makePreview: { snapshotSelection(selection) }
                 )

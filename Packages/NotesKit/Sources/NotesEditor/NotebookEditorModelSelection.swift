@@ -6,7 +6,7 @@ import NotesModels
 ///
 /// Separate from `NotebookEditorModel` itself for the same reason
 /// `NotebookEditorModelInsertions` is: the model's own body is already at
-/// SwiftLint's size limit, and these four are one self-contained concern.
+/// SwiftLint's size limit, and these are one self-contained concern.
 ///
 /// Every single-element mutator on the model ends in
 /// `DocumentStore.setElements`, which re-reads the manifest, re-encodes ALL of
@@ -32,7 +32,7 @@ extension NotebookEditorModel {
         let moving = Set(ids)
         await editElements(on: pageID) { elements in
             for index in elements.indices where moving.contains(elements[index].id) {
-                elements[index] = Self.moved(elements[index], by: offset)
+                elements[index] = elements[index].moved(by: offset)
             }
         }
     }
@@ -45,7 +45,33 @@ extension NotebookEditorModel {
         let changing = Set(ids)
         await editElements(on: pageID) { elements in
             for index in elements.indices where changing.contains(elements[index].id) {
-                elements[index] = Self.transformed(elements[index], by: transform)
+                elements[index] = elements[index].transformed(by: transform)
+            }
+        }
+    }
+
+    /// Turns every named element by `radians` about `pivot`, in one write
+    /// (`PageElement.rotated`).
+    public func rotateElements(
+        _ ids: [UUID], on pageID: UUID, by radians: CGFloat, about pivot: CGPoint
+    ) async {
+        guard !ids.isEmpty, radians != 0 else { return }
+        let turning = Set(ids)
+        await editElements(on: pageID) { elements in
+            for index in elements.indices where turning.contains(elements[index].id) {
+                elements[index] = elements[index].rotated(by: radians, about: pivot)
+            }
+        }
+    }
+
+    /// Recolours every named element that has a colour of its own, in one
+    /// write. Photos, files and the like are left as they are.
+    public func recolorElements(_ ids: [UUID], on pageID: UUID, hex: String) async {
+        guard !ids.isEmpty else { return }
+        let changing = Set(ids)
+        await editElements(on: pageID) { elements in
+            for index in elements.indices where changing.contains(elements[index].id) {
+                if let recoloured = elements[index].recoloured(hex) { elements[index] = recoloured }
             }
         }
     }
@@ -64,7 +90,7 @@ extension NotebookEditorModel {
             // the caller asked for.
             for id in ids {
                 guard let source = elements.first(where: { $0.id == id }) else { continue }
-                var copy = Self.moved(source, by: offset)
+                var copy = source.moved(by: offset)
                 copy.id = UUID()
                 created.append(copy.id)
                 elements.append(copy)
@@ -86,38 +112,5 @@ extension NotebookEditorModel {
         current.pages[pageIndex].elements = elements
         manifest = current
         await saveElements(elements, notebook: notebookID, page: pageID)
-    }
-
-    /// Shifting an element means shifting its frame AND any path it carries:
-    /// tape and fills are drawn from their own point list, in page space, so
-    /// moving the frame alone leaves the colour behind.
-    private static func moved(_ element: PageElement, by offset: CGSize) -> PageElement {
-        var moved = element
-        moved.x += offset.width
-        moved.y += offset.height
-        moved.points = element.points.map {
-            PagePoint(x: $0.x + offset.width, y: $0.y + offset.height)
-        }
-        moved.holes = element.holes.map { ring in
-            ring.map { PagePoint(x: $0.x + offset.width, y: $0.y + offset.height) }
-        }
-        return moved
-    }
-
-    private static func transformed(
-        _ element: PageElement, by transform: CGAffineTransform
-    ) -> PageElement {
-        var changed = element
-        let frame = CGRect(x: element.x, y: element.y, width: element.width, height: element.height)
-            .applying(transform)
-        changed.x = frame.minX
-        changed.y = frame.minY
-        changed.width = frame.width
-        changed.height = frame.height
-        changed.points = element.points.map { PagePoint($0.cgPoint.applying(transform)) }
-        changed.holes = element.holes.map { ring in
-            ring.map { PagePoint($0.cgPoint.applying(transform)) }
-        }
-        return changed
     }
 }

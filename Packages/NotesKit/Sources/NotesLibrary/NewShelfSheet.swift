@@ -4,11 +4,15 @@ import NotesModels
 import NotesServices
 import SwiftUI
 
-/// Create a shelf (a bag / book / folder) to group notebooks.
+/// Create a shelf (a bag / book / folder) to group notebooks, at the top of the
+/// library or inside another shelf.
 struct NewShelfSheet: View {
     @Environment(AppServices.self) private var services
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
+
+    /// The shelf the new one goes inside, with its name for the title.
+    var parent: (id: UUID, name: String)?
 
     @State private var name = ""
     @State private var symbol: ShelfSymbol = .bag
@@ -44,7 +48,7 @@ struct NewShelfSheet: View {
             }
             .scrollContentBackground(.hidden)
             .background(theme.surface.color)
-            .navigationTitle("New Shelf")
+            .navigationTitle(parent.map { "New Shelf in \($0.name)" } ?? "New Shelf")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
@@ -53,7 +57,8 @@ struct NewShelfSheet: View {
                         try? services.repository.createShelf(
                             name: name,
                             colorHex: colorHex.isEmpty ? theme.accent.hexString : colorHex,
-                            symbolName: symbol.systemName
+                            symbolName: symbol.systemName,
+                            parentID: parent?.id
                         )
                         dismiss()
                     }

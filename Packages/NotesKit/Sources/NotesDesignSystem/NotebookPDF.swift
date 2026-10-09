@@ -16,10 +16,15 @@ public enum NotebookPDF {
     public struct RenderedPage: Sendable {
         public let size: CGSize
         public let image: UIImage
+        /// A page imported from a PDF: that PDF page is drawn first, as vector
+        /// (sharp, its text still text), and `image` — everything above the
+        /// paper, transparent elsewhere — over it.
+        public let pdfBackground: (url: URL, pageIndex: Int)?
 
-        public init(size: CGSize, image: UIImage) {
+        public init(size: CGSize, image: UIImage, pdfBackground: (url: URL, pageIndex: Int)? = nil) {
             self.size = size
             self.image = image
+            self.pdfBackground = pdfBackground
         }
     }
 
@@ -46,6 +51,11 @@ public enum NotebookPDF {
             for page in pages {
                 let bounds = CGRect(origin: .zero, size: page.size)
                 context.beginPage(withBounds: bounds, pageInfo: [:])
+                if let pdf = page.pdfBackground, let source = PDFPageDrawing.page(at: pdf.url, index: pdf.pageIndex) {
+                    UIColor.white.setFill()
+                    context.fill(bounds)
+                    PDFPageDrawing.draw(source, in: bounds, context: context.cgContext)
+                }
                 page.image.draw(in: bounds)
             }
         }
@@ -75,6 +85,9 @@ public struct PageCompositeView: View {
     let background: UIImage?
     let size: CGSize
     let mediaURL: (String) -> URL
+    /// False when the paper is drawn some other way (a PDF page drawn as
+    /// vector underneath this), so the picture is transparent where it is.
+    let drawsPaper: Bool
 
     public init(
         page: PageRecord,
@@ -82,7 +95,8 @@ public struct PageCompositeView: View {
         ink: UIImage?,
         background: UIImage?,
         size: CGSize,
-        mediaURL: @escaping (String) -> URL
+        mediaURL: @escaping (String) -> URL,
+        drawsPaper: Bool = true
     ) {
         self.page = page
         self.cover = cover
@@ -90,11 +104,14 @@ public struct PageCompositeView: View {
         self.background = background
         self.size = size
         self.mediaURL = mediaURL
+        self.drawsPaper = drawsPaper
     }
 
     public var body: some View {
         ZStack {
-            PagePaperView(page: page, cover: cover)
+            if drawsPaper {
+                PagePaperView(page: page, cover: cover)
+            }
             if let background {
                 Image(uiImage: background).resizable().scaledToFit()
             }
@@ -154,8 +171,12 @@ public struct NotebookExporter {
 
         var rendered: [NotebookPDF.RenderedPage] = []
         for page in wanted {
-            guard let image = await render(page: page, of: notebook, scale: scale) else { continue }
-            rendered.append(NotebookPDF.RenderedPage(size: page.logicalSize, image: image))
+            let pdf = page.backgroundPDF.map {
+                (url: store.mediaURL(notebook: notebook.id, filename: $0.filename), pageIndex: $0.pageIndex)
+            }.flatMap { FileManager.default.fileExists(atPath: $0.url.path) ? $0 : nil }
+            guard let image = await render(page: page, of: notebook, scale: scale, overVectorPDF: pdf != nil)
+            else { continue }
+            rendered.append(NotebookPDF.RenderedPage(size: page.logicalSize, image: image, pdfBackground: pdf))
         }
         guard !rendered.isEmpty else { return nil }
         return NotebookPDF.data(from: rendered, title: notebook.title)
@@ -225,17 +246,22 @@ public struct NotebookExporter {
         return (data, capped.count)
     }
 
-    private func render(page: PageRecord, of notebook: Notebook, scale: CGFloat) async -> UIImage? {
+    /// `overVectorPDF`: the page's PDF is drawn underneath as vector, so this
+    /// leaves out the paper and the PNG and is transparent where they were.
+    private func render(
+        page: PageRecord, of notebook: Notebook, scale: CGFloat, overVectorPDF: Bool = false
+    ) async -> UIImage? {
         let size = page.logicalSize
         let ink = await inkImage(page: page, notebook: notebook.id, scale: scale)
-        let background = await backgroundImage(page: page, notebook: notebook.id)
+        let background = overVectorPDF ? nil : await backgroundImage(page: page, notebook: notebook.id)
         let content = PageCompositeView(
             page: page,
             cover: notebook.usesCoverPage ? notebook.coverPaper : nil,
             ink: ink,
             background: background,
             size: size,
-            mediaURL: { store.mediaURL(notebook: notebook.id, filename: $0) }
+            mediaURL: { store.mediaURL(notebook: notebook.id, filename: $0) },
+            drawsPaper: !overVectorPDF
         )
         .environment(\.theme, theme)
         .environment(\.paperTone, paperTone)

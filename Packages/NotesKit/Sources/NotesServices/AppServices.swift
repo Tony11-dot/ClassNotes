@@ -38,6 +38,13 @@ public final class AppServices {
     /// Reads handwriting into text so notebooks can be searched by what's
     /// written in them, not only by what they're called.
     public let searchIndexer: SearchIndexer
+    /// Keeps notebooks the same on the user's devices through iCloud Drive,
+    /// when they turn it on (D-003).
+    public let cloudSync: CloudSyncController
+    /// Crash, hang, launch and memory reports from MetricKit, kept on this
+    /// device and shared only by the user (D-004).
+    public let diagnostics: DiagnosticsLog
+    @ObservationIgnored private let diagnosticsReceiver: DiagnosticsReceiver
     /// What opening the library database took, when it took more than opening
     /// it — see `ModelContainerFactory.makeRecovering`.
     public let storeRecovery: ModelContainerFactory.Recovery?
@@ -72,11 +79,16 @@ public final class AppServices {
         self.novaConsent = NovaConsent { [auth] in auth.account?.id }
         let settings = SettingsStore(context: context)
         self.settings = settings
-        self.repository = NotebookRepository(
+        let repository = NotebookRepository(
             context: context, store: store, entitlements: entitlements, sync: sync
         )
+        self.repository = repository
+        self.cloudSync = CloudSyncController(store: store, repository: repository)
         self.aiProvider = NovaProviderRouter(keychain: keychain)
         self.fontStore = CustomFontStore()
+        let diagnostics = DiagnosticsLog()
+        self.diagnostics = diagnostics
+        self.diagnosticsReceiver = DiagnosticsReceiver(log: diagnostics)
         // Handwriting is read for search in the language the user writes in —
         // the same one beautification reads it in.
         self.searchIndexer = SearchIndexer(store: store) { @MainActor in
@@ -100,6 +112,7 @@ public final class AppServices {
     /// Kick off async work after launch: entitlements, products, and restoring
     /// the ClassMate session.
     public func start() {
+        diagnosticsReceiver.start()
         // Every settled settings change goes up to the account, so the user's
         // other device gets it. Wired before the first pull so a change made
         // during launch isn't dropped.
@@ -110,28 +123,41 @@ public final class AppServices {
         // or purges it. Sign-in doesn't wait — the UI needs it at once.
         let reconciliation = Task { await reconcileLibrary() }
         self.reconciliation = reconciliation
+        // Signing in mid-session (from Settings, or after working without an
+        // account) syncs at once rather than at the next launch.
+        auth.onSignIn = { [weak self] in
+            guard let self else { return }
+            Task { await self.syncAccount() }
+        }
         Task {
             await auth.restore()
             await entitlements.refreshEntitlements()
             await entitlements.loadProducts()
-            await syncSettings()
-            await reconciliation.value
-            // PULL first — both halves, via `refreshRemoteLibrary`: notebooks
-            // deleted/renamed/re-shelved elsewhere, and notebooks that exist on
-            // the account but were created on another device. Pushing first
-            // would send this device's stale copy back over those edits and
-            // undo them.
-            await refreshRemoteLibrary(force: true)
-            // Then reconcile the whole local library up to the backend (first run
-            // + any missed per-edit pushes). No-ops when signed out
-            // (SyncService checks the token).
-            let snapshot = repository.fullSnapshot()
-            sync.pushAll(notebooks: snapshot.notebooks, shelves: snapshot.shelves)
+            await syncAccount()
         }
         Task {
             await reconciliation.value
+            // iCloud passes only once every package on disk has its row.
+            cloudSync.start()
             await runMaintenance()
         }
+    }
+
+    /// Brings this device and the account into step: settings, then the
+    /// library. No-ops without a session (SyncService checks the token).
+    private func syncAccount() async {
+        await syncSettings()
+        await reconciliation?.value
+        // PULL first — both halves, via `refreshRemoteLibrary`: notebooks
+        // deleted/renamed/re-shelved elsewhere, and notebooks that exist on
+        // the account but were created on another device. Pushing first
+        // would send this device's stale copy back over those edits and
+        // undo them.
+        await refreshRemoteLibrary(force: true)
+        // Then reconcile the whole local library up to the backend (first run
+        // + any missed per-edit pushes).
+        let snapshot = repository.fullSnapshot()
+        sync.pushAll(notebooks: snapshot.notebooks, shelves: snapshot.shelves)
     }
 
     /// Puts any notebook package that has no row back in the library, and tells

@@ -239,6 +239,14 @@ public final class NovaConversation {
         streamTask?.cancel()
         followUpTask?.cancel()
         followUpSuggestions = []
+        // Without a session (working without an account) there is nowhere to
+        // send it, so don't ask permission for something that can't happen.
+        guard provider.isConfigured else {
+            errorText = Self.failureMessage(for: AIError.missingKey)
+            if overview { notebook = nil }
+            streaming = false
+            return
+        }
         // The one gate. Every request NOVA makes passes through here, and none
         // goes further until the user has said yes.
         guard consent.isGranted else {

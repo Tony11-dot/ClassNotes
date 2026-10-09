@@ -90,7 +90,12 @@ public struct NotebookViewerScreen: View {
                 store.mediaURL(notebook: notebookID, filename: $0)
             },
             mediaURL: { store.mediaURL(notebook: notebookID, filename: $0) },
-            inkPixelWidth: pixelWidth
+            inkPixelWidth: pixelWidth,
+            // Only the zoom view (which asks for extra pixels) draws a PDF page
+            // live; a list page is sharp enough from its PNG.
+            livePDF: pixelWidth == nil ? nil : page.backgroundPDF.map {
+                (store.mediaURL(notebook: notebookID, filename: $0.filename), $0.pageIndex)
+            }
         )
     }
 

@@ -23,10 +23,14 @@ func testConsent(granted: Bool = true, account: String = "test-account") -> Nova
 final class RecordingProvider: AIProvider {
     private let log = Mutex<[[AIMessage]]>([])
     private let reply: String
+    private let configured: Bool
 
-    init(reply: String = "ok") { self.reply = reply }
+    init(reply: String = "ok", configured: Bool = true) {
+        self.reply = reply
+        self.configured = configured
+    }
 
-    var isConfigured: Bool { true }
+    var isConfigured: Bool { configured }
 
     /// Requests for an answer (the follow-up chips' extra request left out).
     var questions: [[AIMessage]] {
@@ -69,6 +73,18 @@ struct NovaConsentTests {
         #expect(!nova.streaming)
         #expect(provider.questions.isEmpty, "a question was sent without permission")
         #expect(nova.visibleMessages.map(\.content) == ["what is osmosis?"], "the question stays on screen")
+    }
+
+    @Test("Without a session NOVA says to sign in, rather than asking permission it can't use")
+    func noSessionNoAsk() async {
+        let provider = RecordingProvider(configured: false)
+        let nova = NovaConversation(provider: provider, consent: testConsent(granted: false))
+        nova.send("what is osmosis?")
+        await settle(nova)
+
+        #expect(!nova.awaitingConsent)
+        #expect(nova.errorText?.contains("Sign in") == true)
+        #expect(provider.questions.isEmpty)
     }
 
     @Test("Allowing sends the held question once, and the answer is remembered")
@@ -333,6 +349,33 @@ struct NovaGroundedConversationTests {
 
 @Suite("Where an answer came from")
 struct NovaReplySourceTests {
+
+    @Test("Citations in every form the live model was seen to write", arguments: [
+        ("Virchow (1855) said so【p. 1】.", [1]),
+        ("against the gradient【Page 3】.", [3]),
+        ("R = R1 + R2 (see p. 3).", [3]),
+        ("as in [p. 4] and [pp. 5–6]", [4, 5, 6]),
+        ("### Page 1 – Current, Charge\nQ = I t", [1]),
+        ("## Pages 4-5: Mitosis and enzymes", [4, 5]),
+        ("**Page 1 – Current, Charge, and Potential Difference**\n| Concept |", [1]),
+        ("Photosynthesis needs light (from pages 2 and 5).", [2, 5])
+    ])
+    func liveForms(answer: String, pages: [Int]) {
+        #expect(NovaReply.citedPages(in: answer) == pages)
+    }
+
+    @Test("A page number that isn't a citation is not read as one")
+    func notCitations() {
+        #expect(NovaReply.citedPages(in: "Turn to page 3 of your textbook and read 1855 (Virchow).").isEmpty)
+        #expect(NovaReply.citedPages(in: "## Mitosis\nThere are 4 stages.").isEmpty)
+        #expect(NovaReply.citedPages(in: "**Pages of the book** are numbered 4 to 9.").isEmpty)
+    }
+
+    @Test("The model's own citation brackets are shown as ordinary ones")
+    func plainBrackets() {
+        #expect(NovaReply.display("cells come from cells【p. 1】.") == "cells come from cells (p. 1).")
+        #expect(NovaReply.display("no brackets here") == "no brackets here")
+    }
 
     @Test("Citations are read, deduplicated and checked against real pages")
     func citations() {

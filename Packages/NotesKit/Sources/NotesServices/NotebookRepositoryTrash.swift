@@ -23,6 +23,7 @@ public extension NotebookRepository {
         let now = Date.now
         for notebook in notebooks where !notebook.isTrashed {
             notebook.deletedAt = now
+            notebook.metadataRevisedAt = now
         }
         try context.save()
         mirrorInfoSoon(notebooks)
@@ -41,6 +42,7 @@ public extension NotebookRepository {
         for notebook in notebooks {
             notebook.deletedAt = nil
         }
+        revise(notebooks)
         try context.save()
         mirrorInfoSoon(notebooks)
         for notebook in notebooks {
@@ -104,6 +106,7 @@ public extension NotebookRepository {
         for notebook in notebooks {
             notebook.isFavorite = isFavorite
         }
+        revise(notebooks)
         try context.save()
         mirrorInfoSoon(notebooks)
     }

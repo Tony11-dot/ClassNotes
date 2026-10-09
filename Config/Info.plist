@@ -2,20 +2,13 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- NOVA talks to our Railway proxy, which holds the Groq key server-side.
-	     NO key is embedded in the app; in proxy mode the app authenticates with
-	     the user's ClassMate session token. -->
+	<key>CMCloudSync</key>
+	<false/>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>SUPPORT_AI_BASE_URL</key>
 	<string>https://pacific-enchantment-production-7a80.up.railway.app/ai</string>
 	<key>SUPPORT_AI_MODE</key>
 	<string>proxy</string>
-	<!-- No SUPPORT_AI_MODEL here: the model is AIConfig.defaultModel, kept in
-	     step with ClassMate's server. A model pinned in the plist outlives the
-	     model — this one pinned llama-3.3-70b-versatile after Groq retired it. -->
-	<!-- App uses only standard HTTPS/TLS + Keychain (exempt encryption), so it
-	     is exempt from export compliance. Declaring it here skips the App Store
-	     Connect prompt on every upload. -->
-	<key>ITSAppUsesNonExemptEncryption</key>
-	<false/>
 </dict>
 </plist>

@@ -22,6 +22,9 @@ public struct PageRenderLayers: View {
     /// Render the ink this many pixels wide instead of the shown size — the
     /// zoom view asks for more so handwriting stays sharp when pinched.
     let inkPixelWidth: CGFloat?
+    /// A page from a PDF, drawn live over its PNG (the zoom view only: a
+    /// thumbnail doesn't need it).
+    let livePDF: (url: URL, pageIndex: Int)?
 
     @State private var ink: UIImage?
     @State private var background: UIImage?
@@ -33,7 +36,8 @@ public struct PageRenderLayers: View {
         inkData: @escaping @Sendable () async -> Data?,
         backgroundURL: URL?,
         mediaURL: @escaping (String) -> URL,
-        inkPixelWidth: CGFloat? = nil
+        inkPixelWidth: CGFloat? = nil,
+        livePDF: (url: URL, pageIndex: Int)? = nil
     ) {
         self.page = page
         self.displaySize = displaySize
@@ -42,12 +46,19 @@ public struct PageRenderLayers: View {
         self.backgroundURL = backgroundURL
         self.mediaURL = mediaURL
         self.inkPixelWidth = inkPixelWidth
+        self.livePDF = livePDF
     }
 
     public var body: some View {
         ZStack {
             if let background {
                 Image(uiImage: background).resizable().scaledToFit()
+            }
+            if let livePDF {
+                PDFPageBackground(
+                    url: livePDF.url, pageIndex: livePDF.pageIndex,
+                    detail: pixelWidth / max(displaySize.width * displayScale, 1)
+                )
             }
             // Same split as the editor: ink paints over images, files and text;
             // tape stays above the ink.

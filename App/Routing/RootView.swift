@@ -8,9 +8,9 @@ import SwiftUI
 
 /// The routing layer — the ONLY code allowed to import NotesEditor.
 ///
-/// Flow: launch animation → auth gate (ClassMate sign-in) → device root. iPad
-/// routes into the full editor; iPhone into the read-only viewer and never
-/// touches editing code.
+/// Flow: launch animation → sign-in, unless the device is signed in or works
+/// without an account → device root. iPad routes into the full editor; iPhone
+/// into the read-only viewer and never touches editing code.
 struct RootView: View {
     @Environment(AppServices.self) private var services
     @Environment(\.colorScheme) private var systemScheme
@@ -51,21 +51,39 @@ struct RootView: View {
         } message: { notice in
             Text(notice.message)
         }
+        // A sign-out the user didn't ask for (the session ended): the library
+        // stayed open, and this says why sync and NOVA stopped.
+        .alert(
+            services.auth.signedOutNotice?.title ?? "",
+            isPresented: Binding(
+                get: {
+                    launchFinished && services.libraryNotice == nil
+                        && services.auth.signedOutNotice != nil
+                },
+                set: { if !$0 { services.auth.signedOutNotice = nil } }
+            ),
+            presenting: services.auth.signedOutNotice
+        ) { _ in
+            Button("OK") { services.auth.signedOutNotice = nil }
+        } message: { notice in
+            Text(notice.message)
+        }
     }
 
+    /// One branch for the library whether or not there is an account, so
+    /// signing in from Settings doesn't rebuild the library under the sheet.
     @ViewBuilder
     private var content: some View {
-        switch services.auth.state {
-        case .loading:
+        if services.auth.libraryIsOpen {
+            deviceRoot
+        } else if services.auth.state == .loading {
             ZStack {
                 services.themeService.spec(prefersDark: systemScheme == .dark).surface.color
                     .ignoresSafeArea()
                 BrandLoader(size: 64)
             }
-        case .signedOut:
+        } else {
             LoginScreen()
-        case .authenticated:
-            deviceRoot
         }
     }
 
